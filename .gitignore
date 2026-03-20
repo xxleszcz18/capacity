@@ -1,0 +1,35 @@
+# Lokalny portable Git (MinGit) — tylko do pierwszego init na maszynach bez Git w PATH
+.tools/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# SQLite / local DB (tworzona lokalnie przy dev)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs & OS
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE (opcjonalnie — odkomentuj jeśli nie chcesz commitować)
+# .vscode/
+# .idea/
+
+# Vite / tooling cache
+client/node_modules/
+server/node_modules/
+.vite/

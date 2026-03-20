@@ -1,0 +1,10 @@
+CREATE TABLE nests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT
+);
+
+CREATE TABLE nest_machines (
+  nest_id INTEGER NOT NULL REFERENCES nests(id) ON DELETE CASCADE,
+  machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+  PRIMARY KEY (nest_id, machine_id)
+);

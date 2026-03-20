@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; }
+#root { min-height: 100vh; }
+
+/* Autoneum brand: lime green #A4C400 */
+:root {
+  --cap-green: #A4C400;
+  --cap-green-dark: #8fa800;
+  --cap-green-light: #b8d61a;
+  --cap-yellow: #f9a825;
+  --cap-red: #c62828;
+  --cap-gray: #616161;
+}
+
+/* Wspólna reakcja na hover i wciśnięcie dla wszystkich przycisków (w całej aplikacji) */
+button:not(:disabled) {
+  cursor: pointer;
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
+}
+button:not(:disabled):hover {
+  filter: brightness(1.2);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
+}
+button:not(:disabled):active {
+  filter: brightness(0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+/* Nawigacja w headerze – hover w kolorze Autoneum */
+header nav a:not(.active):hover {
+  background: rgba(164, 196, 0, 0.2) !important;
+}
