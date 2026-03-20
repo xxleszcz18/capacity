@@ -68,16 +68,18 @@ Uruchamia serwer i klienta równolegle (wymaga `concurrently` w root: `npm insta
 
 ## GitHub
 
-Repozytorium Git jest w katalogu projektu (gałąź `main`). W `.gitignore` są m.in. `node_modules/`, `*.db` i folder `.tools/` (lokalny portable Git).
+Repozytorium: **[github.com/xxleszcz18/capacity](https://github.com/xxleszcz18/capacity)**. Gałąź robocza: `main`. W `.gitignore` są m.in. `node_modules/`, `*.db` i folder `.tools/` (lokalny portable MinGit).
 
-1. Utwórz **nowe, puste** repozytorium na [GitHub](https://github.com/new) (bez README z poziomu strony, jeśli masz już lokalny commit).
-2. Wypchnij kod (podstaw swój URL):
+Lokalnie ustawiony jest remote `origin` → `https://github.com/xxleszcz18/capacity.git`. Aby wypchnąć commity (wymaga zalogowania do GitHub):
 
 ```powershell
-.\scripts\push-to-github.ps1 -RemoteUrl "https://github.com/TWOJ_USER/NAZWA_REPO.git"
+cd "ścieżka\do\Capacity test"
+git push -u origin main
 ```
 
-Przy HTTPS GitHub wymaga **Personal Access Token** zamiast hasła. Alternatywnie: `git remote add origin ...` oraz `git push -u origin main` z zainstalowanym Git for Windows.
+Albo z MinGit z projektu: `.tools\MinGit\cmd\git.exe push -u origin main`.
+
+Przy HTTPS użyj **Personal Access Token** (nie hasła konta) albo [GitHub Desktop](https://desktop.github.com/). Inne repozytorium: `.\scripts\push-to-github.ps1 -RemoteUrl "https://github.com/USER/REPO.git"`.
 
 ## Zasady
 
