@@ -66,6 +66,19 @@ Uruchamia serwer i klienta równolegle (wymaga `concurrently` w root: `npm insta
 - `GET /api/allocation/candidates/:machineId?year=&maxLoad=`
 - `POST /api/allocation/execute` – body: `{ operationId, targetMachineId, volumeToMove, volumeUnit }`
 
+## GitHub
+
+Repozytorium Git jest w katalogu projektu (gałąź `main`). W `.gitignore` są m.in. `node_modules/`, `*.db` i folder `.tools/` (lokalny portable Git).
+
+1. Utwórz **nowe, puste** repozytorium na [GitHub](https://github.com/new) (bez README z poziomu strony, jeśli masz już lokalny commit).
+2. Wypchnij kod (podstaw swój URL):
+
+```powershell
+.\scripts\push-to-github.ps1 -RemoteUrl "https://github.com/TWOJ_USER/NAZWA_REPO.git"
+```
+
+Przy HTTPS GitHub wymaga **Personal Access Token** zamiast hasła. Alternatywnie: `git remote add origin ...` oraz `git push -u origin main` z zainstalowanym Git for Windows.
+
 ## Zasady
 
 - **Capacity:** dostępność [s/tydzień] z ustawień (dni robocze, czas zmiany, OEE) minus czas uruchomienie/zakończenie; obciążenie % = wymagany czas (suma wolumen×cykl) / dostępność. OEE: nadpis operacji > nadpis maszyny > ustawienia.
