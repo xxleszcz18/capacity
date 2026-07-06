@@ -1,0 +1,1 @@
+-- Domyślny zakres lat wizualizacji danych (administracja); brak wpisu = wartość z kodu (rok bieżący ± offset).

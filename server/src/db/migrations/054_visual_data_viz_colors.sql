@@ -1,0 +1,9 @@
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_production', '#8A9300');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_contract', '#E86A10');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_scenario_production', '#008BC1');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_scenario_contract', '#F59B47');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_delta_negative', '#E86A10');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_delta_positive', '#8A9300');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_ref_line_overload', '#E86A10');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_color_ref_line_free', '#8A9300');
+INSERT OR IGNORE INTO admin_settings (key, value) VALUES ('visual_data_viz_compare_palette', '["#8A9300","#008BC1","#E86A10","#B8C400","#00B0E8","#F59B47","#7A7B7A","#66B9DA","#B9BE66","#F1A670"]');

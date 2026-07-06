@@ -33,3 +33,6 @@ Thumbs.db
 client/node_modules/
 server/node_modules/
 .vite/
+
+# Załączniki projektów (lokalne pliki użytkownika)
+załączniki/

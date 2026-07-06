@@ -1,0 +1,245 @@
+================================================================================
+AUTONEUM CAPACITY — WYMAGANIA PROJEKTU (requirements.txt)
+================================================================================
+Wersja dokumentu: 2026-06-25
+Aplikacja: Capacity Planning (planowanie obciążenia linii i maszyn)
+Stack: React (TypeScript) + Express (TypeScript) + SQLite (sql.js)
+
+================================================================================
+1. WYMAGANIA ŚRODOWISKOWE
+================================================================================
+
+1.1 System operacyjny
+    - Windows 10/11, Linux lub macOS (rozwój i produkcja)
+    - PowerShell lub bash do uruchamiania skryptów npm
+
+1.2 Oprogramowanie wymagane
+    - Node.js >= 18.x (zalecane LTS 20.x lub 22.x)
+    - npm >= 9.x (dostarczany z Node.js)
+    - Przeglądarka: Chrome, Edge lub Firefox (aktualna wersja)
+    - Git (opcjonalnie, do kontroli wersji)
+
+1.3 Zasoby sprzętowe (minimum)
+    - RAM: 4 GB (zalecane 8 GB przy dużej bazie i imporcie Excel)
+    - Dysk: 500 MB wolnego miejsca (kod + node_modules + baza + backupy)
+    - Procesor: dowolny x64 obsługujący Node.js 18+
+
+1.4 Sieć (tryb deweloperski)
+    - Port 3001 — serwer API (Express)
+    - Port 5173 — klient deweloperski (Vite)
+    - Proxy Vite: /api -> http://localhost:3001
+
+================================================================================
+2. ZMIENNE ŚRODOWISKOWE
+================================================================================
+
+PORT          — port serwera API (domyślnie: 3001)
+DB_PATH       — pełna ścieżka do pliku SQLite (domyślnie: server/capacity.db)
+USERNAME/USER — opcjonalnie, autor wpisów w historii zmian (Windows/Unix)
+
+================================================================================
+3. ZALEŻNOŚCI NPM — KATALOG GŁÓWNY
+================================================================================
+
+concurrently ^8.2.2          (dev) — równoległe uruchamianie serwera i klienta
+
+================================================================================
+4. ZALEŻNOŚCI NPM — SERWER (server/package.json)
+================================================================================
+
+Produkcyjne:
+  cors ^2.8.5
+  express ^4.21.0
+  multer ^2.1.1
+  sql.js ^1.11.0
+  xlsx ^0.18.5
+  zod ^3.23.8
+
+Deweloperskie:
+  @types/cors ^2.8.17
+  @types/express ^4.17.21
+  @types/multer ^2.1.0
+  @types/node ^22.9.0
+  tsx ^4.19.2
+  typescript ^5.6.3
+
+================================================================================
+5. ZALEŻNOŚCI NPM — KLIENT (client/package.json)
+================================================================================
+
+Produkcyjne:
+  react ^18.3.1
+  react-dom ^18.3.1
+  react-router-dom ^6.28.0
+  recharts ^3.8.1
+  html2canvas ^1.4.1
+  jspdf ^4.2.1
+  jspdf-autotable ^5.0.7
+  xlsx ^0.18.5
+
+Deweloperskie:
+  @types/react ^18.3.12
+  @types/react-dom ^18.3.1
+  @vitejs/plugin-react ^4.3.3
+  typescript ^5.6.3
+  vite ^5.4.10
+
+================================================================================
+6. INSTALACJA I URUCHOMIENIE
+================================================================================
+
+6.1 Instalacja zależności
+    npm install
+    cd server && npm install
+    cd ../client && npm install
+
+6.2 Tryb deweloperski (serwer + klient)
+    npm run dev                    (z katalogu głównego)
+
+6.3 Osobno
+    cd server && npm run dev       (API: http://localhost:3001)
+    cd client && npm run dev       (UI: http://localhost:5173)
+
+6.4 Produkcja
+    npm run build                  (build serwera i klienta)
+    npm run start                  (serwer z dist; klient jako statyczne pliki)
+
+6.5 Migracje bazy
+    npm run db:migrate             (lub: cd server && npm run db:migrate)
+
+================================================================================
+7. WYMAGANIA DOTYCZĄCE BAZY DANYCH
+================================================================================
+
+- Silnik: SQLite (biblioteka sql.js, plik na dysku)
+- Domyślna lokalizacja: server/capacity.db
+- Migracje: automatyczne przy starcie serwera (server/src/db/migrations/)
+- Backup: konfigurowalny w Administracja -> Ustawienia administracyjne
+- Import/eksport: Excel (.xlsx) — pełny pakiet, maszyny, dane wejściowe
+- Potwierdzenia importu:
+    IMPORTUJ_BAZE  — import pełnego pakietu
+    IMPORTUJ_DANE  — import danych wejściowych
+
+================================================================================
+8. WYMAGANIA FUNKCJONALNE — MODUŁY GŁÓWNE
+================================================================================
+
+8.1 Kalkulator obciążenia
+    - Tabela maszyn z obciążeniem % w latach
+    - Filtry: typ maszyny, status, wymiary, wyszukiwanie
+    - Alokacja wolumenu między maszynami (klik w komórkę roku)
+    - Tryb wolumenów kontraktowych (przełącznik w nagłówku)
+    - Eksport raportów PDF i Excel
+    - Kolorystyka progów, alternatywny czas cyklu, znacznik RFQ
+
+8.2 Maszyny
+    - CRUD maszyn (SAP, numer wewnętrzny, typ, linia, lokalizacja, wymiary)
+    - Statusy: active, inactive, RFQ
+    - Machine usage (0,1–1), nadpisanie OEE
+    - Alternatywy maszyn, operacje na maszynie
+    - Import maszyn z Excela
+
+8.3 Projekty
+    - CRUD projektów (klient, nazwa, SOP/EOP, status)
+    - Detale w projekcie, operacje (faza, maszyna, cykl, gniazda)
+    - Wolumeny roczne (produkcyjne i kontraktowe)
+    - Sety detali ze wspólnym źródłem wolumenu
+    - Notatki projektu
+
+8.4 Detale (oznaczenia)
+    - Globalny katalog: Nr SAP, Alias, Free text
+    - Współdzielenie między projektami
+    - Bezpieczne usuwanie z powiązanymi operacjami
+
+8.5 Scenariusze
+    - Tworzenie kopii danych (z produkcji lub innego scenariusza)
+    - Tryb pracy na kopii scenariusza (kalkulator, historia zmian)
+    - Archiwizacja scenariuszy
+    - Edycja w izolacji od wersji produkcyjnej
+
+8.6 Administracja
+    - Ustawienia bazy: dni robocze (Capacity/OCU), fazy, detale, typy maszyn, wizualne
+    - Ustawienia administracyjne: backup, przywracanie, import Excel, OCU, czyszczenie bazy
+    - Wizualizacja danych: trendy linii/maszyn, analityka, wykres różnic (delta)
+    - Historia zmian z filtrowaniem
+    - Instrukcja obsługi (PL / EN / DE)
+
+================================================================================
+9. WYMAGANIA OBLICZENIOWE (CAPACITY)
+================================================================================
+
+9.1 Dostępność maszyny [s/tydzień]
+    availability = (working_days_year / 52) * shift_time_min * 60 * shifts_per_day * OEE
+                   - startup_shutdown_seconds
+    Skorygowane o machine_usage maszyny.
+
+9.2 Wolumen tygodniowy
+    - annual:   volume / working_weeks_per_year
+    - monthly:  (volume * 12) / working_weeks_per_year
+    - weekly:   volume (bez przeliczenia)
+
+9.3 Czas wymagany [s/tydzień]
+    required = SUM(weekly_volume * (cycle_time_seconds / nests_count)) per operacja
+
+9.4 Obciążenie [%]
+    load_percent = round(SUM(required_op / availability_op) * machine_usage * 100)
+
+9.5 Priorytet OEE
+    operacja > nadpis maszyny > ustawienia globalne (dni robocze)
+
+9.6 SOP/EOP
+    Ułamek roku ogranicza wolumen operacji projektu do miesięcy w zakresie produkcji.
+
+9.7 Profile obliczeń
+    - Capacity — domyślny profil parametrów
+    - OCU — osobny zestaw parametrów (włączany w ustawieniach administracyjnych)
+    - W trybie scenariusza zawsze profil Capacity
+
+================================================================================
+10. WYMAGANIA NIEFUNKCJONALNE
+================================================================================
+
+10.1 Internacjonalizacja (i18n)
+    - Języki interfejsu: polski (pl), angielski (en), niemiecki (de)
+    - Wybór języka zapisywany w localStorage (klucz: cap_locale)
+    - Instrukcja obsługi w trzech językach
+
+10.2 Bezpieczeństwo i dane
+    - Aplikacja lokalna / intranetowa (brak wbudowanego uwierzytelniania użytkowników)
+    - Destrukcyjne operacje wymagają potwierdzenia tekstowego (import, czyszczenie bazy)
+    - Automatyczny backup przed importem danych wejściowych
+
+10.3 Wydajność
+    - Timeout proxy Vite dla importu Excel: 600 s (10 min)
+    - Duże pliki Excel: zalecany RAM >= 8 GB
+
+10.4 Kompatybilność
+    - TypeScript 5.6+
+    - ES modules (client: "type": "module")
+    - React 18
+
+================================================================================
+11. STRUKTURA PROJEKTU
+================================================================================
+
+/
+  client/          — frontend React + Vite
+  server/          — backend Express + SQLite
+  package.json     — skrypty root (dev, build, start)
+  requirements.txt — ten plik
+  README.md        — dokumentacja uruchomienia
+
+================================================================================
+12. SKRYPTY NPM (KATALOG GŁÓWNY)
+================================================================================
+
+npm run dev          — serwer + klient (concurrently)
+npm run dev:server   — tylko API
+npm run dev:client   — tylko UI
+npm run build        — build produkcyjny obu części
+npm run start        — start serwera produkcyjnego
+npm run db:migrate   — migracje bazy danych
+
+================================================================================
+KONIEC DOKUMENTU
+================================================================================

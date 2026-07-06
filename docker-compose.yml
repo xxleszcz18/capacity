@@ -1,0 +1,44 @@
+# Autoneum Capacity — uruchomienie produkcyjne w Docker Compose
+#
+#   docker compose up --build -d
+#   docker compose logs -f
+#   docker compose down
+#
+# Aplikacja: http://localhost:3001
+
+services:
+  capacity:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: capacity-app:latest
+    container_name: capacity-app
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DB_PATH: /data/capacity.db
+      CLIENT_DIST: /app/client/dist
+    volumes:
+      # Baza SQLite (persystencja między restartami)
+      - capacity-data:/data
+      # Backupy z ustawień administracyjnych (domyślny katalog „backups” w server/)
+      - capacity-backups:/app/server/backups
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/settings').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
+
+volumes:
+  capacity-data:
+  capacity-backups:

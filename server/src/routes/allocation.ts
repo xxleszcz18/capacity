@@ -1,11 +1,41 @@
 import { Router } from 'express';
+import os from 'os';
+import { db } from '../db/connection.js';
 import {
   getOverloadedMachines,
   getCandidatesForAllocation,
+  getAllocationLoadHint,
   executeAllocation,
+  executeAllocationInScenario,
 } from '../services/allocationService.js';
+import { parseScenarioSnapshotJson } from '../services/scenarioSnapshotService.js';
 
 export const allocationRouter = Router();
+
+function resolveActor(req: any): string {
+  const fromHeader = String(req.headers?.['x-user-login'] ?? req.headers?.['x-user'] ?? '').trim();
+  if (fromHeader) return fromHeader;
+  const envUser = String(process.env.USERNAME ?? process.env.USER ?? '').trim();
+  if (envUser) return envUser;
+  try {
+    return os.userInfo().username || 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+function loadScenarioBundleForAllocation(scenarioId: number): { bundle: ReturnType<typeof parseScenarioSnapshotJson>; includeRfq: boolean } | null {
+  const row = db.prepare('SELECT snapshot, archived_at FROM scenarios WHERE id = ?').get(scenarioId) as
+    | { snapshot: string; archived_at: string | null }
+    | undefined;
+  if (!row) return null;
+  try {
+    const archived = row.archived_at != null && String(row.archived_at).trim() !== '';
+    return { bundle: parseScenarioSnapshotJson(row.snapshot), includeRfq: !archived };
+  } catch {
+    return null;
+  }
+}
 
 allocationRouter.get('/overloaded', (req, res) => {
   const year = Number(req.query.year ?? new Date().getFullYear());
@@ -18,25 +48,108 @@ allocationRouter.get('/candidates/:machineId', (req, res) => {
   const machineId = Number(req.params.machineId);
   const year = Number(req.query.year ?? new Date().getFullYear());
   const maxLoad = Number(req.query.maxLoad ?? 90);
-  const list = getCandidatesForAllocation(machineId, year, maxLoad);
+  const includeOverloaded =
+    req.query.includeOverloadedAlternatives === '1' || String(req.query.includeOverloadedAlternatives).toLowerCase() === 'true';
+  const useContractualVolumes =
+    req.query.useContractualVolumes === '1' || String(req.query.useContractualVolumes ?? '').toLowerCase() === 'true';
+  const scenarioIdRaw = req.query.scenarioId != null ? Number(req.query.scenarioId) : NaN;
+  const scenarioMeta =
+    Number.isFinite(scenarioIdRaw) && scenarioIdRaw > 0 ? loadScenarioBundleForAllocation(scenarioIdRaw) : null;
+  const scenarioBundle = scenarioMeta?.bundle ?? null;
+  const scenarioIncludeRfq = scenarioMeta?.includeRfq ?? true;
+  if (Number.isFinite(scenarioIdRaw) && scenarioIdRaw > 0 && !scenarioBundle) {
+    return res.status(404).json({ error: 'Scenariusz nie znaleziony' });
+  }
+  const list = getCandidatesForAllocation(machineId, year, maxLoad, includeOverloaded, scenarioBundle, scenarioIncludeRfq, useContractualVolumes);
   res.json({ machineId, year, candidates: list });
 });
 
+allocationRouter.get('/hint/:machineId', (req, res) => {
+  const machineId = Number(req.params.machineId);
+  const year = Number(req.query.year ?? new Date().getFullYear());
+  const operationId = Number(req.query.operationId);
+  const operationIdsRaw = String(req.query.operationIds ?? '').trim();
+  const operationIdsFromList = operationIdsRaw
+    ? operationIdsRaw
+        .split(/[,;]+/)
+        .map((s) => Number(s.trim()))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    : [];
+  const useContractualVolumes =
+    req.query.useContractualVolumes === '1' || String(req.query.useContractualVolumes ?? '').toLowerCase() === 'true';
+  if (!Number.isFinite(operationId) || operationId <= 0) {
+    return res.status(400).json({ error: 'Parametr operationId jest wymagany.' });
+  }
+  const operationIds = operationIdsFromList.length > 0 ? operationIdsFromList : [operationId];
+  const scenarioIdRaw = req.query.scenarioId != null ? Number(req.query.scenarioId) : NaN;
+  const scenarioMeta =
+    Number.isFinite(scenarioIdRaw) && scenarioIdRaw > 0 ? loadScenarioBundleForAllocation(scenarioIdRaw) : null;
+  const scenarioBundle = scenarioMeta?.bundle ?? null;
+  const scenarioIncludeRfq = scenarioMeta?.includeRfq ?? true;
+  if (Number.isFinite(scenarioIdRaw) && scenarioIdRaw > 0 && !scenarioBundle) {
+    return res.status(404).json({ error: 'Scenariusz nie znaleziony' });
+  }
+  const hint = getAllocationLoadHint(machineId, year, operationIds, scenarioBundle, scenarioIncludeRfq, useContractualVolumes);
+  if ('error' in hint) return res.status(400).json({ error: hint.error });
+  res.json(hint);
+});
+
 allocationRouter.post('/execute', (req, res) => {
-  const { operationId, targetMachineId, volumeToMove, volumeUnit, cycleTimeSecondsOnTarget, year } = req.body;
+  const {
+    operationId,
+    targetMachineId,
+    volumeToMove,
+    volumeUnit,
+    cycleTimeSecondsOnTarget,
+    useAlternativeCycleOnTarget: useAltCycleBody,
+    year,
+    scenarioId,
+    useContractualVolumes: useCvBody,
+  } = req.body as any;
+  const useContractualVolumes =
+    useCvBody === true ||
+    useCvBody === 1 ||
+    String(useCvBody ?? '').toLowerCase() === 'true';
   const y = Number(year);
   const yearResolved = Number.isFinite(y) && y >= 2000 && y <= 2100 ? y : new Date().getFullYear();
+  const useAlternativeCycleOnTarget =
+    useAltCycleBody === true || useAltCycleBody === 1 || String(useAltCycleBody ?? '').toLowerCase() === 'true';
   const cycle =
-    cycleTimeSecondsOnTarget !== undefined && cycleTimeSecondsOnTarget !== null && Number(cycleTimeSecondsOnTarget) > 0
+    !useAlternativeCycleOnTarget &&
+    cycleTimeSecondsOnTarget !== undefined &&
+    cycleTimeSecondsOnTarget !== null &&
+    Number(cycleTimeSecondsOnTarget) > 0
       ? Number(cycleTimeSecondsOnTarget)
       : undefined;
+  const volUnit = volumeUnit === 'monthly' ? 'monthly' : volumeUnit === 'weekly' ? 'weekly' : 'annual';
+  const sid = scenarioId != null ? Number(scenarioId) : NaN;
+  if (Number.isFinite(sid) && sid > 0) {
+    const exists = db.prepare('SELECT id FROM scenarios WHERE id = ?').get(sid);
+    if (!exists) return res.status(404).json({ error: 'Scenariusz nie znaleziony' });
+    const result = executeAllocationInScenario(
+      sid,
+      Number(operationId),
+      Number(targetMachineId),
+      Number(volumeToMove),
+      volUnit,
+      yearResolved,
+      cycle,
+      resolveActor(req),
+      useContractualVolumes,
+      useAlternativeCycleOnTarget
+    );
+    if (!result.success) return res.status(400).json({ ...result, error: result.error });
+    return res.json(result);
+  }
   const result = executeAllocation(
     Number(operationId),
     Number(targetMachineId),
     Number(volumeToMove),
-    volumeUnit === 'monthly' ? 'monthly' : volumeUnit === 'weekly' ? 'weekly' : 'annual',
+    volUnit,
     yearResolved,
-    cycle
+    cycle,
+    useContractualVolumes,
+    useAlternativeCycleOnTarget
   );
   if (!result.success) return res.status(400).json({ ...result, error: result.error });
   res.json(result);
