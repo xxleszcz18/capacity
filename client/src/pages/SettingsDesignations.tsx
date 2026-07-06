@@ -7,6 +7,7 @@ import { formatDetailSapAliasLabel, formatSapNumberForDisplay } from '../utils/d
 import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import { useI18n } from '../context/I18nContext';
 import { useTableSort, sortRows } from '../utils/tableSort';
+import { isDesignationDuplicateError } from '../utils/designationDuplicate';
 
 type Designation = {
   id: number;
@@ -28,6 +29,7 @@ export default function SettingsDesignations() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
   const [newSap, setNewSap] = useState('');
   const [newAlias, setNewAlias] = useState('');
   const [newFreeText, setNewFreeText] = useState('');
@@ -104,7 +106,13 @@ export default function SettingsDesignations() {
         setNewFreeText('');
         setDesignations((prev) => [...prev, created]);
       })
-      .catch((e) => setAddError(te(e.message) || t('errors.designationAddFailed')));
+      .catch((e) => {
+        if (isDesignationDuplicateError(e.message)) {
+          setDuplicateModalOpen(true);
+          return;
+        }
+        setAddError(te(e.message) || t('errors.designationAddFailed'));
+      });
   };
 
   const openEdit = (d: Designation) => {
@@ -129,7 +137,14 @@ export default function SettingsDesignations() {
         setEditModal(null);
         return load();
       })
-      .catch((e) => setSaveError(te(e.message) || t('errors.saveFailed')))
+      .catch((e) => {
+        if (isDesignationDuplicateError(e.message)) {
+          setEditModal(null);
+          setDuplicateModalOpen(true);
+          return;
+        }
+        setSaveError(te(e.message) || t('errors.saveFailed'));
+      })
       .finally(() => setSaving(false));
   };
 
@@ -231,6 +246,12 @@ export default function SettingsDesignations() {
 
   type DetSortCol = 'sap' | 'alias' | 'free_text' | 'line' | 'project';
   const { sortCol, sortDir, toggle } = useTableSort<DetSortCol>('sap');
+
+  const displayField = (value: string | number | null | undefined, formatSap = false) => {
+    const s = value != null ? String(value).trim() : '';
+    if (!s) return t('designations.emptyValue');
+    return formatSap ? formatSapNumberForDisplay(value) : s;
+  };
 
   const displayDesignations = useMemo(() => {
     const filtered = designations.filter(matchesFilters);
@@ -362,15 +383,15 @@ export default function SettingsDesignations() {
         <tbody>
           {displayDesignations.map((d) => (
             <tr key={d.id}>
-              <td style={{ padding: '0.75rem' }}>{formatSapNumberForDisplay(d.sap_number) || t('designations.noProjects')}</td>
-              <td style={{ padding: '0.75rem' }}>{d.alias ?? t('designations.noProjects')}</td>
-              <td style={{ padding: '0.75rem' }}>{d.free_text ?? (d.designation ?? t('designations.noProjects'))}</td>
+              <td style={{ padding: '0.75rem' }}>{displayField(d.sap_number, true)}</td>
+              <td style={{ padding: '0.75rem' }}>{displayField(d.alias)}</td>
+              <td style={{ padding: '0.75rem' }}>{displayField(d.free_text ?? d.designation)}</td>
               <td style={{ padding: '0.75rem' }}>
-                {d.machine_lines && d.machine_lines.length > 0 ? d.machine_lines.join(', ') : t('designations.noProjects')}
+                {d.machine_lines && d.machine_lines.length > 0 ? d.machine_lines.join(', ') : t('designations.emptyValue')}
               </td>
               <td style={{ padding: '0.75rem', fontSize: 14 }}>
                 {!d.projects || d.projects.length === 0 ? (
-                  t('designations.noProjects')
+                  t('designations.emptyValue')
                 ) : (
                   d.projects.map((p, i) => (
                     <span key={p.id}>
@@ -407,6 +428,41 @@ export default function SettingsDesignations() {
         designations.filter(matchesFilters).length === 0 && (
           <p style={{ color: '#666', marginTop: 8 }}>{t('designations.noFilterResults')}</p>
         )}
+
+      {duplicateModalOpen && (
+        <div
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setDuplicateModalOpen(false);
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 120,
+          }}
+        >
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{ background: 'white', padding: '1.5rem', borderRadius: 8, minWidth: 360, maxWidth: 'min(520px, 96vw)' }}
+          >
+            <h3 style={{ marginTop: 0 }}>{t('designations.duplicateExistsTitle')}</h3>
+            <p style={{ margin: '0 0 1.25rem', lineHeight: 1.5, color: '#455a64' }}>{t('designations.duplicateExistsModal')}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setDuplicateModalOpen(false)}
+                style={{ padding: '0.5rem 1rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteModal && (
         <div

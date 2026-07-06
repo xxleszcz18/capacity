@@ -123,6 +123,9 @@ export const extendedEn: TranslationTree = {
     intro:
       'Parts catalog: SAP No., Alias, Free text. In a project you can search by SAP No. or Alias. You can add, edit and delete entries. The Project column shows projects using this part. Line No. lists machine line numbers from operations on this part.',
     addDetail: 'Add part',
+    duplicateExistsModal:
+      'A part with this designation already exists and another one was not created.',
+    duplicateExistsTitle: 'Part already exists',
     sapCol: 'SAP No.',
     aliasCol: 'Alias',
     freeTextCol: 'Free text',
@@ -151,6 +154,7 @@ export const extendedEn: TranslationTree = {
     deleteErrors: 'Could not delete some operations.',
     loadingRelatedOps: 'Loading related operations…',
     noProjects: '—',
+    emptyValue: '—',
     emptyList: 'No parts yet. Add the first one above (fill at least one field).',
     noFilterResults: 'No results for the current filters.',
   },

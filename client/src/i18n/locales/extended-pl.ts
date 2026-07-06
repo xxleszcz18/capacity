@@ -124,6 +124,9 @@ export const extendedPl: TranslationTree = {
     intro:
       'Katalog detali: Nr SAP, Alias, Free text. Przy wyborze w projekcie można szukać po Nr SAP lub Alias. Możesz dodawać, edytować i usuwać wpisy. Kolumna „Projekt” pokazuje projekty z tym detalem. Kolumna „Nr linii” to numery linii maszyn z operacji tego detalu.',
     addDetail: 'Dodaj detal',
+    duplicateExistsModal:
+      'Detal o takim oznaczeniu już istnieje i nie został utworzony kolejny.',
+    duplicateExistsTitle: 'Detal już istnieje',
     sapCol: 'Nr SAP',
     aliasCol: 'Alias',
     freeTextCol: 'Free text',
@@ -152,6 +155,7 @@ export const extendedPl: TranslationTree = {
     deleteErrors: 'Nie udało się usunąć niektórych operacji.',
     loadingRelatedOps: 'Wczytywanie powiązanych operacji…',
     noProjects: '—',
+    emptyValue: '—',
     emptyList: 'Brak detali. Dodaj pierwszy powyżej (wypełnij co najmniej jedno pole).',
     noFilterResults: 'Brak wyników dla podanych filtrów.',
   },

@@ -28,6 +28,8 @@ const ERROR_KEY_BY_MESSAGE: Record<string, string> = {
   'Nie udało się wczytać scenariuszy': 'errors.scenariosLoadFailed',
   'Nie udało się pobrać historii zmian.': 'errors.historyLoadFailed',
   'Nie udało się dodać detalu': 'errors.designationAddFailed',
+  'Detal o takim oznaczeniu już istnieje i nie został utworzony kolejny': 'designations.duplicateExistsModal',
+  'Detal o takim oznaczeniu już istnieje': 'designations.duplicateExistsModal',
   'Nie udało się zapisać': 'errors.saveFailed',
   'Błąd ładowania detali': 'errors.designationsLoadFailed',
   'Błąd ładowania listy maszyn.': 'errors.machinesLoadFailed',

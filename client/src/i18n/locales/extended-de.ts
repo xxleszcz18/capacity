@@ -123,6 +123,9 @@ export const extendedDe: TranslationTree = {
     intro:
       'Teilekatalog: SAP-Nr., Alias, Freitext. Im Projekt Suche nach SAP-Nr. oder Alias. Einträge hinzufügen, bearbeiten und löschen. Spalte Projekt zeigt zugehörige Projekte. Linien-Nr. sind Maschinenlinien aus Vorgängen dieses Teils.',
     addDetail: 'Teil hinzufügen',
+    duplicateExistsModal:
+      'Ein Teil mit dieser Bezeichnung existiert bereits; es wurde kein weiteres angelegt.',
+    duplicateExistsTitle: 'Teil existiert bereits',
     sapCol: 'SAP-Nr.',
     aliasCol: 'Alias',
     freeTextCol: 'Freitext',
@@ -151,6 +154,7 @@ export const extendedDe: TranslationTree = {
     deleteErrors: 'Einige Vorgänge konnten nicht gelöscht werden.',
     loadingRelatedOps: 'Zugehörige Vorgänge werden geladen…',
     noProjects: '—',
+    emptyValue: '—',
     emptyList: 'Noch keine Teile. Oben das erste hinzufügen (mindestens ein Feld ausfüllen).',
     noFilterResults: 'Keine Ergebnisse für die aktuellen Filter.',
   },

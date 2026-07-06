@@ -14,6 +14,7 @@ import SortableTh from '../components/SortableTh';
 import { useTableSort, sortRows } from '../utils/tableSort';
 import { parseYearValuePaste } from '../utils/parseYearValueTable';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat';
+import { isDesignationDuplicateError } from '../utils/designationDuplicate';
 
 /** Krótka etykieta projektu (klient + nazwa) do nagłówków zakładek. */
 function projectContextSubtitle(project: { id?: number; client?: string; name?: string } | null | undefined): string {
@@ -2673,6 +2674,20 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
   const [setAddDesignationId, setSetAddDesignationId] = useState<number | ''>('');
   const [setVolumeSourceKey, setSetVolumeSourceKey] = useState<string>('');
 
+  const designationListFilter = (d: { sap_number?: string | null; alias?: string | null; free_text?: string | null }, by: 'sap' | 'alias') => {
+    const sap = (d.sap_number ?? '').trim();
+    const alias = (d.alias ?? '').trim();
+    const free = (d.free_text ?? '').trim();
+    if (by === 'sap') return Boolean(sap || free);
+    return Boolean(alias || free);
+  };
+
+  const detailFieldDisplay = (value: string | null | undefined, formatSap = false) => {
+    const s = value != null ? String(value).trim() : '';
+    if (!s) return t('designations.emptyValue');
+    return formatSap ? formatSapNumberForDisplay(value) : s;
+  };
+
   const selectedDetail = selectedDetailId ? designations.find((d) => d.id === Number(selectedDetailId)) : null;
   /** Etykieta listy detalu wg wyboru „Nr SAP” / „Alias” w tym modalu (nie z ustawień wizualnych). */
   const designationChooserLabel = (
@@ -2987,6 +3002,10 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
         setNewDetailFreeText('');
       }
     } catch (e: any) {
+      if (isDesignationDuplicateError(e.message)) {
+        window.alert(t('designations.duplicateExistsModal'));
+        return;
+      }
       setError(e.message || t('projectDetailExtra.addDetailFailed'));
     }
   };
@@ -3008,6 +3027,10 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
       setShowNewDetail(false);
       setSetAddDesignationId('');
     } catch (e: any) {
+      if (isDesignationDuplicateError(e.message)) {
+        window.alert(t('designations.duplicateExistsModal'));
+        return;
+      }
       setError(e.message || t('projectDetailExtra.addDetailToSetFailed'));
     }
   };
@@ -3237,7 +3260,7 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
                 <SearchableSelect value={showNewDetail ? '__new__' : String(selectedDetailId || '')} onChange={(e) => { const v = e.target.value; if (v === '__new__') setShowNewDetail(true); else { setShowNewDetail(false); setSelectedDetailId(v === '' ? '' : Number(v)); } }} style={{ padding: 4, minWidth: 260 }}>
                   <option value="">{t('projectDetailExtra.pickFromCatalog')}</option>
                   {designations
-                    .filter((d) => (detailSearchBy === 'sap' ? (d.sap_number ?? '').trim() : (d.alias ?? '').trim()))
+                    .filter((d) => designationListFilter(d, detailSearchBy))
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {designationChooserLabel(d, detailSearchBy)}
@@ -3247,7 +3270,7 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
                 </SearchableSelect>
                 {selectedDetail && (
                   <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>
-                    {t('designations.sapCol')}: <strong>{formatSapNumberForDisplay(selectedDetail.sap_number) || t('common.dash')}</strong> · {t('designations.aliasCol')}: <strong>{selectedDetail.alias ?? t('common.dash')}</strong>
+                    {t('designations.sapCol')}: <strong>{detailFieldDisplay(selectedDetail.sap_number, true)}</strong> · {t('designations.aliasCol')}: <strong>{detailFieldDisplay(selectedDetail.alias)}</strong>
                     {selectedDetail.free_text && <> · {t('designations.freeTextCol')}: {selectedDetail.free_text}</>}
                   </div>
                 )}
@@ -3291,7 +3314,7 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
                 >
                   <option value="">{t('projectDetailExtra.pickDetailToAdd')}</option>
                   {designations
-                    .filter((d) => (setSearchBy === 'sap' ? (d.sap_number ?? '').trim() : (d.alias ?? '').trim()))
+                    .filter((d) => designationListFilter(d, setSearchBy))
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {designationChooserLabel(d, setSearchBy)}

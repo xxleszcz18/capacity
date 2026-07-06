@@ -66,6 +66,58 @@ phasesRouter.delete('/:id', (req, res) => {
 export const designationsRouter = Router();
 const designationCols = 'id, designation, sap_number, alias, free_text, slot_number';
 
+const DESIGNATION_EMPTY_MARKERS = new Set(['', '-', '—']);
+
+function normalizeOptionalDesignationField(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  if (DESIGNATION_EMPTY_MARKERS.has(s.toLowerCase())) return null;
+  return s;
+}
+
+function designationTripleKey(sap: string | null, alias: string | null, free_text: string | null): string {
+  const lc = (v: string | null) => (v ?? '').toLocaleLowerCase('pl');
+  return `${lc(sap)}\u0001${lc(alias)}\u0001${lc(free_text)}`;
+}
+
+function findDuplicateDesignationId(
+  sap: string | null,
+  alias: string | null,
+  free_text: string | null,
+  excludeId?: number
+): number | null {
+  const targetKey = designationTripleKey(sap, alias, free_text);
+  const rows = db.prepare('SELECT id, sap_number, alias, free_text, designation FROM part_designations').all() as {
+    id: number;
+    sap_number: string | null;
+    alias: string | null;
+    free_text: string | null;
+    designation: string | null;
+  }[];
+  for (const row of rows) {
+    if (excludeId != null && Number(row.id) === excludeId) continue;
+    const rowFree =
+      normalizeOptionalDesignationField(row.free_text) ?? normalizeOptionalDesignationField(row.designation);
+    const rowKey = designationTripleKey(
+      normalizeOptionalDesignationField(row.sap_number),
+      normalizeOptionalDesignationField(row.alias),
+      rowFree
+    );
+    if (rowKey === targetKey) return Number(row.id);
+  }
+  return null;
+}
+
+function buildDesignationValue(sap: string | null, alias: string | null, free_text: string | null): string {
+  const parts = [sap, alias, free_text].filter((p): p is string => Boolean(p));
+  if (parts.length === 0) return '-';
+  if (parts.length === 1) return parts[0];
+  return parts.join(' | ');
+}
+
+const DESIGNATION_DUPLICATE_ERROR = 'Detal o takim oznaczeniu już istnieje i nie został utworzony kolejny';
+
 function mapDesignationRow(row: any): any {
   return {
     id: row.id,
@@ -180,22 +232,37 @@ designationsRouter.get('/', (_req, res) => {
 });
 designationsRouter.post('/', (req, res) => {
   const body = req.body as any;
-  const sap_number = body.sap_number != null ? String(body.sap_number).trim() : '';
-  const alias = body.alias != null ? String(body.alias).trim() : '';
-  const free_text = body.free_text != null ? String(body.free_text).trim() : '';
+  const sap_number = normalizeOptionalDesignationField(body.sap_number);
+  const alias = normalizeOptionalDesignationField(body.alias);
+  const free_text = normalizeOptionalDesignationField(body.free_text);
   const slot_number = body.slot_number != null ? String(body.slot_number).trim() : null;
-  const designation = body.designation != null ? String(body.designation).trim() : (sap_number || alias || free_text || '');
-  if (!designation && !sap_number && !alias && !free_text) return res.status(400).json({ error: 'Wypełnij co najmniej jedno pole (Nr SAP, Alias lub Free text)' });
+  if (!sap_number && !alias && !free_text) {
+    return res.status(400).json({ error: 'Wypełnij co najmniej jedno pole (Nr SAP, Alias lub Free text)' });
+  }
+  if (findDuplicateDesignationId(sap_number, alias, free_text) != null) {
+    return res.status(409).json({ error: DESIGNATION_DUPLICATE_ERROR });
+  }
+  const designation =
+    body.designation != null ? String(body.designation).trim() : buildDesignationValue(sap_number, alias, free_text);
   try {
-    const r = db.prepare('INSERT INTO part_designations (designation, sap_number, alias, free_text, slot_number) VALUES (?, ?, ?, ?, ?)').run(designation || sap_number || alias || free_text, sap_number || null, alias || null, free_text || null, slot_number || null);
+    const r = db
+      .prepare('INSERT INTO part_designations (designation, sap_number, alias, free_text, slot_number) VALUES (?, ?, ?, ?, ?)')
+      .run(designation, sap_number, alias, free_text, slot_number || null);
     const row = db.prepare(`SELECT ${designationCols} FROM part_designations WHERE id = ?`).get(r.lastInsertRowid) as any;
-    const mapped = row || { id: r.lastInsertRowid, designation: designation || sap_number || alias || free_text, sap_number: sap_number || null, alias: alias || null, free_text: free_text || null, slot_number: slot_number || null };
+    const mapped = row || {
+      id: r.lastInsertRowid,
+      designation,
+      sap_number,
+      alias,
+      free_text,
+      slot_number: slot_number || null,
+    };
     const mid = Number(mapped.id);
     res.status(201).json(
       mapDesignationWithAggregates(mapped, loadProjectsByDesignationIds([mid]), loadMachineLinesByDesignationIds([mid]))
     );
   } catch (e: any) {
-    if (e?.message?.includes('UNIQUE')) return res.status(400).json({ error: 'Detal o takim oznaczeniu już istnieje' });
+    if (e?.message?.includes('UNIQUE')) return res.status(409).json({ error: DESIGNATION_DUPLICATE_ERROR });
     res.status(500).json({ error: e?.message || 'Błąd zapisu detalu' });
   }
 });
@@ -204,21 +271,37 @@ designationsRouter.put('/:id', (req, res) => {
   const body = req.body as any;
   const existing = db.prepare(`SELECT ${designationCols} FROM part_designations WHERE id = ?`).get(id) as any;
   if (!existing) return res.status(404).json({ error: 'Not found' });
-  const sap_number = body.sap_number != null ? String(body.sap_number).trim() : null;
-  const alias = body.alias != null ? String(body.alias).trim() : null;
-  const free_text = body.free_text != null ? String(body.free_text).trim() : null;
+  const sap_number =
+    body.sap_number !== undefined
+      ? normalizeOptionalDesignationField(body.sap_number)
+      : normalizeOptionalDesignationField(existing.sap_number);
+  const alias =
+    body.alias !== undefined ? normalizeOptionalDesignationField(body.alias) : normalizeOptionalDesignationField(existing.alias);
+  const free_text =
+    body.free_text !== undefined
+      ? normalizeOptionalDesignationField(body.free_text)
+      : normalizeOptionalDesignationField(existing.free_text) ??
+        normalizeOptionalDesignationField(existing.designation);
   const slot_number = Object.prototype.hasOwnProperty.call(body, 'slot_number')
     ? body.slot_number != null && String(body.slot_number).trim() !== ''
       ? String(body.slot_number).trim()
       : null
     : (existing.slot_number ?? null);
-  const designation = body.designation != null ? String(body.designation).trim() : null;
+  if (!sap_number && !alias && !free_text) {
+    return res.status(400).json({ error: 'Wypełnij co najmniej jedno pole (Nr SAP, Alias lub Free text)' });
+  }
+  if (findDuplicateDesignationId(sap_number, alias, free_text, id) != null) {
+    return res.status(409).json({ error: DESIGNATION_DUPLICATE_ERROR });
+  }
+  const designation =
+    body.designation != null ? String(body.designation).trim() : buildDesignationValue(sap_number, alias, free_text);
   try {
-    db.prepare('UPDATE part_designations SET designation = COALESCE(?, designation), sap_number = ?, alias = ?, free_text = ?, slot_number = ? WHERE id = ?')
-      .run(designation ?? (sap_number || alias || free_text), sap_number, alias, free_text, slot_number, id);
+    db.prepare('UPDATE part_designations SET designation = ?, sap_number = ?, alias = ?, free_text = ?, slot_number = ? WHERE id = ?')
+      .run(designation, sap_number, alias, free_text, slot_number, id);
     const row = db.prepare(`SELECT ${designationCols} FROM part_designations WHERE id = ?`).get(id) as any;
     res.json(mapDesignationWithAggregates(row, loadProjectsByDesignationIds([id]), loadMachineLinesByDesignationIds([id])));
   } catch (e: any) {
+    if (e?.message?.includes('UNIQUE')) return res.status(409).json({ error: DESIGNATION_DUPLICATE_ERROR });
     res.status(500).json({ error: e?.message || 'Błąd zapisu detalu' });
   }
 });
