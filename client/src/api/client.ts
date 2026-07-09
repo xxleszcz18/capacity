@@ -26,7 +26,7 @@ function toQuery(params: Record<string, string | number | boolean | undefined | 
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const init: RequestInit = { cache: 'no-store', ...options };
+  const init: RequestInit = { cache: 'no-store', credentials: 'include', ...options };
   const headers = new Headers(init.headers as HeadersInit | undefined);
   const hasBody = init.body != null && init.body !== '';
   if (hasBody && !headers.has('Content-Type')) {
@@ -41,11 +41,122 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    window.dispatchEvent(new CustomEvent('capacity:unauthorized'));
+  }
   if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText);
   return data as T;
 }
 
+export type AuthUser = {
+  id: number;
+  username: string | null;
+  email: string | null;
+  display_name: string | null;
+  role_id: number;
+  role_name: string;
+  role_ids: number[];
+  role_names: string[];
+  is_active: number;
+  must_change_password: number;
+  is_guest?: number;
+  login: string;
+};
+
 export const api = {
+  auth: {
+    login: (body: { login: string; password: string }) =>
+      request<{ user: AuthUser; permissions: string[] }>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
+    logout: () => request<void>('/auth/logout', { method: 'POST' }),
+    me: () => request<{ user: AuthUser; permissions: string[] }>('/auth/me'),
+    changePassword: (body: { current_password: string; new_password: string }) =>
+      request<{ ok: boolean }>('/auth/change-password', { method: 'POST', body: JSON.stringify(body) }),
+    forgotPassword: (body: { login: string }) =>
+      request<{ ok: boolean; message?: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(body) }),
+    resetPassword: (body: { token: string; password: string }) =>
+      request<{ ok: boolean }>('/auth/reset-password', { method: 'POST', body: JSON.stringify(body) }),
+    guestAvailable: () => request<{ available: boolean }>('/auth/guest-available'),
+    adminContacts: () =>
+      request<{
+        contacts: {
+          display_name: string | null;
+          email: string | null;
+          username: string | null;
+          label: string;
+          contact: string;
+        }[];
+      }>('/auth/admin-contacts'),
+    guestLogin: () => request<{ user: AuthUser; permissions: string[] }>('/auth/guest', { method: 'POST' }),
+  },
+  adminUsers: {
+    list: () => request<AuthUser[]>('/admin/users'),
+    create: (body: {
+      username?: string;
+      email?: string;
+      display_name?: string;
+      role_id?: number;
+      role_ids?: number[];
+      password: string;
+    }) => request<AuthUser>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
+    update: (
+      id: number,
+      body: Partial<{
+        username: string;
+        email: string;
+        display_name: string;
+        role_id: number;
+        role_ids: number[];
+        is_active: boolean;
+      }>
+    ) => request<AuthUser>(`/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: number) => request<void>(`/admin/users/${id}`, { method: 'DELETE' }),
+    resetPassword: (id: number, send_email?: boolean) =>
+      request<{ reset_url: string; email_sent: boolean }>(`/admin/users/${id}/reset-password`, {
+        method: 'POST',
+        body: JSON.stringify({ send_email: send_email === true }),
+      }),
+    listResetRequests: () =>
+      request<
+        {
+          id: number;
+          user_id: number;
+          status: string;
+          requested_at: string;
+          username: string | null;
+          email: string | null;
+          display_name: string | null;
+        }[]
+      >('/admin/users/password-reset-requests'),
+    resolveResetRequest: (id: number, action: 'approve' | 'reject', opts?: { send_email?: boolean; note?: string }) =>
+      request<{ ok: boolean; status: string; reset_url?: string; email_sent?: boolean }>(
+        `/admin/users/password-reset-requests/${id}`,
+        { method: 'PATCH', body: JSON.stringify({ action, ...opts }) }
+      ),
+  },
+  adminRoles: {
+    list: () =>
+      request<
+        {
+          id: number;
+          name: string;
+          description: string | null;
+          is_system: number;
+          login_required: number;
+          permissions: string[];
+        }[]
+      >('/admin/roles'),
+    permissionsCatalog: () => request<{ permissions: string[] }>('/admin/roles/permissions-catalog'),
+    create: (body: { name: string; description?: string; login_required?: boolean }) =>
+      request<{ id: number; name: string; permissions: string[]; login_required: number }>('/admin/roles', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    update: (id: number, body: { name?: string; description?: string; login_required?: boolean }) =>
+      request(`/admin/roles/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    setPermissions: (id: number, permissions: string[]) =>
+      request(`/admin/roles/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions }) }),
+    delete: (id: number) => request<void>(`/admin/roles/${id}`, { method: 'DELETE' }),
+  },
   admin: {
     getBackupSettings: () =>
       request<{

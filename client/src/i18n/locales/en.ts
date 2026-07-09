@@ -64,9 +64,11 @@ export const en: TranslationTree = {
     machines: 'Machines',
     projects: 'Projects',
     details: 'Parts',
+    dataVisualization: 'Data visualization',
     changeHistory: 'Change history',
     scenarioList: 'Scenario list',
     administration: 'Administration',
+    usersAndPermissions: 'Users & permissions',
     scenarioWorkspace: 'Workspace: scenarios',
     scenarioWithActive:
       'Calculator and change history work on a scenario copy (project statuses in scenario view). Create new projects and parts after switching to “Capacity version”.',
@@ -100,6 +102,11 @@ export const en: TranslationTree = {
     userManual: 'User manual',
     userManualDesc:
       'Complete system guide: modules, data dependencies, calculation formulas, and flow diagrams. Available in PL, EN, and DE.',
+    users: 'Users',
+    usersDesc: 'Accounts, roles, password resets, and approval of recovery requests.',
+    roles: 'Roles & permissions',
+    rolesDesc: 'Role definitions and view / edit / delete permission matrix.',
+    usersPermissionsSubtitle: 'Choose an area for account and permission management.',
     backAdmin: '← Administration',
   },
   settings: {

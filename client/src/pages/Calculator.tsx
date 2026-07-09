@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useScenarioMode } from '../context/ScenarioModeContext';
 import { useEffectiveCalculationProfile } from '../context/OcuModeContext';
 import { useContractVolumes } from '../context/ContractVolumesContext';
+import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
 import { localeDateTime } from '../i18n/reportLabels';
 import { api } from '../api/client';
@@ -128,13 +129,14 @@ const ALT_BORDER_MIXED_SOLID = '#f4511e';
 function percentCellStyle(
   pct: number,
   altBorder: 'none' | 'unused' | 'all_alt' | 'mixed' | undefined,
-  visual: VisualSettings
+  visual: VisualSettings,
+  allocEnabled = true
 ): CSSProperties {
   const bg = loadColor(pct, visual);
   const base: CSSProperties = {
     padding: 0,
     textAlign: 'center',
-    cursor: 'pointer',
+    cursor: allocEnabled ? 'pointer' : 'default',
     boxSizing: 'border-box',
     position: 'relative',
   };
@@ -159,9 +161,10 @@ function percentCellTitle(
   year: number,
   altBorder: 'none' | 'unused' | 'all_alt' | 'mixed' | undefined,
   detailBreakdown: { project_label?: string; detail_label: string; contribution_percent: number; has_rfq?: boolean }[] | undefined,
-  t: (key: string, params?: Record<string, string | number>) => string
+  t: (key: string, params?: Record<string, string | number>) => string,
+  allocEnabled = true
 ): string {
-  const open = t('calculator.tooltip.openAlloc', { year });
+  const open = allocEnabled ? t('calculator.tooltip.openAlloc', { year }) : '';
   const formatPct = (v: number) => {
     const rounded = Math.round(v * 100) / 100;
     if (rounded === 0 && v > 0) return '<0.01';
@@ -395,6 +398,10 @@ function calculatorPdfTableLayout(doc: jsPDF, yearCount: number) {
 
 export default function Calculator() {
   const { t, te, locale } = useI18n();
+  const { hasPermission, hasAnyPermission } = useAuth();
+  const canDownloadReports = hasPermission('calculator.download');
+  const canAllocate = hasPermission('projects.edit');
+  const canViewMachineDetails = hasAnyPermission(['machines.details', 'machines.edit']);
   const [searchParams] = useSearchParams();
   const scenarioFromUrl = searchParams.get('scenarioId') != null ? Number(searchParams.get('scenarioId')) : NaN;
   const { setActiveScenario, activeScenarioId: ctxScenarioId, activeScenarioName, appSection } = useScenarioMode();
@@ -549,8 +556,15 @@ export default function Calculator() {
   }, [fetchCalculator]);
 
   useEffect(() => {
-    api.allocation.overloaded({ year: new Date().getFullYear(), threshold: 100 }).then((r) => setOverloaded(r.machines || []));
-  }, []);
+    if (!canAllocate) {
+      setOverloaded([]);
+      return;
+    }
+    api.allocation
+      .overloaded({ year: new Date().getFullYear(), threshold: 100 })
+      .then((r) => setOverloaded(r.machines || []))
+      .catch(() => setOverloaded([]));
+  }, [canAllocate]);
   useEffect(() => {
     const ids = new Set((data?.machines ?? []).map((m: any) => Number(m.machine_id)));
     setReportMachineIds((prev) => prev.filter((id) => ids.has(Number(id))));
@@ -1425,7 +1439,9 @@ export default function Calculator() {
           )}
         </h1>
         <div className="calculator-page-actions">
+          {canDownloadReports && (
           <button type="button" onClick={() => setReportModalOpen(true)} className="calculator-primary-btn">{t('calculator.report')}</button>
+          )}
           <button
             type="button"
             className="calculator-primary-btn"
@@ -1682,16 +1698,21 @@ export default function Calculator() {
               <span key={m.machine_id} style={{ marginRight: 8, display: 'inline-block', marginBottom: 4 }}>
                 {m.internal_number} ({m.load_percent}%)
                 <button
-                  onClick={() =>
+                  type="button"
+                  disabled={!canAllocate}
+                  onClick={() => {
+                    if (!canAllocate) return;
                     setAllocationModal({
                       machineId: m.machine_id,
                       internal_number: m.internal_number,
                       preselectedYear: m.year,
                       calculatorYears: data?.machines?.find((x: any) => Number(x.machine_id) === Number(m.machine_id))
                         ?.years,
-                    })
-                  }
-                  style={{ marginLeft: 4, padding: '2px 6px', fontSize: 12, background: '#2196f3', color: 'white', border: 'none', borderRadius: 4 }}
+                    });
+                  }}
+                  className={`calc-action-btn ${canAllocate ? 'calc-action-btn--blue' : 'calc-action-btn--disabled'}`}
+                  style={{ marginLeft: 4 }}
+                  title={!canAllocate ? t('auth.forbidden') : undefined}
                 >
                   {t('calculator.transferVolume')}
                 </button>
@@ -1767,30 +1788,37 @@ export default function Calculator() {
                   return (
                     <td
                       key={y}
-                      role="button"
-                      tabIndex={0}
+                      role={canAllocate ? 'button' : undefined}
+                      tabIndex={canAllocate ? 0 : undefined}
                       className="calc-year-col"
-                      style={percentCellStyle(pct, altB, visualSettings)}
-                      title={percentCellTitle(y, altB, cell?.detail_breakdown, t)}
-                      onClick={() =>
-                        setAllocationModal({
-                          machineId: m.machine_id,
-                          internal_number: m.internal_number,
-                          preselectedYear: y,
-                          calculatorYears: m.years,
-                        })
+                      style={percentCellStyle(pct, altB, visualSettings, canAllocate)}
+                      title={percentCellTitle(y, altB, cell?.detail_breakdown, t, canAllocate)}
+                      onClick={
+                        canAllocate
+                          ? () =>
+                              setAllocationModal({
+                                machineId: m.machine_id,
+                                internal_number: m.internal_number,
+                                preselectedYear: y,
+                                calculatorYears: m.years,
+                              })
+                          : undefined
                       }
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setAllocationModal({
-                            machineId: m.machine_id,
-                            internal_number: m.internal_number,
-                            preselectedYear: y,
-                            calculatorYears: m.years,
-                          });
-                        }
-                      }}
+                      onKeyDown={
+                        canAllocate
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setAllocationModal({
+                                  machineId: m.machine_id,
+                                  internal_number: m.internal_number,
+                                  preselectedYear: y,
+                                  calculatorYears: m.years,
+                                });
+                              }
+                            }
+                          : undefined
+                      }
                     >
                       {pct}%
                       {visualSettings.show_rfq_badge && cell?.has_rfq && (
@@ -1826,18 +1854,29 @@ export default function Calculator() {
                   <div className="calc-details-actions">
                   <button
                     type="button"
-                    onClick={() =>
+                    disabled={!canAllocate}
+                    onClick={() => {
+                      if (!canAllocate) return;
                       setAllocationModal({
                         machineId: m.machine_id,
                         internal_number: m.internal_number,
                         calculatorYears: m.years,
-                      })
-                    }
-                    style={{ padding: '0.25rem 0.5rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}
+                      });
+                    }}
+                    className={`calc-action-btn ${canAllocate ? 'calc-action-btn--green' : 'calc-action-btn--disabled'}`}
+                    title={!canAllocate ? t('auth.forbidden') : undefined}
                   >
                     {t('calculator.transferVolume')}
                   </button>
-                  <Link to={`/maszyny/${m.machine_id}`} style={{ padding: '0.25rem 0.5rem', background: '#2196f3', color: 'white', textDecoration: 'none', borderRadius: 4 }}>{t('common.details')}</Link>
+                  {canViewMachineDetails ? (
+                    <Link to={`/maszyny/${m.machine_id}`} className="calc-action-btn calc-action-btn--blue">
+                      {t('common.details')}
+                    </Link>
+                  ) : (
+                    <span className="calc-action-btn calc-action-btn--disabled" title={t('auth.forbidden')}>
+                      {t('common.details')}
+                    </span>
+                  )}
                   </div>
                 </td>
               </tr>
@@ -1903,7 +1942,7 @@ export default function Calculator() {
       )}
       <CalculatorLegend visual={visualSettings} t={t} />
       </DataLoadingOverlay>
-      {allocationModal && data && (
+      {allocationModal && data && canAllocate && (
         <AllocationModal
           machineId={allocationModal.machineId}
           internalNumber={allocationModal.internal_number}

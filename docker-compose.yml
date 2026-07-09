@@ -20,6 +20,17 @@ services:
       PORT: "3001"
       DB_PATH: /data/capacity.db
       CLIENT_DIST: /app/client/dist
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-in-production}
+      AUTH_ENFORCE: ${AUTH_ENFORCE:-1}
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin12345}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3001}
+      PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     volumes:
       # Baza SQLite (persystencja między restartami)
       - capacity-data:/data
@@ -32,7 +43,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/api/settings').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:'+(process.env.PORT||3001)+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 10s

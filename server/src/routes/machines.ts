@@ -2,12 +2,10 @@ import { Router } from 'express';
 import { db, saveDb } from '../db/connection.js';
 import { parseCsvQueryParamSingleOrMulti, parseMachineStatusList, sqlInClause } from '../utils/queryListParams.js';
 import {
-  getEffectiveVolumeForPartPreferContract,
-  getYearFractionFromSopEop,
   resolveOperationVolumeForYear,
   resolveSettingsForYear,
+  resolveWeeklyVolumeFromResolved,
   volumeToWeekly,
-  type OperationVolumeSource,
 } from '../services/capacityService.js';
 import {
   getEffectiveVolumeForPartScenarioPreferContract,
@@ -24,31 +22,28 @@ import { ensureMachineTypesExist } from '../utils/machineTypes.js';
 
 export const machinesRouter = Router();
 
-/** Tygodniowy wolumen operacji w roku — z ułamkiem SOP/EOP jak w kalkulatorze. */
+/** Tygodniowy wolumen operacji w roku — z ułamkiem SOP/EOP lub logiką ręcznego roku niepełnego. */
 function effectiveWeeklyVolumeForOperationYear(
   row: { project_id?: number | null; part_id?: number | null; sop?: string; eop?: string },
   year: number,
-  resolved: { volume_value: number; volume_unit: 'annual' | 'monthly' | 'weekly'; source: OperationVolumeSource },
+  resolved: {
+    volume_value: number;
+    volume_unit: 'annual' | 'monthly' | 'weekly';
+    volume_origin: import('../services/capacityService.js').VolumeEntryOrigin;
+    count_after_eop?: boolean;
+  },
   settings: Parameters<typeof volumeToWeekly>[2],
-  useContractualVolumes: boolean,
-  scenarioBundle?: ScenarioBundle | null
+  _useContractualVolumes: boolean,
+  _scenarioBundle?: ScenarioBundle | null
 ): number {
-  let weekly = volumeToWeekly(resolved.volume_value, resolved.volume_unit, settings);
-  if (row.project_id == null) return weekly;
-  let fraction = 1;
-  if (row.part_id) {
-    const effective =
-      scenarioBundle != null
-        ? getEffectiveVolumeForPartScenarioPreferContract(row.project_id, row.part_id, year, scenarioBundle, useContractualVolumes)
-        : getEffectiveVolumeForPartPreferContract(row.project_id, row.part_id, year, useContractualVolumes);
-    fraction =
-      resolved.source === 'part' && effective && (effective as { count_after_eop?: boolean }).count_after_eop
-        ? 1
-        : getYearFractionFromSopEop(row.sop ?? '', row.eop ?? '', year);
-  } else {
-    fraction = getYearFractionFromSopEop(row.sop ?? '', row.eop ?? '', year);
-  }
-  return weekly * fraction;
+  return resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+    sop: row.sop ?? '',
+    eop: row.eop ?? '',
+    year,
+    volume_origin: resolved.volume_origin,
+    count_after_eop: resolved.count_after_eop,
+    has_project: row.project_id != null,
+  }).weekly;
 }
 
 /** Słownik typów + wartości występujące na maszynach (np. po imporcie). */

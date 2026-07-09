@@ -12,8 +12,9 @@ import StatusMultiFilter, { type ProjectStatusFilterValue } from '../components/
 import { joinCsvFilter } from '../utils/filterParams';
 import { digitsOnlyMachineLine, parseMachineLineForSave, toStoredMachineLine } from '../utils/machineLineInput';
 import { parseInternalMachineNumber, parseOptionalInternalMachineNumber } from '../utils/internalMachineNumber';
-import { machineStatusFromDb, machineStatusSelectStyle } from '../utils/machineStatusStyle';
+import { machineStatusFromDb, machineStatusReadonlyStyle, machineStatusSelectStyle } from '../utils/machineStatusStyle';
 import { useI18n } from '../context/I18nContext';
+import { useAuth } from '../context/AuthContext';
 
 type MachineFormStatus = 'active' | 'inactive' | 'RFQ';
 
@@ -93,6 +94,9 @@ function rowsToMachines(rows: string[][]): any[] {
 
 export default function Machines() {
   const { t } = useI18n();
+  const { hasAnyPermission } = useAuth();
+  const canChangeStatus = hasAnyPermission(['machines.change_status', 'machines.edit']);
+  const canViewDetails = hasAnyPermission(['machines.details', 'machines.edit']);
   const location = useLocation();
   const scenarioQs = location.search || '';
   const [list, setList] = useState<any[]>([]);
@@ -450,6 +454,7 @@ export default function Machines() {
               </td>
               <td style={{ padding: '0.75rem' }}>{m.type}</td>
               <td style={{ padding: '0.75rem', minWidth: 140 }}>
+                {canChangeStatus ? (
                 <select
                   value={machineStatusFromDb(m.status)}
                   onChange={(e) => void handleRowStatusChange(m.id, m.status, e.target.value as MachineFormStatus)}
@@ -461,9 +466,22 @@ export default function Machines() {
                   <option value="inactive">{t('common.inactive')}</option>
                   <option value="RFQ">{t('common.rfq')}</option>
                 </select>
+                ) : (
+                  <span style={machineStatusReadonlyStyle(m.status)}>
+                    {machineStatusFromDb(m.status) === 'active'
+                      ? t('common.active')
+                      : machineStatusFromDb(m.status) === 'RFQ'
+                        ? t('common.rfq')
+                        : t('common.inactive')}
+                  </span>
+                )}
               </td>
               <td style={{ padding: '0.75rem' }}>
+                {canViewDetails ? (
                 <Link to={`/maszyny/${m.id}${scenarioQs}`} style={{ padding: '0.25rem 0.5rem', background: '#2196f3', color: 'white', textDecoration: 'none', borderRadius: 4 }}>{t('common.details')}</Link>
+                ) : (
+                  <span style={{ color: '#999', fontSize: 13 }}>{t('common.dash')}</span>
+                )}
               </td>
             </tr>
           ))}

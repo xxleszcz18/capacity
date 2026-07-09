@@ -5,8 +5,10 @@ import type { AppSection } from '../context/ScenarioModeContext';
 import { scenarioNavQuery, useScenarioMode } from '../context/ScenarioModeContext';
 import { useContractVolumes } from '../context/ContractVolumesContext';
 import { useI18n } from '../context/I18nContext';
+import { useAuth } from '../context/AuthContext';
 import { useOcuMode } from '../context/OcuModeContext';
 import LanguageSwitcher from './LanguageSwitcher';
+import UserMenu from './UserMenu';
 
 async function pickLatestScenario(): Promise<{ id: number; name: string } | null> {
   const list = await api.scenarios.list({ archived: false });
@@ -85,6 +87,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     useScenarioMode();
   const { useContractualVolumes, setUseContractualVolumes } = useContractVolumes();
   const { t } = useI18n();
+  const { hasPermission, hasAnyPermission } = useAuth();
   const { ocuFeatureEnabled, calculationProfile, toggleCalculationProfile } = useOcuMode();
   const [contractualFrameColor, setContractualFrameColor] = useState('#ff9800');
 
@@ -192,20 +195,31 @@ export default function Layout({ children }: { children: ReactNode }) {
     ]
   );
 
-  const capacityMainNav: { path: string; labelKey: string; end?: boolean }[] = [
-    { path: '/kalkulator', labelKey: 'layout.calculator', end: true },
-    { path: '/maszyny', labelKey: 'layout.machines' },
-    { path: '/projekty', labelKey: 'layout.projects' },
-    { path: '/detale', labelKey: 'layout.details' },
+  const capacityMainNav: { path: string; labelKey: string; end?: boolean; permission: string }[] = [
+    { path: '/kalkulator', labelKey: 'layout.calculator', end: true, permission: 'calculator.view' },
+    { path: '/maszyny', labelKey: 'layout.machines', permission: 'machines.view' },
+    { path: '/projekty', labelKey: 'layout.projects', permission: 'projects.view' },
+    { path: '/detale', labelKey: 'layout.details', permission: 'designations.view' },
+    { path: '/wizualizacja-danych', labelKey: 'layout.dataVisualization', permission: 'admin_data_viz.view' },
   ];
 
-  const scenarioMainNav: { path: string; labelKey: string; end?: boolean }[] = [
-    { path: '/kalkulator', labelKey: 'layout.calculator', end: true },
+  const scenarioMainNav: { path: string; labelKey: string; end?: boolean; permission: string }[] = [
+    { path: '/kalkulator', labelKey: 'layout.calculator', end: true, permission: 'calculator.view' },
   ];
 
-  const mainNav = scenarioChrome ? scenarioMainNav : capacityMainNav;
+  const mainNav = (scenarioChrome ? scenarioMainNav : capacityMainNav).filter((item) => hasPermission(item.permission));
 
-  const scenarioListNav = { path: '/scenariusze', labelKey: 'layout.scenarioList' };
+  const scenarioListNav = { path: '/scenariusze', labelKey: 'layout.scenarioList', permission: 'scenarios.view' };
+
+  const showAdminLink = hasAnyPermission([
+    'admin_database.view',
+    'admin_settings.view',
+    'change_history.view',
+    'user_management.view',
+    'role_management.view',
+  ]);
+
+  const showScenariosWorkspace = hasPermission('scenarios.view');
 
   return (
     <div
@@ -334,7 +348,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               scenarioChrome={scenarioChrome}
             />
           ))}
-          {appSection === 'scenarios' && (
+          {appSection === 'scenarios' && showScenariosWorkspace && (
             <MainNavLink
               key={scenarioListNav.path}
               path={scenarioListNav.path}
@@ -346,6 +360,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               scenarioChrome={scenarioChrome}
             />
           )}
+          {showAdminLink && (
           <NavLink
             to={`/administracja${adminQuery}`}
             style={({ isActive }) => ({
@@ -358,6 +373,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           >
             {t('layout.administration')}
           </NavLink>
+          )}
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div
@@ -437,14 +453,16 @@ export default function Layout({ children }: { children: ReactNode }) {
             <button
               type="button"
               onClick={() => void switchSection('scenarios')}
+              disabled={!showScenariosWorkspace}
               style={{
                 padding: '0.45rem 0.85rem',
                 border: 'none',
                 borderLeft: `1px solid ${headerAccent}`,
-                cursor: 'pointer',
+                cursor: showScenariosWorkspace ? 'pointer' : 'not-allowed',
                 fontSize: 13,
                 fontWeight: 600,
                 whiteSpace: 'nowrap',
+                opacity: showScenariosWorkspace ? 1 : 0.45,
                 background: appSection === 'scenarios' ? '#1565c0' : 'transparent',
                 color: appSection === 'scenarios' ? '#fff' : scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
               }}
@@ -452,6 +470,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               {t('layout.scenarios')}
             </button>
           </div>
+          <UserMenu accentColor={headerAccent} scenarioChrome={scenarioChrome} />
           <LanguageSwitcher accentColor={headerAccent} />
           <Link
             to="/kalkulator"

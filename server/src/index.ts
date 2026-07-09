@@ -3,6 +3,10 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { initDb, saveDb } from './db/connection.js';
+import { bootstrapAuthIfEmpty } from './auth/userService.js';
+import { optionalAuth, requireAuth, requirePermissionForResource, requireAdminAccess } from './middleware/auth.js';
+import { authRouter } from './routes/auth.js';
+import { usersAdminRouter, rolesAdminRouter } from './routes/usersAdmin.js';
 import { settingsRouter, phasesRouter, designationsRouter, machineTypesRouter } from './routes/settings.js';
 import { machinesRouter } from './routes/machines.js';
 import { machineGroupsRouter } from './routes/machineGroups.js';
@@ -15,28 +19,33 @@ import { scenariosRouter } from './routes/scenarios.js';
 import { adminRouter, startAdminBackupScheduler } from './routes/admin.js';
 
 const app = express();
-/** Bez tego przeglądarka nie udostępnia JS niestandardowych nagłówków odpowiedzi (fetch Headers) przy żądaniach cross-origin (np. VITE_API_BASE → localhost:3001). */
 app.use(
   cors({
+    origin: true,
+    credentials: true,
     exposedHeaders: ['Content-Disposition', 'X-Capacity-Data-Import-Schema'],
   }),
 );
 app.use(express.json());
+app.use(optionalAuth);
 
-// Montowanie PRZED głównym routerem ustawień, żeby /phases i /designations nie trafiały do /:id
-app.use('/api/settings/phases', phasesRouter);
-app.use('/api/settings/designations', designationsRouter);
-app.use('/api/settings/machine-types', machineTypesRouter);
-app.use('/api/settings', settingsRouter);
-app.use('/api/machines', machinesRouter);
-app.use('/api/machine-groups', machineGroupsRouter);
-app.use('/api/nests', nestsRouter);
-app.use('/api/alternatives', alternativesRouter);
-app.use('/api/projects', projectsRouter);
-app.use('/api/capacity', capacityRouter);
-app.use('/api/allocation', allocationRouter);
-app.use('/api/scenarios', scenariosRouter);
-app.use('/api/admin', adminRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/admin/users', usersAdminRouter);
+app.use('/api/admin/roles', rolesAdminRouter);
+
+app.use('/api/settings/phases', requireAuth, requirePermissionForResource('admin_database'), phasesRouter);
+app.use('/api/settings/designations', requireAuth, requirePermissionForResource('designations'), designationsRouter);
+app.use('/api/settings/machine-types', requireAuth, requirePermissionForResource('admin_database'), machineTypesRouter);
+app.use('/api/settings', requireAuth, requirePermissionForResource('admin_settings'), settingsRouter);
+app.use('/api/machines', requireAuth, requirePermissionForResource('machines'), machinesRouter);
+app.use('/api/machine-groups', requireAuth, requirePermissionForResource('machines'), machineGroupsRouter);
+app.use('/api/nests', requireAuth, requirePermissionForResource('machines'), nestsRouter);
+app.use('/api/alternatives', requireAuth, requirePermissionForResource('machines'), alternativesRouter);
+app.use('/api/projects', requireAuth, requirePermissionForResource('projects'), projectsRouter);
+app.use('/api/capacity', requireAuth, requirePermissionForResource('calculator'), capacityRouter);
+app.use('/api/allocation', requireAuth, requirePermissionForResource('projects'), allocationRouter);
+app.use('/api/scenarios', requireAuth, requirePermissionForResource('scenarios'), scenariosRouter);
+app.use('/api/admin', requireAuth, requireAdminAccess, adminRouter);
 
 function resolveClientDist(): string | null {
   const fromEnv = process.env.CLIENT_DIST?.trim();
@@ -65,6 +74,7 @@ const PORT = process.env.PORT || 3001;
 
 async function main() {
   await initDb();
+  await bootstrapAuthIfEmpty();
   saveDb();
   setInterval(saveDb, 3000);
   startAdminBackupScheduler();

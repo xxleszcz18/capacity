@@ -8,7 +8,7 @@ import {
   resolveOperationVolumeForYear,
   getEffectiveVolumeForPart,
   getEffectiveVolumeForPartPreferContract,
-  getYearFractionFromSopEop,
+  resolveWeeklyVolumeFromResolved,
   resolveOperationCycleForCalculator,
   operationHasAlternativeCycle,
 } from './capacityService.js';
@@ -478,15 +478,16 @@ export function executeAllocation(
     return { success: false, error: 'Dla wybranego roku wolumen tej operacji wynosi 0.' };
   }
 
-  const effective = op.part_id ? getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, useContractualVolumes) : null;
-  const fraction =
-    op.project_id != null
-      ? resolved.source === 'part' && effective && (effective as any).count_after_eop
-        ? 1
-        : getYearFractionFromSopEop(op.sop ?? '', op.eop ?? '', year)
-      : 1;
-
-  const currentWeekly = volumeToWeekly(resolved.volume_value, resolved.volume_unit, settings) * fraction;
+  const weeklyResolved = resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+    sop: op.sop ?? '',
+    eop: op.eop ?? '',
+    year,
+    volume_origin: resolved.volume_origin,
+    count_after_eop: resolved.count_after_eop,
+    has_project: op.project_id != null,
+  });
+  const fraction = weeklyResolved.fraction;
+  const currentWeekly = weeklyResolved.weekly;
   const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = resolveAllocationMoveWeekly(
     volumeToMove,
     volumeUnit,
@@ -659,17 +660,16 @@ export function executeAllocationInScenario(
     return { success: false, error: 'Dla wybranego roku wolumen tej operacji wynosi 0.' };
   }
 
-  const effective = op.part_id
-    ? getEffectiveVolumeForPartScenarioPreferContract(op.project_id, op.part_id, year, bundle, useContractualVolumes)
-    : null;
-  const fraction =
-    op.project_id != null
-      ? resolved.source === 'part' && effective && (effective as any).count_after_eop
-        ? 1
-        : getYearFractionFromSopEop(String(sop), String(eop), year)
-      : 1;
-
-  const currentWeekly = volumeToWeekly(resolved.volume_value, resolved.volume_unit, settings) * fraction;
+  const weeklyResolved = resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+    sop: String(sop),
+    eop: String(eop),
+    year,
+    volume_origin: resolved.volume_origin,
+    count_after_eop: resolved.count_after_eop,
+    has_project: op.project_id != null,
+  });
+  const fraction = weeklyResolved.fraction;
+  const currentWeekly = weeklyResolved.weekly;
   const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = resolveAllocationMoveWeekly(
     volumeToMove,
     volumeUnit,

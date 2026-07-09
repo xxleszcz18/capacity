@@ -64,9 +64,11 @@ export const de: TranslationTree = {
     machines: 'Maschinen',
     projects: 'Projekte',
     details: 'Teile',
+    dataVisualization: 'Datenvisualisierung',
     changeHistory: 'Änderungsverlauf',
     scenarioList: 'Szenarioliste',
     administration: 'Administration',
+    usersAndPermissions: 'Benutzer & Berechtigungen',
     scenarioWorkspace: 'Arbeitsbereich: Szenarien',
     scenarioWithActive:
       'Kalkulator und Änderungsverlauf arbeiten mit einer Szenario-Kopie. Neue Projekte und Teile erstellen Sie nach Wechsel auf „Capacity-Version“.',
@@ -100,6 +102,11 @@ export const de: TranslationTree = {
     userManual: 'Bedienungsanleitung',
     userManualDesc:
       'Vollständiger Systemleitfaden: Module, Datenabhängigkeiten, Berechnungsformeln und Flussdiagramme. Verfügbar in PL, EN und DE.',
+    users: 'Benutzer',
+    usersDesc: 'Konten, Rollen, Passwort-Reset und Freigabe von Wiederherstellungsanfragen.',
+    roles: 'Rollen & Berechtigungen',
+    rolesDesc: 'Rollendefinitionen und Matrix Anzeigen / Bearbeiten / Löschen.',
+    usersPermissionsSubtitle: 'Bereich für Konten- und Berechtigungsverwaltung wählen.',
     backAdmin: '← Administration',
   },
   settings: {

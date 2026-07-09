@@ -1,4 +1,5 @@
 import { db, saveDb } from '../db/connection.js';
+import { normalizeVolumeOrigin, type VolumeEntryOrigin } from './capacityService.js';
 import {
   releaseAllReservationsForScenario,
   releaseReservationsForDeployedIds,
@@ -216,13 +217,13 @@ export function resolveSettingsForScenarioYear(year: number, snapshot: ScenarioB
 /** Jak getEffectiveVolumeForPart, ale z danych scenariusza (bez zapytań do tabel projektów w produkcji). */
 export function getEffectiveVolumeForPartScenario(projectId: number, partId: number, year: number, snap: ScenarioBundle): any | null {
   const pv = (snap.project_volumes || []).find((r: any) => Number(r.project_id) === projectId && Number(r.year) === year) as
-    | { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number }
+    | { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number; volume_origin?: string }
     | undefined;
   const proj = (snap.projects || []).find((p: any) => Number(p.id) === projectId) as { eop: string } | undefined;
   const projectEop = proj?.eop ?? null;
   const part = (snap.parts || []).find((p: any) => Number(p.id) === partId) as any | undefined;
   const partVol = (snap.part_volume_by_year || []).find((r: any) => Number(r.part_id) === partId && Number(r.year) === year) as
-    | { volume_value: number; volume_unit: string }
+    | { volume_value: number; volume_unit: string; volume_origin?: string }
     | undefined;
 
   const eopMatch = projectEop ? String(projectEop).trim().match(/^\d{1,2}\.(\d{4})$/) : null;
@@ -230,18 +231,35 @@ export function getEffectiveVolumeForPartScenario(projectId: number, partId: num
   const isAfterEop = eopYear != null && year > eopYear;
   const incAfter = Number(pv?.include_in_calculator_after_eop ?? 0);
   const countAfterEop = Boolean(isAfterEop && pv && incAfter === 1);
+  const volumeOriginFromRow = (row: { volume_origin?: string } | undefined, fallback: VolumeEntryOrigin): VolumeEntryOrigin =>
+    normalizeVolumeOrigin(row?.volume_origin ?? fallback);
 
   const mode = part?.volume_mode ?? 'project';
   if (mode === 'override') {
     if (partVol)
-      return { volume_value: partVol.volume_value, volume_unit: partVol.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: partVol.volume_value,
+        volume_unit: partVol.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(partVol, 'manual_year'),
+      };
     if (part?.default_volume_value != null && part?.default_volume_unit) {
       const u = ['annual', 'monthly', 'weekly'].includes(part.default_volume_unit) ? part.default_volume_unit : 'annual';
-      return { volume_value: Number(part.default_volume_value), volume_unit: u as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: Number(part.default_volume_value),
+        volume_unit: u as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: 'default_all_years',
+      };
     }
   }
   if (mode === 'project' && pv) {
-    return { volume_value: pv.volume_value, volume_unit: pv.volume_unit as any, count_after_eop: countAfterEop || undefined };
+    return {
+      volume_value: pv.volume_value,
+      volume_unit: pv.volume_unit as any,
+      count_after_eop: countAfterEop || undefined,
+      volume_origin: volumeOriginFromRow(pv, 'manual_year'),
+    };
   }
   if (mode === 'share' && pv) {
     let sharePct: number | null = null;
@@ -250,7 +268,12 @@ export function getEffectiveVolumeForPartScenario(projectId: number, partId: num
     if (sharePct == null) sharePct = part?.volume_share_percent ?? null;
     if (sharePct != null) {
       const share = Math.max(0, Math.min(100, Number(sharePct))) / 100;
-      return { volume_value: pv.volume_value * share, volume_unit: pv.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: pv.volume_value * share,
+        volume_unit: pv.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(pv, 'manual_year'),
+      };
     }
   }
   return null;
@@ -259,13 +282,13 @@ export function getEffectiveVolumeForPartScenario(projectId: number, partId: num
 /** Jak getEffectiveVolumeForPartScenario, ale z tabel kontraktowych w snapshotcie. */
 export function getEffectiveVolumeForPartScenarioContract(projectId: number, partId: number, year: number, snap: ScenarioBundle): any | null {
   const pvc = (snap.project_volumes_contract || []).find((r: any) => Number(r.project_id) === projectId && Number(r.year) === year) as
-    | { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number }
+    | { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number; volume_origin?: string }
     | undefined;
   const proj = (snap.projects || []).find((p: any) => Number(p.id) === projectId) as { eop: string } | undefined;
   const projectEop = proj?.eop ?? null;
   const part = (snap.parts || []).find((p: any) => Number(p.id) === partId) as any | undefined;
   const partVolC = (snap.part_volume_contract_by_year || []).find((r: any) => Number(r.part_id) === partId && Number(r.year) === year) as
-    | { volume_value: number; volume_unit: string }
+    | { volume_value: number; volume_unit: string; volume_origin?: string }
     | undefined;
 
   const eopMatch = projectEop ? String(projectEop).trim().match(/^\d{1,2}\.(\d{4})$/) : null;
@@ -276,20 +299,37 @@ export function getEffectiveVolumeForPartScenarioContract(projectId: number, par
     | undefined;
   const pvForEop = pvc ?? pvProd;
   const countAfterEop = Boolean(isAfterEop && pvForEop && Number(pvForEop.include_in_calculator_after_eop) === 1);
+  const volumeOriginFromRow = (row: { volume_origin?: string } | undefined, fallback: VolumeEntryOrigin): VolumeEntryOrigin =>
+    normalizeVolumeOrigin(row?.volume_origin ?? fallback);
 
   const mode = String(part?.contract_volume_mode ?? 'project');
   if (mode === 'override') {
     if (partVolC) {
-      return { volume_value: partVolC.volume_value, volume_unit: partVolC.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: partVolC.volume_value,
+        volume_unit: partVolC.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(partVolC, 'manual_year'),
+      };
     }
     if (part?.contract_default_volume_value != null && part?.contract_default_volume_unit) {
       const u = ['annual', 'monthly', 'weekly'].includes(String(part.contract_default_volume_unit)) ? String(part.contract_default_volume_unit) : 'annual';
-      return { volume_value: Number(part.contract_default_volume_value), volume_unit: u as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: Number(part.contract_default_volume_value),
+        volume_unit: u as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: 'default_all_years',
+      };
     }
-    return { volume_value: 0, volume_unit: 'annual', count_after_eop: countAfterEop || undefined };
+    return { volume_value: 0, volume_unit: 'annual', count_after_eop: countAfterEop || undefined, volume_origin: 'manual_year' };
   }
   if (mode === 'project' && pvc && Number(pvc.volume_value) > 0) {
-    return { volume_value: pvc.volume_value, volume_unit: pvc.volume_unit as any, count_after_eop: countAfterEop || undefined };
+    return {
+      volume_value: pvc.volume_value,
+      volume_unit: pvc.volume_unit as any,
+      count_after_eop: countAfterEop || undefined,
+      volume_origin: volumeOriginFromRow(pvc, 'manual_year'),
+    };
   }
   if (mode === 'share' && pvc && Number(pvc.volume_value) > 0) {
     let sharePct: number | null = null;
@@ -300,7 +340,12 @@ export function getEffectiveVolumeForPartScenarioContract(projectId: number, par
     if (sharePct == null) sharePct = part?.contract_volume_share_percent ?? null;
     if (sharePct != null) {
       const share = Math.max(0, Math.min(100, Number(sharePct))) / 100;
-      return { volume_value: pvc.volume_value * share, volume_unit: pvc.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: pvc.volume_value * share,
+        volume_unit: pvc.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(pvc, 'manual_year'),
+      };
     }
   }
   return null;

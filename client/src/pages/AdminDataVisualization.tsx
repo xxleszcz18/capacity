@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import SearchableSelect from '../components/SearchableSelect';
 import MultiSelectFilter from '../components/MultiSelectFilter';
 import DataLoadingOverlay, { DataLoadingBadge } from '../components/DataLoadingOverlay';
+import { AdminHubList } from '../components/AdminHubCards';
 import { joinCsvFilter, formatMultiFilterSummary } from '../utils/filterParams';
 import MachineDimensionFiltersPanel from '../components/MachineDimensionFiltersPanel';
 import CapacityTrendChart from '../components/capacity/CapacityTrendChart';
@@ -65,6 +65,7 @@ import {
 import { useI18n } from '../context/I18nContext';
 import { useEffectiveCalculationProfile } from '../context/OcuModeContext';
 import { useDataVizColors } from '../context/DataVizColorsContext';
+import { useAuth } from '../context/AuthContext';
 import { getDataVizPdfStrings, localeDateTime } from '../i18n/reportLabels';
 import {
   buildDimensionApiParams,
@@ -180,6 +181,8 @@ function ChipToggle({
 
 export default function AdminDataVisualization() {
   const { t, te, locale } = useI18n();
+  const { hasPermission } = useAuth();
+  const canDownloadReports = hasPermission('admin_data_viz.download');
   const vizColors = useDataVizColors();
   const settingsProfile = useEffectiveCalculationProfile(false);
   const subsystem = useMemo(
@@ -1204,11 +1207,6 @@ export default function AdminDataVisualization() {
 
   return (
     <div>
-      <div style={{ marginBottom: '1rem' }}>
-        <Link to="/administracja" style={{ color: 'var(--cap-green)' }}>
-          {t('admin.backAdmin')}
-        </Link>
-      </div>
       <h1 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         {t('dataViz.title')}
         <span
@@ -1316,6 +1314,7 @@ export default function AdminDataVisualization() {
           >
             {loading ? t('common.recalculating') : t('dataViz.refreshData')}
           </button>
+          {canDownloadReports && (
           <button
             type="button"
             onClick={() => setReportModalOpen(true)}
@@ -1332,6 +1331,7 @@ export default function AdminDataVisualization() {
           >
             {exportingPdf ? t('dataViz.exportGenerating') : t('dataViz.exportReport')}
           </button>
+          )}
         </div>
 
         {tab === 'machines' && (
@@ -1682,7 +1682,7 @@ export default function AdminDataVisualization() {
             )}
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+          <AdminHubList style={{ marginBottom: '1rem' }}>
             <SummaryCard label={t('dataViz.avgLoadProd')} value={analyticsRows.avgProd} color={vizColors.production} />
             <SummaryCard label={t('dataViz.avgLoadContract')} value={analyticsRows.avgContract} color={vizColors.contract} />
             {hasScenario && analyticsRows.rows.some((r) => r.scenarioProduction != null) && (
@@ -1692,7 +1692,7 @@ export default function AdminDataVisualization() {
                 color={vizColors.scenarioProduction}
               />
             )}
-          </div>
+          </AdminHubList>
           </div>
 
           <CapacityAnalyticsPanel
@@ -1726,8 +1726,6 @@ function SummaryCard({ label, value, color }: { label: string; value: number | n
   return (
     <div
       style={{
-        flex: '1 1 180px',
-        minWidth: 160,
         padding: '12px 16px',
         background: 'white',
         borderRadius: 8,

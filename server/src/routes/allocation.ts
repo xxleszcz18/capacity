@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import os from 'os';
 import { db } from '../db/connection.js';
 import {
   getOverloadedMachines,
@@ -9,20 +8,9 @@ import {
   executeAllocationInScenario,
 } from '../services/allocationService.js';
 import { parseScenarioSnapshotJson } from '../services/scenarioSnapshotService.js';
+import { resolveActor } from '../utils/authActor.js';
 
 export const allocationRouter = Router();
-
-function resolveActor(req: any): string {
-  const fromHeader = String(req.headers?.['x-user-login'] ?? req.headers?.['x-user'] ?? '').trim();
-  if (fromHeader) return fromHeader;
-  const envUser = String(process.env.USERNAME ?? process.env.USER ?? '').trim();
-  if (envUser) return envUser;
-  try {
-    return os.userInfo().username || 'system';
-  } catch {
-    return 'system';
-  }
-}
 
 function loadScenarioBundleForAllocation(scenarioId: number): { bundle: ReturnType<typeof parseScenarioSnapshotJson>; includeRfq: boolean } | null {
   const row = db.prepare('SELECT snapshot, archived_at FROM scenarios WHERE id = ?').get(scenarioId) as

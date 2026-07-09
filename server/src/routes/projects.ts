@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import os from 'os';
 import multer from 'multer';
 import { db, saveDb } from '../db/connection.js';
 import {
@@ -21,6 +20,7 @@ import {
 } from '../services/projectAttachmentService.js';
 import { parseCsvQueryParamSingleOrMulti, parseIdList, parseMachineStatusList, sqlInClause } from '../utils/queryListParams.js';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat.js';
+import { resolveActor } from '../utils/authActor.js';
 
 export const projectsRouter = Router();
 
@@ -68,18 +68,6 @@ type NoteContext = {
   partId?: number | null;
   operationId?: number | null;
 };
-
-function resolveActor(req: any): string {
-  const fromHeader = String(req.headers?.['x-user-login'] ?? req.headers?.['x-user'] ?? '').trim();
-  if (fromHeader) return fromHeader;
-  const envUser = String(process.env.USERNAME ?? process.env.USER ?? '').trim();
-  if (envUser) return envUser;
-  try {
-    return os.userInfo().username || 'system';
-  } catch (_) {
-    return 'system';
-  }
-}
 
 function isManualProjectNote(note: { note_type?: string | null }): boolean {
   return String(note.note_type ?? 'manual') !== 'auto';
@@ -677,12 +665,12 @@ projectsRouter.get('/:id', (req, res) => {
   let projectVolumes: { year: number; volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number }[] = [];
   let projectVolumesContract: { year: number; volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number }[] = [];
   try {
-    projectVolumes = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
+    projectVolumes = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
   } catch (_) {}
   try {
     projectVolumesContract = db
       .prepare(
-        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
+        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
       )
       .all(id) as any[];
   } catch (_) {}
@@ -692,11 +680,11 @@ projectsRouter.get('/:id', (req, res) => {
     let volume_share_by_year: { year: number; share_percent: number }[] = [];
     let volume_contract_share_by_year: { year: number; share_percent: number }[] = [];
     try {
-      volume_by_year = db.prepare('SELECT year, volume_value, volume_unit FROM part_volume_by_year WHERE part_id = ? ORDER BY year').all(p.id) as any[];
+      volume_by_year = db.prepare('SELECT year, volume_value, volume_unit, volume_origin FROM part_volume_by_year WHERE part_id = ? ORDER BY year').all(p.id) as any[];
     } catch (_) {}
     try {
       volume_contract_by_year = db
-        .prepare('SELECT year, volume_value, volume_unit FROM part_volume_contract_by_year WHERE part_id = ? ORDER BY year')
+        .prepare('SELECT year, volume_value, volume_unit, volume_origin FROM part_volume_contract_by_year WHERE part_id = ? ORDER BY year')
         .all(p.id) as any[];
     } catch (_) {}
     try {
@@ -907,7 +895,7 @@ projectsRouter.get('/:id/volumes', (req, res) => {
   const exists = db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id);
   if (!exists) return res.status(404).json({ error: 'Not found' });
   try {
-    const rows = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
+    const rows = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
     res.json(rows);
   } catch (_) {
     res.json([]);
@@ -925,22 +913,23 @@ projectsRouter.put('/:id/volumes', (req, res) => {
     db.prepare('DELETE FROM project_volumes WHERE project_id = ?').run(id);
     let rows: any[];
     try {
-      const ins = db.prepare('INSERT INTO project_volumes (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop) VALUES (?, ?, ?, ?, ?)');
+      const ins = db.prepare('INSERT INTO project_volumes (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop, volume_origin) VALUES (?, ?, ?, ?, ?, ?)');
       for (const v of volumes) {
         const year = Number(v.year);
         const volume_value = Number(v.volume_value);
         const volume_unit = ['annual', 'monthly', 'weekly'].includes(v.volume_unit) ? v.volume_unit : 'annual';
         const include_after_eop = v.include_in_calculator_after_eop === true || v.include_in_calculator_after_eop === 1 ? 1 : 0;
-        ins.run(id, year, volume_value, volume_unit, include_after_eop);
+        const volume_origin = String(v.volume_origin ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+        ins.run(id, year, volume_value, volume_unit, include_after_eop, volume_origin);
       }
-      rows = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
+      rows = db.prepare('SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[];
     } catch (colErr: any) {
-      if (colErr?.message?.includes('include_in_calculator_after_eop') || colErr?.message?.includes('no such column')) {
+      if (colErr?.message?.includes('include_in_calculator_after_eop') || colErr?.message?.includes('volume_origin') || colErr?.message?.includes('no such column')) {
         const ins = db.prepare('INSERT INTO project_volumes (project_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)');
         for (const v of volumes) {
           ins.run(id, Number(v.year), Number(v.volume_value), ['annual', 'monthly', 'weekly'].includes(v.volume_unit) ? v.volume_unit : 'annual');
         }
-        rows = (db.prepare('SELECT year, volume_value, volume_unit FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[]).map((r: any) => ({ ...r, include_in_calculator_after_eop: 0 }));
+        rows = (db.prepare('SELECT year, volume_value, volume_unit FROM project_volumes WHERE project_id = ? ORDER BY year').all(id) as any[]).map((r: any) => ({ ...r, include_in_calculator_after_eop: 0, volume_origin: 'manual_year' }));
       } else {
         throw colErr;
       }
@@ -981,7 +970,7 @@ projectsRouter.get('/:id/volumes-contract', (req, res) => {
   try {
     const rows = db
       .prepare(
-        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
+        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
       )
       .all(id) as any[];
     res.json(rows);
@@ -1000,14 +989,15 @@ projectsRouter.put('/:id/volumes-contract', (req, res) => {
   try {
     db.prepare('DELETE FROM project_volumes_contract WHERE project_id = ?').run(id);
     const ins = db.prepare(
-      'INSERT INTO project_volumes_contract (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO project_volumes_contract (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop, volume_origin) VALUES (?, ?, ?, ?, ?, ?)'
     );
     for (const v of volumes) {
       const year = Number(v.year);
       const volume_value = Number(v.volume_value);
       const volume_unit = ['annual', 'monthly', 'weekly'].includes(v.volume_unit) ? v.volume_unit : 'annual';
       const include_after_eop = v.include_in_calculator_after_eop === true || v.include_in_calculator_after_eop === 1 ? 1 : 0;
-      ins.run(id, year, volume_value, volume_unit, include_after_eop);
+      const volume_origin = String(v.volume_origin ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+      ins.run(id, year, volume_value, volume_unit, include_after_eop, volume_origin);
     }
     try {
       const split = db
@@ -1029,7 +1019,7 @@ projectsRouter.put('/:id/volumes-contract', (req, res) => {
     insertProjectNote(id, `Automatyczna zmiana: zaktualizowano wolumeny kontraktowe projektu (${volumes.length} rekordów).`, actor, 'auto');
     const rows = db
       .prepare(
-        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
+        'SELECT year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes_contract WHERE project_id = ? ORDER BY year'
       )
       .all(id) as any[];
     res.json(rows);
@@ -1072,15 +1062,15 @@ projectsRouter.post('/:id/volumes-mirror', (req, res) => {
     if (direction === 'production_to_contract') {
       db.prepare('DELETE FROM project_volumes_contract WHERE project_id = ?').run(id);
       db.prepare(
-        `INSERT INTO project_volumes_contract (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop)
-         SELECT project_id, year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) FROM project_volumes WHERE project_id = ?`
+        `INSERT INTO project_volumes_contract (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop, volume_origin)
+         SELECT project_id, year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0), COALESCE(volume_origin, 'manual_year') FROM project_volumes WHERE project_id = ?`
       ).run(id);
       cleanupAllocationVolumes();
     } else {
       db.prepare('DELETE FROM project_volumes WHERE project_id = ?').run(id);
       db.prepare(
-        `INSERT INTO project_volumes (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop)
-         SELECT project_id, year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) FROM project_volumes_contract WHERE project_id = ?`
+        `INSERT INTO project_volumes (project_id, year, volume_value, volume_unit, include_in_calculator_after_eop, volume_origin)
+         SELECT project_id, year, volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0), COALESCE(volume_origin, 'manual_year') FROM project_volumes_contract WHERE project_id = ?`
       ).run(id);
       cleanupAllocationVolumes();
     }
@@ -1286,14 +1276,15 @@ projectsRouter.put('/:projectId/parts/:partId/volumes', (req, res) => {
   const volumes = Array.isArray(body.volumes) ? body.volumes : [];
   try {
     db.prepare('DELETE FROM part_volume_by_year WHERE part_id = ?').run(partId);
-    const ins = db.prepare('INSERT INTO part_volume_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)');
+    const ins = db.prepare('INSERT INTO part_volume_by_year (part_id, year, volume_value, volume_unit, volume_origin) VALUES (?, ?, ?, ?, ?)');
     for (const v of volumes) {
       const year = Number(v.year);
       const volume_value = Number(v.volume_value);
       const volume_unit = ['annual', 'monthly', 'weekly'].includes(v.volume_unit) ? v.volume_unit : 'annual';
-      ins.run(partId, year, volume_value, volume_unit);
+      const volume_origin = String(v.volume_origin ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+      ins.run(partId, year, volume_value, volume_unit, volume_origin);
     }
-    const rows = db.prepare('SELECT year, volume_value, volume_unit FROM part_volume_by_year WHERE part_id = ? ORDER BY year').all(partId) as any[];
+    const rows = db.prepare('SELECT year, volume_value, volume_unit, volume_origin FROM part_volume_by_year WHERE part_id = ? ORDER BY year').all(partId) as any[];
     insertProjectNote(
       projectId,
       `Automatyczna zmiana: zaktualizowano wolumeny detalu "${getPartLabel(partId, refMode)}" (${volumes.length} rekordów).`,
@@ -1331,14 +1322,15 @@ projectsRouter.put('/:projectId/parts/:partId/volumes-contract', (req, res) => {
   const volumes = Array.isArray(body.volumes) ? body.volumes : [];
   try {
     db.prepare('DELETE FROM part_volume_contract_by_year WHERE part_id = ?').run(partId);
-    const ins = db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)');
+    const ins = db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit, volume_origin) VALUES (?, ?, ?, ?, ?)');
     for (const v of volumes) {
       const year = Number(v.year);
       const volume_value = Number(v.volume_value);
       const volume_unit = ['annual', 'monthly', 'weekly'].includes(v.volume_unit) ? v.volume_unit : 'annual';
-      ins.run(partId, year, volume_value, volume_unit);
+      const volume_origin = String(v.volume_origin ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+      ins.run(partId, year, volume_value, volume_unit, volume_origin);
     }
-    const rows = db.prepare('SELECT year, volume_value, volume_unit FROM part_volume_contract_by_year WHERE part_id = ? ORDER BY year').all(partId) as any[];
+    const rows = db.prepare('SELECT year, volume_value, volume_unit, volume_origin FROM part_volume_contract_by_year WHERE part_id = ? ORDER BY year').all(partId) as any[];
     insertProjectNote(
       projectId,
       `Automatyczna zmiana: zaktualizowano wolumeny kontraktowe detalu "${getPartLabel(partId, refMode)}" (${volumes.length} rekordów).`,

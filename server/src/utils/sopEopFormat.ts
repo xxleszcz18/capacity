@@ -84,3 +84,14 @@ export function sopEopYearsRange(sop: unknown, eop: unknown): { years: number[];
   for (let y = sopP.year; y <= eopP.year; y++) years.push(y);
   return { years, startMonth: sopP.month, endMonth: eopP.month };
 }
+
+/** Liczba miesięcy produkcji w danym roku kalendarzowym (wg SOP/EOP). */
+export function getProductionMonthsInYear(sop: unknown, eop: unknown, year: number): number {
+  const sopP = parseSopEop(sop);
+  const eopP = parseSopEop(eop);
+  if (!sopP || !eopP || year < sopP.year || year > eopP.year) return 0;
+  if (year === sopP.year && year === eopP.year) return Math.max(0, eopP.month - sopP.month + 1);
+  if (year === sopP.year) return 13 - sopP.month;
+  if (year === eopP.year) return eopP.month;
+  return 12;
+}

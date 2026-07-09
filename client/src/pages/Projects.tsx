@@ -10,10 +10,11 @@ import MultiSelectFilter from '../components/MultiSelectFilter';
 import ProjectActivateRfqMachinesModal from '../components/ProjectActivateRfqMachinesModal';
 import StatusMultiFilter, { type ProjectStatusFilterValue } from '../components/StatusMultiFilter';
 import { joinCsvFilter } from '../utils/filterParams';
-import { machineStatusFromDb } from '../utils/machineStatusStyle';
+import { machineStatusFromDb, machineStatusReadonlyStyle } from '../utils/machineStatusStyle';
 import { formatDetailSapAliasLabel } from '../utils/detailLabel';
 import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import { useI18n } from '../context/I18nContext';
+import { useAuth } from '../context/AuthContext';
 import { formatSopEop, parseSopEop } from '../utils/sopEopFormat';
 
 type PartToAdd = { type: 'existing'; designation_id: number } | { type: 'new'; sap_number?: string; alias?: string; free_text?: string };
@@ -31,6 +32,9 @@ function sopEopToMonthInput(sop: string): string {
 
 export default function Projects() {
   const { t, te } = useI18n();
+  const { hasAnyPermission } = useAuth();
+  const canChangeStatus = hasAnyPermission(['projects.change_status', 'projects.edit']);
+  const canViewDetails = hasAnyPermission(['projects.details', 'projects.edit']);
   const { referenceDisplay } = useReferenceDisplay();
   const [searchParams] = useSearchParams();
   const scenarioFromUrlNum = searchParams.get('scenarioId') != null ? Number(searchParams.get('scenarioId')) : NaN;
@@ -471,6 +475,7 @@ export default function Projects() {
                 </div>
               </td>
               <td style={{ padding: '0.75rem' }}>
+                {canChangeStatus ? (
                 <select
                   value={p.status}
                   onChange={(e) => handleStatusChange(p, e.target.value as 'active' | 'inactive' | 'RFQ')}
@@ -495,8 +500,14 @@ export default function Projects() {
                   <option value="inactive">{t('common.inactive')}</option>
                   <option value="RFQ">{t('common.rfq')}</option>
                 </select>
+                ) : (
+                  <span style={machineStatusReadonlyStyle(p.status)}>
+                    {p.status === 'active' ? t('common.active') : p.status === 'RFQ' ? t('common.rfq') : t('common.inactive')}
+                  </span>
+                )}
               </td>
               <td style={{ padding: '0.75rem' }}>
+                {canViewDetails ? (
                 <Link
                   to={
                     effectiveScenarioId != null && effectiveScenarioId > 0
@@ -510,6 +521,9 @@ export default function Projects() {
                 >
                   {t('common.details')}
                 </Link>
+                ) : (
+                  <span style={{ color: '#999', fontSize: 13 }}>{t('common.dash')}</span>
+                )}
               </td>
             </tr>
           ))}

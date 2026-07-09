@@ -64,9 +64,11 @@ export const pl: TranslationTree = {
     machines: 'Maszyny',
     projects: 'Projekty',
     details: 'Detale',
+    dataVisualization: 'Wizualizacja danych',
     changeHistory: 'Historia zmian',
     scenarioList: 'Lista scenariuszy',
     administration: 'Administracja',
+    usersAndPermissions: 'Użytkownicy i uprawnienia',
     scenarioWorkspace: 'Obszar roboczy: scenariusze',
     scenarioWithActive:
       'Kalkulator i historia zmian pracują na kopii scenariusza (statusy projektów w widoku scenariusza). Nowe projekty i detale tworzysz po przełączeniu na „Wersja Capacity”.',
@@ -100,6 +102,11 @@ export const pl: TranslationTree = {
     userManual: 'Instrukcja obsługi',
     userManualDesc:
       'Pełny przewodnik po systemie: moduły, zależności danych, wzory obliczeń i diagramy przepływu. Dostępny w PL, EN i DE.',
+    users: 'Użytkownicy',
+    usersDesc: 'Konta, role, reset haseł i zatwierdzanie próśb o odzyskanie dostępu.',
+    roles: 'Role i uprawnienia',
+    rolesDesc: 'Definicja ról oraz macierz uprawnień podgląd / edycja / usuwanie.',
+    usersPermissionsSubtitle: 'Wybierz obszar zarządzania kontami i uprawnieniami.',
     backAdmin: '← Administracja',
   },
   settings: {

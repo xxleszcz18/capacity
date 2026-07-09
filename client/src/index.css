@@ -352,9 +352,48 @@ header nav a:not(.active):hover {
 
 .calculator-table-block .calc-details-actions {
   display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
   gap: 4px;
+}
+
+.calc-action-btn {
+  padding: 0.25rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+  width: 4.85rem;
+  min-height: 2.5rem;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calc-action-btn--green {
+  background: var(--cap-green);
+  color: #fff;
+  cursor: pointer;
+}
+
+.calc-action-btn--blue {
+  background: #2196f3;
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.calc-action-btn--disabled,
+.calc-action-btn:disabled {
+  background: #bdbdbd;
+  color: #757575;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 .calculator-table-body-shell table.calculator-table {

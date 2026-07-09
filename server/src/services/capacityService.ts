@@ -18,7 +18,7 @@ import {
 } from '../utils/ocuSettings.js';
 import { getCapacityFallbackWorkingDaysForYear, getCapacityDefaultTemplate } from '../utils/capacitySettings.js';
 import { mergeWorkingDaysWithDefaults, normalizeOverrideRow } from '../utils/workingDaysMerge.js';
-import { parseSopEop } from '../utils/sopEopFormat.js';
+import { parseSopEop, getProductionMonthsInYear } from '../utils/sopEopFormat.js';
 
 function formatProjectLabel(client: string | null | undefined, name: string | null | undefined): string {
   const c = String(client ?? '').trim();
@@ -181,20 +181,78 @@ export function volumeToWeekly(volumeValue: number, volumeUnit: 'annual' | 'mont
  * Ułamek roku dla capacity: pierwszy rok od startMonth, ostatni do endMonth (SOP/EOP w formacie MM.YYYY).
  */
 export function getYearFractionFromSopEop(sop: string, eop: string, year: number): number {
-  const sopP = parseSopEop(sop);
-  const eopP = parseSopEop(eop);
-  if (!sopP || !eopP || year < sopP.year || year > eopP.year) return 0;
-  const isFirst = year === sopP.year;
-  const isLast = year === eopP.year;
-  if (isFirst) return (13 - sopP.month) / 12;
-  if (isLast) return eopP.month / 12;
-  return 1;
+  const months = getProductionMonthsInYear(sop, eop, year);
+  if (months <= 0) return 0;
+  return months / 12;
+}
+
+export type VolumeEntryOrigin = 'default_all_years' | 'manual_year';
+
+export function normalizeVolumeOrigin(raw: unknown): VolumeEntryOrigin {
+  return String(raw ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+}
+
+/**
+ * Tygodniowy wolumen efektywny dla operacji w roku.
+ * - default_all_years + rok niepełny: annual × (miesiące/12) ÷ tygodnie robocze (dotychczasowa logika).
+ * - manual_year + rok niepełny + jednostka roczna: wpisana wartość ÷ miesiące produkcyjne → miesięczna, potem na tygodniową.
+ * - manual_year + rok pełny: bez korekty SOP/EOP.
+ */
+export function resolveWeeklyVolumeFromResolved(
+  volumeValue: number,
+  volumeUnit: 'annual' | 'monthly' | 'weekly',
+  settings: WorkingDaysRow,
+  opts: {
+    sop?: string;
+    eop?: string;
+    year: number;
+    volume_origin: VolumeEntryOrigin;
+    count_after_eop?: boolean;
+    has_project?: boolean;
+  }
+): { weekly: number; fraction: number; production_months: number } {
+  const sop = opts.sop ?? '';
+  const eop = opts.eop ?? '';
+  const prodMonths = getProductionMonthsInYear(sop, eop, opts.year);
+  const isPartial = prodMonths > 0 && prodMonths < 12;
+
+  if (opts.count_after_eop || !opts.has_project) {
+    return {
+      weekly: volumeToWeekly(volumeValue, volumeUnit, settings),
+      fraction: 1,
+      production_months: prodMonths || 12,
+    };
+  }
+
+  if (opts.volume_origin === 'manual_year') {
+    if (isPartial && volumeUnit === 'annual') {
+      const monthly = volumeValue / prodMonths;
+      return {
+        weekly: volumeToWeekly(monthly, 'monthly', settings),
+        fraction: 1,
+        production_months: prodMonths,
+      };
+    }
+    return {
+      weekly: volumeToWeekly(volumeValue, volumeUnit, settings),
+      fraction: 1,
+      production_months: prodMonths || 12,
+    };
+  }
+
+  const fraction = getYearFractionFromSopEop(sop, eop, opts.year);
+  return {
+    weekly: volumeToWeekly(volumeValue, volumeUnit, settings) * fraction,
+    fraction,
+    production_months: prodMonths || 12,
+  };
 }
 
 export type EffectiveVolumeResult = {
   volume_value: number;
   volume_unit: 'annual' | 'monthly' | 'weekly';
   count_after_eop?: boolean; // true = liczyć w kalkulatorze mimo roku po EOP (zmienione ręcznie)
+  volume_origin?: VolumeEntryOrigin;
 };
 
 /** Zwraca skuteczny wolumen dla detalu w danym roku (projekt → tryb detalu → własna wartość). Gdy brak: null = użyj volume_value/volume_unit z operacji. */
@@ -203,16 +261,16 @@ export function getEffectiveVolumeForPart(
   partId: number,
   year: number
 ): EffectiveVolumeResult | null {
-  let pv: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number } | undefined;
+  let pv: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number; volume_origin?: string } | undefined;
   let projectEop: string | null = null;
   let part: { volume_mode: string; volume_share_percent: number | null; default_volume_value?: number | null; default_volume_unit?: string | null } | undefined;
-  let partVol: { volume_value: number; volume_unit: string } | undefined;
+  let partVol: { volume_value: number; volume_unit: string; volume_origin?: string } | undefined;
   try {
-    pv = db.prepare('SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes WHERE project_id = ? AND year = ?').get(projectId, year) as any;
+    pv = db.prepare('SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes WHERE project_id = ? AND year = ?').get(projectId, year) as any;
     const proj = db.prepare('SELECT eop FROM projects WHERE id = ?').get(projectId) as { eop: string } | undefined;
     projectEop = proj?.eop ?? null;
     part = db.prepare('SELECT volume_mode, volume_share_percent, default_volume_value, default_volume_unit FROM parts WHERE id = ?').get(partId) as any;
-    partVol = db.prepare('SELECT volume_value, volume_unit FROM part_volume_by_year WHERE part_id = ? AND year = ?').get(partId, year) as any;
+    partVol = db.prepare('SELECT volume_value, volume_unit, volume_origin FROM part_volume_by_year WHERE part_id = ? AND year = ?').get(partId, year) as any;
   } catch (_) {
     return null;
   }
@@ -220,16 +278,35 @@ export function getEffectiveVolumeForPart(
   const isAfterEop = eopYear != null && year > eopYear;
   const countAfterEop = isAfterEop && pv && Number(pv.include_in_calculator_after_eop) === 1;
 
+  const volumeOriginFromRow = (row: { volume_origin?: string } | undefined, fallback: VolumeEntryOrigin): VolumeEntryOrigin =>
+    normalizeVolumeOrigin(row?.volume_origin ?? fallback);
+
   const mode = part?.volume_mode ?? 'project';
   if (mode === 'override') {
-    if (partVol) return { volume_value: partVol.volume_value, volume_unit: partVol.volume_unit as any, count_after_eop: countAfterEop || undefined };
+    if (partVol)
+      return {
+        volume_value: partVol.volume_value,
+        volume_unit: partVol.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(partVol, 'manual_year'),
+      };
     if (part?.default_volume_value != null && part?.default_volume_unit) {
       const u = ['annual', 'monthly', 'weekly'].includes(part.default_volume_unit) ? part.default_volume_unit : 'annual';
-      return { volume_value: Number(part.default_volume_value), volume_unit: u as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: Number(part.default_volume_value),
+        volume_unit: u as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: 'default_all_years',
+      };
     }
   }
   if (mode === 'project' && pv) {
-    return { volume_value: pv.volume_value, volume_unit: pv.volume_unit as any, count_after_eop: countAfterEop || undefined };
+    return {
+      volume_value: pv.volume_value,
+      volume_unit: pv.volume_unit as any,
+      count_after_eop: countAfterEop || undefined,
+      volume_origin: volumeOriginFromRow(pv, 'manual_year'),
+    };
   }
   if (mode === 'share' && pv) {
     let sharePct: number | null = null;
@@ -240,7 +317,12 @@ export function getEffectiveVolumeForPart(
     if (sharePct == null) sharePct = part?.volume_share_percent ?? null;
     if (sharePct != null) {
       const share = Math.max(0, Math.min(100, Number(sharePct))) / 100;
-      return { volume_value: pv.volume_value * share, volume_unit: pv.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: pv.volume_value * share,
+        volume_unit: pv.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(pv, 'manual_year'),
+      };
     }
   }
   return null;
@@ -248,8 +330,8 @@ export function getEffectiveVolumeForPart(
 
 /** Wolumeny kontraktowe z DB; brak danych kontraktowych dla trybu/roku → null (wtedy fallback do produkcji). */
 export function getEffectiveVolumeForPartContract(projectId: number, partId: number, year: number): EffectiveVolumeResult | null {
-  let pvc: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number } | undefined;
-  let pvProd: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number } | undefined;
+  let pvc: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number; volume_origin?: string } | undefined;
+  let pvProd: { volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number; volume_origin?: string } | undefined;
   let projectEop: string | null = null;
   let part: {
     contract_volume_mode?: string;
@@ -257,16 +339,16 @@ export function getEffectiveVolumeForPartContract(projectId: number, partId: num
     contract_default_volume_value?: number | null;
     contract_default_volume_unit?: string | null;
   } | undefined;
-  let partVolC: { volume_value: number; volume_unit: string } | undefined;
+  let partVolC: { volume_value: number; volume_unit: string; volume_origin?: string } | undefined;
   try {
     pvc = db
       .prepare(
-        'SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes_contract WHERE project_id = ? AND year = ?'
+        'SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes_contract WHERE project_id = ? AND year = ?'
       )
       .get(projectId, year) as any;
     pvProd = db
       .prepare(
-        'SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop FROM project_volumes WHERE project_id = ? AND year = ?'
+        'SELECT volume_value, volume_unit, COALESCE(include_in_calculator_after_eop, 0) AS include_in_calculator_after_eop, volume_origin FROM project_volumes WHERE project_id = ? AND year = ?'
       )
       .get(projectId, year) as any;
     const proj = db.prepare('SELECT eop FROM projects WHERE id = ?').get(projectId) as { eop: string } | undefined;
@@ -277,7 +359,7 @@ export function getEffectiveVolumeForPartContract(projectId: number, partId: num
       )
       .get(partId) as any;
     partVolC = db
-      .prepare('SELECT volume_value, volume_unit FROM part_volume_contract_by_year WHERE part_id = ? AND year = ?')
+      .prepare('SELECT volume_value, volume_unit, volume_origin FROM part_volume_contract_by_year WHERE part_id = ? AND year = ?')
       .get(partId, year) as any;
   } catch (_) {
     return null;
@@ -287,19 +369,37 @@ export function getEffectiveVolumeForPartContract(projectId: number, partId: num
   const pvForEop = pvc ?? pvProd;
   const countAfterEop = isAfterEop && pvForEop && Number(pvForEop.include_in_calculator_after_eop) === 1;
 
+  const volumeOriginFromRow = (row: { volume_origin?: string } | undefined, fallback: VolumeEntryOrigin): VolumeEntryOrigin =>
+    normalizeVolumeOrigin(row?.volume_origin ?? fallback);
+
   const mode = part?.contract_volume_mode ?? 'project';
   if (mode === 'override') {
     if (partVolC) {
-      return { volume_value: partVolC.volume_value, volume_unit: partVolC.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: partVolC.volume_value,
+        volume_unit: partVolC.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(partVolC, 'manual_year'),
+      };
     }
     if (part?.contract_default_volume_value != null && part?.contract_default_volume_unit) {
       const u = ['annual', 'monthly', 'weekly'].includes(part.contract_default_volume_unit) ? part.contract_default_volume_unit : 'annual';
-      return { volume_value: Number(part.contract_default_volume_value), volume_unit: u as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: Number(part.contract_default_volume_value),
+        volume_unit: u as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: 'default_all_years',
+      };
     }
-    return { volume_value: 0, volume_unit: 'annual', count_after_eop: countAfterEop || undefined };
+    return { volume_value: 0, volume_unit: 'annual', count_after_eop: countAfterEop || undefined, volume_origin: 'manual_year' };
   }
   if (mode === 'project' && pvc && Number(pvc.volume_value) > 0) {
-    return { volume_value: pvc.volume_value, volume_unit: pvc.volume_unit as any, count_after_eop: countAfterEop || undefined };
+    return {
+      volume_value: pvc.volume_value,
+      volume_unit: pvc.volume_unit as any,
+      count_after_eop: countAfterEop || undefined,
+      volume_origin: volumeOriginFromRow(pvc, 'manual_year'),
+    };
   }
   if (mode === 'share' && pvc && Number(pvc.volume_value) > 0) {
     let sharePct: number | null = null;
@@ -312,7 +412,12 @@ export function getEffectiveVolumeForPartContract(projectId: number, partId: num
     if (sharePct == null) sharePct = part?.contract_volume_share_percent ?? null;
     if (sharePct != null) {
       const share = Math.max(0, Math.min(100, Number(sharePct))) / 100;
-      return { volume_value: pvc.volume_value * share, volume_unit: pvc.volume_unit as any, count_after_eop: countAfterEop || undefined };
+      return {
+        volume_value: pvc.volume_value * share,
+        volume_unit: pvc.volume_unit as any,
+        count_after_eop: countAfterEop || undefined,
+        volume_origin: volumeOriginFromRow(pvc, 'manual_year'),
+      };
     }
   }
   return null;
@@ -346,7 +451,13 @@ export function resolveOperationVolumeForYear(
   opYearOverride?: { volume_value: number; volume_unit: string } | null,
   scenarioSnapshot?: ScenarioBundle | null,
   useContractualVolumes: boolean = false
-): { volume_value: number; volume_unit: 'annual' | 'monthly' | 'weekly'; source: OperationVolumeSource } {
+): {
+  volume_value: number;
+  volume_unit: 'annual' | 'monthly' | 'weekly';
+  source: OperationVolumeSource;
+  volume_origin: VolumeEntryOrigin;
+  count_after_eop?: boolean;
+} {
   const asUnit = (u: string): 'annual' | 'monthly' | 'weekly' =>
     u === 'monthly' || u === 'weekly' ? u : 'annual';
 
@@ -356,9 +467,10 @@ export function resolveOperationVolumeForYear(
         volume_value: opYearOverride.volume_value,
         volume_unit: asUnit(opYearOverride.volume_unit),
         source: 'operation_year',
+        volume_origin: 'manual_year',
       };
     }
-    return { volume_value: 0, volume_unit: 'weekly', source: 'operation_year' };
+    return { volume_value: 0, volume_unit: 'weekly', source: 'operation_year', volume_origin: 'manual_year' };
   }
 
   if (opYearOverride) {
@@ -366,6 +478,7 @@ export function resolveOperationVolumeForYear(
       volume_value: opYearOverride.volume_value,
       volume_unit: asUnit(opYearOverride.volume_unit),
       source: 'operation_year',
+      volume_origin: 'manual_year',
     };
   }
   if (op.project_id && op.part_id) {
@@ -377,6 +490,8 @@ export function resolveOperationVolumeForYear(
         volume_value: effective.volume_value,
         volume_unit: asUnit(effective.volume_unit),
         source: 'part',
+        volume_origin: effective.volume_origin ?? 'manual_year',
+        count_after_eop: effective.count_after_eop,
       };
     }
   }
@@ -384,6 +499,7 @@ export function resolveOperationVolumeForYear(
     volume_value: op.volume_value,
     volume_unit: asUnit(op.volume_unit),
     source: 'operation_base',
+    volume_origin: 'manual_year',
   };
 }
 
@@ -576,21 +692,16 @@ export function getMachineCapacitiesForYear(
       );
       const volValue = resolved.volume_value;
       const volUnit = resolved.volume_unit;
-      const effective =
-        op.project_id && op.part_id
-          ? scenarioSnapshot != null
-            ? getEffectiveVolumeForPartScenarioPreferContract(op.project_id, op.part_id, year, scenarioSnapshot, useContract)
-            : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, useContract)
-          : null;
-      let weeklyVol = volumeToWeekly(volValue, volUnit, settings);
-      // Zawsze stosuj ułamek roku (SOP/EOP) dla operacji z projektem – brak EOP = 0 (nie liczy się poza zakresem)
-      if (op.project_id != null) {
-        const fraction =
-          resolved.source === 'part' && effective && (effective as any).count_after_eop
-            ? 1
-            : getYearFractionFromSopEop(op.sop ?? '', op.eop ?? '', year);
-        weeklyVol *= fraction;
-      }
+      const weeklyResolved = resolveWeeklyVolumeFromResolved(volValue, volUnit, settings, {
+        sop: op.sop ?? '',
+        eop: op.eop ?? '',
+        year,
+        volume_origin: resolved.volume_origin,
+        count_after_eop: resolved.count_after_eop,
+        has_project: op.project_id != null,
+      });
+      let weeklyVol = weeklyResolved.weekly;
+      const fraction = weeklyResolved.fraction;
       const { cycleSeconds, nests, oeeForResolve, usesAlternativeInCalculator } = resolveOperationCycleForCalculator(op);
       const requiredSecOp = weeklyVol * (cycleSeconds / nests);
       totalRequiredSec += requiredSecOp;
@@ -804,21 +915,16 @@ export function getMachineLoadComputationDetails(
     );
     const volValue = resolved.volume_value;
     const volUnit = resolved.volume_unit;
-    const effective =
-      op.project_id && op.part_id
-        ? scenarioSnapshot != null
-          ? getEffectiveVolumeForPartScenarioPreferContract(op.project_id, op.part_id, year, scenarioSnapshot, useContract)
-          : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, useContract)
-        : null;
-    let weeklyVol = volumeToWeekly(volValue, volUnit, settings);
-    let fraction = 1;
-    if (op.project_id != null) {
-      fraction =
-        resolved.source === 'part' && effective && (effective as any).count_after_eop
-          ? 1
-          : getYearFractionFromSopEop(op.sop ?? '', op.eop ?? '', year);
-      weeklyVol *= fraction;
-    }
+    const weeklyResolved = resolveWeeklyVolumeFromResolved(volValue, volUnit, settings, {
+      sop: op.sop ?? '',
+      eop: op.eop ?? '',
+      year,
+      volume_origin: resolved.volume_origin,
+      count_after_eop: resolved.count_after_eop,
+      has_project: op.project_id != null,
+    });
+    const weeklyVol = weeklyResolved.weekly;
+    const fraction = weeklyResolved.fraction;
     const { cycleSeconds, nests, oeeForResolve } = resolveOperationCycleForCalculator(op);
     const requiredSecOp = weeklyVol * (cycleSeconds / nests);
     totalRequiredSec += requiredSecOp;
@@ -1183,20 +1289,15 @@ function accumulateScopeBreakdown(
     );
     const volValue = resolved.volume_value;
     const volUnit = resolved.volume_unit;
-    const effective =
-      op.project_id && op.part_id
-        ? opts.scenarioSnapshot != null
-          ? getEffectiveVolumeForPartScenarioPreferContract(op.project_id, op.part_id, year, opts.scenarioSnapshot, useContract)
-          : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, useContract)
-        : null;
-    let weeklyVol = volumeToWeekly(volValue, volUnit, settings);
-    if (op.project_id != null) {
-      const fraction =
-        resolved.source === 'part' && effective && (effective as any).count_after_eop
-          ? 1
-          : getYearFractionFromSopEop(op.sop ?? '', op.eop ?? '', year);
-      weeklyVol *= fraction;
-    }
+    const weeklyResolved = resolveWeeklyVolumeFromResolved(volValue, volUnit, settings, {
+      sop: op.sop ?? '',
+      eop: op.eop ?? '',
+      year,
+      volume_origin: resolved.volume_origin,
+      count_after_eop: resolved.count_after_eop,
+      has_project: op.project_id != null,
+    });
+    const weeklyVol = weeklyResolved.weekly;
     if (weeklyVol <= 1e-9) continue;
 
     const { cycleSeconds, nests } = resolveOperationCycleForCalculator(op);

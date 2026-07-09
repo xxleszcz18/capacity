@@ -5,6 +5,7 @@ import { useI18n } from '../context/I18nContext';
 import { confirmDelete } from '../confirmDelete';
 import SearchableSelect from '../components/SearchableSelect';
 import SortableTh from '../components/SortableTh';
+import { AdminHubList, adminHubCardStyle } from '../components/AdminHubCards';
 import { useTableSort, sortRows } from '../utils/tableSort';
 
 type WdProfile = 'capacity' | 'ocu';
@@ -43,80 +44,24 @@ export default function Settings() {
       <h1 style={{ marginTop: 0 }}>{t('settings.databaseSettings')}</h1>
       <p style={{ color: '#666', marginBottom: '1.5rem' }}>{t('settings.chooseCategory')}</p>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '2rem' }}>
-        <Link
-          to="/administracja/ustawienia-bazy/fazy-procesu"
-          style={{
-            display: 'block',
-            padding: '1.25rem 1.5rem',
-            minWidth: 220,
-            background: 'white',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            borderRadius: 8,
-            color: 'inherit',
-            textDecoration: 'none',
-            border: '1px solid #eee',
-            cursor: 'pointer',
-          }}
-        >
+      <AdminHubList style={{ marginBottom: '2rem' }}>
+        <Link to="/administracja/ustawienia-bazy/fazy-procesu" style={adminHubCardStyle}>
           <strong style={{ fontSize: '1.1rem' }}>{t('settings.phasesTitle')}</strong>
           <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('settings.phasesDescManage')}</p>
         </Link>
-        <Link
-          to="/administracja/ustawienia-bazy/detale"
-          style={{
-            display: 'block',
-            padding: '1.25rem 1.5rem',
-            minWidth: 220,
-            background: 'white',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            borderRadius: 8,
-            color: 'inherit',
-            textDecoration: 'none',
-            border: '1px solid #eee',
-            cursor: 'pointer',
-          }}
-        >
+        <Link to="/administracja/ustawienia-bazy/detale" style={adminHubCardStyle}>
           <strong style={{ fontSize: '1.1rem' }}>{t('settings.detailsTitle')}</strong>
           <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('settings.detailsDescManage')}</p>
         </Link>
-        <Link
-          to="/administracja/ustawienia-bazy/typy-maszyn"
-          style={{
-            display: 'block',
-            padding: '1.25rem 1.5rem',
-            minWidth: 220,
-            background: 'white',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            borderRadius: 8,
-            color: 'inherit',
-            textDecoration: 'none',
-            border: '1px solid #eee',
-            cursor: 'pointer',
-          }}
-        >
+        <Link to="/administracja/ustawienia-bazy/typy-maszyn" style={adminHubCardStyle}>
           <strong style={{ fontSize: '1.1rem' }}>{t('settings.machineTypesTitle')}</strong>
           <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('settings.machineTypesDescManage')}</p>
         </Link>
-        <Link
-          to="/administracja/ustawienia-bazy/wizualne"
-          style={{
-            display: 'block',
-            padding: '1.25rem 1.5rem',
-            minWidth: 220,
-            background: 'white',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-            borderRadius: 8,
-            color: 'inherit',
-            textDecoration: 'none',
-            border: '1px solid #eee',
-            cursor: 'pointer',
-          }}
-        >
+        <Link to="/administracja/ustawienia-bazy/wizualne" style={adminHubCardStyle}>
           <strong style={{ fontSize: '1.1rem' }}>{t('settings.visualTitle')}</strong>
           <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('settings.visualDescManage')}</p>
         </Link>
-      </div>
+      </AdminHubList>
 
       <WorkingDaysProfileBlock profile="capacity" theme={CAPACITY_THEME} />
       {ocuFeatureEnabled && <WorkingDaysProfileBlock profile="ocu" theme={OCU_THEME} />}

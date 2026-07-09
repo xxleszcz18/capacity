@@ -949,6 +949,21 @@ function derivedValues(value: number, unit: string) {
 }
 
 /** Ułamek roku uwzględniający SOP/EOP: pierwszy rok od startMonth, ostatni do endMonth, środkowe = 1. */
+function productionMonthsInYear(
+  sopEop: { years: number[]; startMonth?: number; endMonth?: number },
+  year: number
+): number {
+  if (!sopEop.years.length) return 12;
+  const isFirst = year === sopEop.years[0];
+  const isLast = year === sopEop.years[sopEop.years.length - 1];
+  if (isFirst && isLast && sopEop.startMonth != null && sopEop.endMonth != null) {
+    return Math.max(0, sopEop.endMonth - sopEop.startMonth + 1);
+  }
+  if (isFirst && sopEop.startMonth != null) return 13 - sopEop.startMonth;
+  if (isLast && sopEop.endMonth != null) return sopEop.endMonth;
+  return 12;
+}
+
 function yearFraction(
   sopEop: { years: number[]; startMonth?: number; endMonth?: number },
   year: number,
@@ -967,13 +982,67 @@ function yearFraction(
   return { fraction: 1 };
 }
 
-type ProjectVolumeRow = { year: number; volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number | boolean };
+type VolumeOrigin = 'default_all_years' | 'manual_year';
+
+function normalizeVolumeOrigin(raw: unknown): VolumeOrigin {
+  return String(raw ?? '').trim() === 'default_all_years' ? 'default_all_years' : 'manual_year';
+}
+
+/** Podgląd przeliczeń — zgodny z logiką kalkulatora (dwie ścieżki dla lat niepełnych). */
+function effectiveDerivedValues(
+  value: number,
+  unit: string,
+  volumeOrigin: VolumeOrigin,
+  sopEop: { years: number[]; startMonth?: number; endMonth?: number },
+  year: number,
+  t: (key: string, params?: Record<string, string | number>) => string
+): { annual: number; monthly: number; weekly: number; label?: string } {
+  const months = productionMonthsInYear(sopEop, year);
+  const isPartial = months > 0 && months < 12;
+  if (volumeOrigin === 'manual_year' && isPartial && unit === 'annual') {
+    const monthly = value / months;
+    const annual = monthly * 12;
+    return {
+      annual,
+      monthly,
+      weekly: annual / WORK_WEEKS_PER_YEAR,
+      label: t('projectDetailExtra.sopEopMonthsOfYear', { months }),
+    };
+  }
+  if (volumeOrigin === 'manual_year') {
+    return derivedValues(value, unit);
+  }
+  const { fraction, label } = yearFraction(sopEop, year, t);
+  const d = derivedValues(value, unit);
+  return {
+    annual: d.annual * fraction,
+    monthly: (d.annual * fraction) / 12,
+    weekly: (d.annual * fraction) / WORK_WEEKS_PER_YEAR,
+    label,
+  };
+}
+
+type ProjectVolumeRow = {
+  year: number;
+  volume_value: number;
+  volume_unit: string;
+  include_in_calculator_after_eop?: number | boolean;
+  volume_origin?: VolumeOrigin;
+};
+
+function mapProjectVolumeRow(pv: any, normInclude: (v: any) => number): ProjectVolumeRow {
+  return {
+    ...pv,
+    include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop),
+    volume_origin: normalizeVolumeOrigin(pv.volume_origin),
+  };
+}
 function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void }) {
   const { t, te } = useI18n();
   const volUnitLabel = (u: string) =>
     u === 'annual' ? t('common.unitAnnual') : u === 'monthly' ? t('common.unitMonthly') : u === 'weekly' ? t('common.unitWeekly') : u;
   const normInclude = (v: any) => (v === 1 || v === true || v === '1' ? 1 : 0);
-  const [projectVolumes, setProjectVolumes] = useState<ProjectVolumeRow[]>(() => (project.project_volumes ?? []).map((pv: any) => ({ ...pv, include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop) })));
+  const [projectVolumes, setProjectVolumes] = useState<ProjectVolumeRow[]>(() => (project.project_volumes ?? []).map((pv: any) => mapProjectVolumeRow(pv, normInclude)));
   const [newYear, setNewYear] = useState(new Date().getFullYear());
   const [newValue, setNewValue] = useState('');
   const [newUnit, setNewUnit] = useState<'annual' | 'monthly' | 'weekly'>('annual');
@@ -987,7 +1056,7 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
   const projectVolumesDirtyRef = useRef(false);
 
   const [projectVolumesContract, setProjectVolumesContract] = useState<ProjectVolumeRow[]>(() =>
-    (project.project_volumes_contract ?? []).map((pv: any) => ({ ...pv, include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop) }))
+    (project.project_volumes_contract ?? []).map((pv: any) => mapProjectVolumeRow(pv, normInclude))
   );
   const [newYearCo, setNewYearCo] = useState(new Date().getFullYear());
   const [newValueCo, setNewValueCo] = useState('');
@@ -1015,13 +1084,13 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
 
   useEffect(() => {
     if (projectVolumesDirtyRef.current) return;
-    const list = (project.project_volumes ?? []).map((pv: any) => ({ ...pv, include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop) }));
+    const list = (project.project_volumes ?? []).map((pv: any) => mapProjectVolumeRow(pv, normInclude));
     setProjectVolumes(list);
   }, [project?.id, project?.eop, project?.project_volumes]);
 
   useEffect(() => {
     if (projectVolumesContractDirtyRef.current) return;
-    const list = (project.project_volumes_contract ?? []).map((pv: any) => ({ ...pv, include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop) }));
+    const list = (project.project_volumes_contract ?? []).map((pv: any) => mapProjectVolumeRow(pv, normInclude));
     setProjectVolumesContract(list);
   }, [project?.id, project?.eop, project?.project_volumes_contract]);
 
@@ -1030,7 +1099,7 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
     api.projects.setVolumes(project.id, volumes)
       .then((rows) => {
         projectVolumesDirtyRef.current = false;
-        setProjectVolumes(rows);
+        setProjectVolumes(rows.map((pv: any) => mapProjectVolumeRow(pv, normInclude)));
         onUpdate();
       })
       .finally(() => setSaving(false));
@@ -1040,7 +1109,7 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
     const v = Number(newValue);
     if (newValue.trim() === '' || isNaN(v) || v < 0) return;
     if (projectVolumes.some((pv) => pv.year === newYear)) return;
-    const next = [...projectVolumes, { year: newYear, volume_value: v, volume_unit: newUnit, include_in_calculator_after_eop: 0 }].sort((a, b) => a.year - b.year);
+    const next = [...projectVolumes, { year: newYear, volume_value: v, volume_unit: newUnit, include_in_calculator_after_eop: 0, volume_origin: 'manual_year' as const }].sort((a, b) => a.year - b.year);
     setProjectVolumes(next);
     setNewValue('');
     setNewYear((prev) => prev + 1);
@@ -1058,7 +1127,15 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
   const updateProjectVolume = (year: number, field: 'volume_value' | 'volume_unit' | 'include_in_calculator_after_eop', val: number | string | boolean) => {
     projectVolumesDirtyRef.current = true;
     setProjectVolumes((prev) => {
-      const next = prev.map((pv) => (pv.year === year ? { ...pv, [field]: val } : pv));
+      const next = prev.map((pv) =>
+        pv.year === year
+          ? {
+              ...pv,
+              [field]: val,
+              ...(field === 'volume_value' || field === 'volume_unit' ? { volume_origin: 'manual_year' as const } : {}),
+            }
+          : pv
+      );
       projectVolumesRef.current = next;
       return next;
     });
@@ -1081,7 +1158,12 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
       )
     )
       return;
-    const next = projectVolumes.map((pv) => ({ ...pv, volume_value: v, volume_unit: applyAllUnit }));
+    const next = projectVolumes.map((pv) => ({
+      ...pv,
+      volume_value: v,
+      volume_unit: applyAllUnit,
+      volume_origin: 'default_all_years' as const,
+    }));
     setProjectVolumes(next);
     saveProjectVolumes(next);
   };
@@ -1117,7 +1199,7 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
       .setVolumesContract(project.id, volumes)
       .then((rows) => {
         projectVolumesContractDirtyRef.current = false;
-        setProjectVolumesContract(rows.map((pv: any) => ({ ...pv, include_in_calculator_after_eop: normInclude(pv.include_in_calculator_after_eop) })));
+        setProjectVolumesContract(rows.map((pv: any) => mapProjectVolumeRow(pv, normInclude)));
         onUpdate();
       })
       .finally(() => setSaving(false));
@@ -1127,7 +1209,7 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
     const v = Number(newValueCo);
     if (newValueCo.trim() === '' || isNaN(v) || v < 0) return;
     if (projectVolumesContract.some((pv) => pv.year === newYearCo)) return;
-    const next = [...projectVolumesContract, { year: newYearCo, volume_value: v, volume_unit: newUnitCo, include_in_calculator_after_eop: 0 }].sort((a, b) => a.year - b.year);
+    const next = [...projectVolumesContract, { year: newYearCo, volume_value: v, volume_unit: newUnitCo, include_in_calculator_after_eop: 0, volume_origin: 'manual_year' as const }].sort((a, b) => a.year - b.year);
     setProjectVolumesContract(next);
     setNewValueCo('');
     setNewYearCo((prev) => prev + 1);
@@ -1145,7 +1227,15 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
   const updateProjectVolumeContract = (year: number, field: 'volume_value' | 'volume_unit' | 'include_in_calculator_after_eop', val: number | string | boolean) => {
     projectVolumesContractDirtyRef.current = true;
     setProjectVolumesContract((prev) => {
-      const next = prev.map((pv) => (pv.year === year ? { ...pv, [field]: val } : pv));
+      const next = prev.map((pv) =>
+        pv.year === year
+          ? {
+              ...pv,
+              [field]: val,
+              ...(field === 'volume_value' || field === 'volume_unit' ? { volume_origin: 'manual_year' as const } : {}),
+            }
+          : pv
+      );
       projectVolumesContractRef.current = next;
       return next;
     });
@@ -1168,7 +1258,12 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
       )
     )
       return;
-    const next = projectVolumesContract.map((pv) => ({ ...pv, volume_value: v, volume_unit: applyAllUnitCo }));
+    const next = projectVolumesContract.map((pv) => ({
+      ...pv,
+      volume_value: v,
+      volume_unit: applyAllUnitCo,
+      volume_origin: 'default_all_years' as const,
+    }));
     setProjectVolumesContract(next);
     saveProjectVolumesContract(next);
   };
@@ -1295,11 +1390,12 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
           </thead>
           <tbody>
             {projectVolumes.map((pv, idx) => {
-              const d = derivedValues(pv.volume_value, pv.volume_unit);
-              const { fraction, label } = yearFraction(sopEop, pv.year, t);
-              const effectiveAnnual = d.annual * fraction;
-              const effectiveMonthly = effectiveAnnual / 12;
-              const effectiveWeekly = effectiveAnnual / WORK_WEEKS_PER_YEAR;
+              const origin = normalizeVolumeOrigin(pv.volume_origin);
+              const d = effectiveDerivedValues(pv.volume_value, pv.volume_unit, origin, sopEop, pv.year, t);
+              const label = d.label;
+              const effectiveAnnual = d.annual;
+              const effectiveMonthly = d.monthly;
+              const effectiveWeekly = d.weekly;
               const nextYear = sortedYears[idx + 1];
               const isAfterEop = eopYear != null && pv.year > eopYear;
               const includeAfterEop = pv.include_in_calculator_after_eop === 1 || pv.include_in_calculator_after_eop === true;
@@ -1336,6 +1432,11 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
                       </span>
                     ) : (
                       <span>{Math.round(effectiveAnnual)} / {Math.round(effectiveMonthly)} / {Math.round(effectiveWeekly)}</span>
+                    )}
+                    {origin === 'manual_year' && (
+                      <span style={{ marginLeft: 6, color: '#c62828', fontWeight: 600 }} title={t('projectDetailExtra.manualYearOverride')}>
+                        {t('projectDetailExtra.manualYearOverrideShort')}
+                      </span>
                     )}
                   </td>
                   <td style={{ padding: '0.5rem', fontSize: 12 }}>
@@ -1464,11 +1565,12 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
           </thead>
           <tbody>
             {projectVolumesContract.map((pv, idx) => {
-              const d = derivedValues(pv.volume_value, pv.volume_unit);
-              const { fraction, label } = yearFraction(sopEop, pv.year, t);
-              const effectiveAnnual = d.annual * fraction;
-              const effectiveMonthly = effectiveAnnual / 12;
-              const effectiveWeekly = effectiveAnnual / WORK_WEEKS_PER_YEAR;
+              const origin = normalizeVolumeOrigin(pv.volume_origin);
+              const d = effectiveDerivedValues(pv.volume_value, pv.volume_unit, origin, sopEop, pv.year, t);
+              const label = d.label;
+              const effectiveAnnual = d.annual;
+              const effectiveMonthly = d.monthly;
+              const effectiveWeekly = d.weekly;
               const nextYear = sortedYearsContract[idx + 1];
               const isAfterEop = eopYear != null && pv.year > eopYear;
               const includeAfterEop = pv.include_in_calculator_after_eop === 1 || pv.include_in_calculator_after_eop === true;
@@ -1505,6 +1607,11 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
                       </span>
                     ) : (
                       <span>{Math.round(effectiveAnnual)} / {Math.round(effectiveMonthly)} / {Math.round(effectiveWeekly)}</span>
+                    )}
+                    {origin === 'manual_year' && (
+                      <span style={{ marginLeft: 6, color: '#c62828', fontWeight: 600 }} title={t('projectDetailExtra.manualYearOverride')}>
+                        {t('projectDetailExtra.manualYearOverrideShort')}
+                      </span>
                     )}
                   </td>
                   <td style={{ padding: '0.5rem', fontSize: 12 }}>
@@ -1565,6 +1672,70 @@ function VolumesTab({ project, onUpdate }: { project: any; onUpdate: () => void 
   );
 }
 
+type PartVolumeEditorState = {
+  mode: string;
+  sharePercent: string;
+  shareByYear: Record<number, string>;
+  volumeByYear: { year: number; volume_value: number; volume_unit: string; volume_origin?: VolumeOrigin }[];
+  defaultVolumeValue: string;
+  defaultVolumeUnit: 'annual' | 'monthly' | 'weekly';
+};
+
+function partVolumeStateFromPart(part: any, contractColumn: boolean): PartVolumeEditorState {
+  const shareByYear: Record<number, string> = {};
+  const shareRows = contractColumn ? (part.volume_contract_share_by_year ?? []) : (part.volume_share_by_year ?? []);
+  shareRows.forEach((r: { year: number; share_percent: number }) => {
+    shareByYear[r.year] = String(r.share_percent);
+  });
+  const volumeRows = contractColumn ? (part.volume_contract_by_year ?? []) : (part.volume_by_year ?? []);
+  return {
+    mode: contractColumn ? (part.contract_volume_mode ?? 'project') : (part.volume_mode ?? 'project'),
+    sharePercent: contractColumn
+      ? part.contract_volume_share_percent != null
+        ? String(part.contract_volume_share_percent)
+        : ''
+      : part.volume_share_percent != null
+        ? String(part.volume_share_percent)
+        : '',
+    shareByYear,
+    volumeByYear: volumeRows.map((r: any) => ({
+      year: r.year,
+      volume_value: r.volume_value,
+      volume_unit: r.volume_unit,
+      volume_origin: normalizeVolumeOrigin(r.volume_origin),
+    })),
+    defaultVolumeValue: contractColumn
+      ? part.contract_default_volume_value != null
+        ? String(part.contract_default_volume_value)
+        : ''
+      : part.default_volume_value != null
+        ? String(part.default_volume_value)
+        : '',
+    defaultVolumeUnit: (() => {
+      const u = contractColumn ? part.contract_default_volume_unit : part.default_volume_unit;
+      return u && ['annual', 'monthly', 'weekly'].includes(u) ? u : 'annual';
+    })(),
+  };
+}
+
+function partVolumeStateSignature(state: PartVolumeEditorState): string {
+  const shareEntries = Object.keys(state.shareByYear)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((year) => `${year}:${state.shareByYear[year] ?? ''}`);
+  const volumeRows = [...state.volumeByYear]
+    .sort((a, b) => a.year - b.year)
+    .map((row) => `${row.year}:${row.volume_value}:${row.volume_unit}:${row.volume_origin ?? 'manual_year'}`);
+  return JSON.stringify({
+    mode: state.mode,
+    sharePercent: state.sharePercent,
+    share: shareEntries,
+    volume: volumeRows,
+    defaultVolumeValue: state.defaultVolumeValue,
+    defaultVolumeUnit: state.defaultVolumeUnit,
+  });
+}
+
 function PartVolumeRow({
   projectId,
   part,
@@ -1618,7 +1789,7 @@ function PartVolumeRow({
     });
     return byYear;
   });
-  const [volumeByYear, setVolumeByYear] = useState<{ year: number; volume_value: number; volume_unit: string }[]>(() =>
+  const [volumeByYear, setVolumeByYear] = useState<{ year: number; volume_value: number; volume_unit: string; volume_origin?: VolumeOrigin }[]>(() =>
     contractColumn ? (part.volume_contract_by_year ?? []) : (part.volume_by_year ?? [])
   );
   const [defaultVolumeValue, setDefaultVolumeValue] = useState<string>(
@@ -1645,7 +1816,7 @@ function PartVolumeRow({
   const saveStateRef = useRef({
     mode: 'project' as string,
     shareByYear: {} as Record<number, string>,
-    volumeByYear: [] as { year: number; volume_value: number; volume_unit: string }[],
+    volumeByYear: [] as { year: number; volume_value: number; volume_unit: string; volume_origin?: VolumeOrigin }[],
     sharePercent: '',
     defaultVolumeValue: '',
     defaultVolumeUnit: 'annual' as 'annual' | 'monthly' | 'weekly',
@@ -1683,6 +1854,39 @@ function PartVolumeRow({
       yearsForShare,
     };
   }, [mode, shareByYear, volumeByYear, sharePercent, defaultVolumeValue, defaultVolumeUnit, contractColumn, yearsForOverride, yearsForShare]);
+
+  const savedStateSignature = useMemo(
+    () => partVolumeStateSignature(partVolumeStateFromPart(part, !!contractColumn)),
+    [
+      part,
+      contractColumn,
+      part.volume_mode,
+      part.volume_share_percent,
+      part.volume_share_by_year,
+      part.volume_by_year,
+      part.default_volume_value,
+      part.default_volume_unit,
+      part.contract_volume_mode,
+      part.contract_volume_share_percent,
+      part.volume_contract_share_by_year,
+      part.volume_contract_by_year,
+      part.contract_default_volume_value,
+      part.contract_default_volume_unit,
+    ]
+  );
+  const currentStateSignature = useMemo(
+    () =>
+      partVolumeStateSignature({
+        mode,
+        sharePercent,
+        shareByYear,
+        volumeByYear,
+        defaultVolumeValue,
+        defaultVolumeUnit,
+      }),
+    [mode, sharePercent, shareByYear, volumeByYear, defaultVolumeValue, defaultVolumeUnit]
+  );
+  const isDirty = currentStateSignature !== savedStateSignature;
 
   const getEffectiveShareForYear = (year: number): number => {
     const fromYear = shareByYear[year];
@@ -1788,7 +1992,6 @@ function PartVolumeRow({
       defaultVolumeValue: saveDefaultVolumeValue,
       defaultVolumeUnit: saveDefaultVolumeUnit,
       contractColumn: saveContractColumn,
-      yearsForOverride: saveYearsForOverride,
     } = saveStateRef.current;
     setSaveFeedback(null);
     savingRef.current = true;
@@ -1802,23 +2005,13 @@ function PartVolumeRow({
         : null;
     const defaultUn = saveMode === 'override' && defaultVal != null ? saveDefaultVolumeUnit : null;
     const volumesToSave =
-      saveMode === 'override' && saveYearsForOverride.length > 0
-        ? saveYearsForOverride.map((year) => {
-            const row = saveVolumeByYear.find((r) => r.year === year);
-            return row ?? { year, volume_value: 0, volume_unit: 'annual' as const };
-          })
-        : saveMode === 'override'
-          ? saveVolumeByYear
-          : [];
+      saveMode === 'override' && saveVolumeByYear.length > 0
+        ? saveVolumeByYear.map((row) => ({ ...row, volume_origin: row.volume_origin ?? 'manual_year' }))
+        : [];
     const volumesToSaveContract =
-      saveMode === 'override' && saveYearsForOverride.length > 0
-        ? saveYearsForOverride.map((year) => {
-            const row = saveVolumeByYear.find((r) => r.year === year);
-            return row ?? { year, volume_value: 0, volume_unit: 'annual' as const };
-          })
-        : saveMode === 'override'
-          ? saveVolumeByYear
-          : [];
+      saveMode === 'override' && saveVolumeByYear.length > 0
+        ? saveVolumeByYear.map((row) => ({ ...row, volume_origin: row.volume_origin ?? 'manual_year' }))
+        : [];
     const promise = saveContractColumn
       ? (() => {
           const updateBody: Record<string, unknown> = {
@@ -1894,10 +2087,16 @@ function PartVolumeRow({
       const idx = prev.findIndex((r) => r.year === year);
       const next =
         idx >= 0
-          ? prev.map((r) => (r.year === year ? { ...r, [field]: val } : r))
-          : [...prev, { year, volume_value: field === 'volume_value' ? Number(val) : 0, volume_unit: field === 'volume_unit' ? (val as string) : 'annual' }].sort(
-              (a, b) => a.year - b.year
-            );
+          ? prev.map((r) => (r.year === year ? { ...r, [field]: val, volume_origin: 'manual_year' as const } : r))
+          : [
+              ...prev,
+              {
+                year,
+                volume_value: field === 'volume_value' ? Number(val) : 0,
+                volume_unit: field === 'volume_unit' ? (val as string) : 'annual',
+                volume_origin: 'manual_year' as const,
+              },
+            ].sort((a, b) => a.year - b.year);
       saveStateRef.current = { ...saveStateRef.current, volumeByYear: next };
       return next;
     });
@@ -1922,7 +2121,9 @@ function PartVolumeRow({
       return r.volume_value !== v || r.volume_unit !== unit;
     });
     if (wouldOverwrite && !window.confirm(t('projectDetailExtra.overwriteAllYears'))) return;
-    setVolumeByYear(yearsForOverride.map((year) => ({ year, volume_value: v, volume_unit: unit })));
+    setVolumeByYear([]);
+    saveStateRef.current = { ...saveStateRef.current, volumeByYear: [] };
+    scheduleAutoSave();
   };
 
   const addPartVolumeYear = () => {
@@ -1998,6 +2199,7 @@ function PartVolumeRow({
           year,
           volume_value: pasted !== undefined ? pasted : (existing?.volume_value ?? 0),
           volume_unit: existing?.volume_unit ?? ('annual' as const),
+          volume_origin: 'manual_year' as const,
         };
       });
       saveStateRef.current = { ...saveStateRef.current, mode: 'override', volumeByYear: merged, yearsForOverride: nextYears };
@@ -2050,7 +2252,9 @@ function PartVolumeRow({
         byC[r.year] = String(r.share_percent);
       });
       setShareByYear(byC);
-      setVolumeByYear(part.volume_contract_by_year ?? []);
+      setVolumeByYear(
+        (part.volume_contract_by_year ?? []).map((r: any) => ({ ...r, volume_origin: normalizeVolumeOrigin(r.volume_origin) }))
+      );
       setDefaultVolumeValue(part.contract_default_volume_value != null ? String(part.contract_default_volume_value) : '');
       setDefaultVolumeUnit(
         part.contract_default_volume_unit && ['annual', 'monthly', 'weekly'].includes(part.contract_default_volume_unit)
@@ -2065,7 +2269,7 @@ function PartVolumeRow({
         byYear[r.year] = String(r.share_percent);
       });
       setShareByYear(byYear);
-      setVolumeByYear(part.volume_by_year ?? []);
+      setVolumeByYear((part.volume_by_year ?? []).map((r: any) => ({ ...r, volume_origin: normalizeVolumeOrigin(r.volume_origin) })));
       setDefaultVolumeValue(part.default_volume_value != null ? String(part.default_volume_value) : '');
       setDefaultVolumeUnit(
         part.default_volume_unit && ['annual', 'monthly', 'weekly'].includes(part.default_volume_unit) ? part.default_volume_unit : 'annual'
@@ -2268,10 +2472,18 @@ function PartVolumeRow({
             <tbody>
               {yearsForOverride.map((year) => {
                 const r = getRowForYear(year);
+                const rowOrigin = normalizeVolumeOrigin(r.volume_origin);
                 return (
                   <tr key={year}>
                     <td style={{ padding: 4 }}>{year}</td>
-                    <td style={{ padding: 4 }}><ZeroClearNumberInput value={r.volume_value} onChange={(n) => updateYearRow(year, 'volume_value', n)} onBlur={flushAutoSave} style={{ width: 90 }} /></td>
+                    <td style={{ padding: 4 }}>
+                      <ZeroClearNumberInput value={r.volume_value} onChange={(n) => updateYearRow(year, 'volume_value', n)} onBlur={flushAutoSave} style={{ width: 90 }} />
+                      {rowOrigin === 'manual_year' && (
+                        <span style={{ marginLeft: 6, color: '#c62828', fontWeight: 600, fontSize: 12 }} title={t('projectDetailExtra.manualYearOverride')}>
+                          {t('projectDetailExtra.manualYearOverrideShort')}
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: 4 }}>
                       <SearchableSelect value={r.volume_unit} onChange={(e) => updateYearRow(year, 'volume_unit', e.target.value)} onBlur={flushAutoSave}>
                         <option value="annual">{t('common.unitAnnual')}</option>
@@ -2289,10 +2501,13 @@ function PartVolumeRow({
           {partAddYearControls}
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <button type="button" onClick={() => void savePart()} disabled={saving} style={{ padding: '0.35rem 0.75rem', background: '#2196f3', color: 'white', border: 'none', borderRadius: 4 }}>
           {saving ? t('common.saving') : t('common.save')}
         </button>
+        {isDirty && !saving && (
+          <span style={{ fontSize: 13, color: '#e65100', fontWeight: 600 }}>{t('projectDetailExtra.unsavedChanges')}</span>
+        )}
         {saveFeedback && (
           <span style={{ fontSize: 13, color: saveFeedback.type === 'success' ? '#2e7d32' : '#c62828', fontWeight: 600 }}>
             {saveFeedback.text}
