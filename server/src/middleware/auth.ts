@@ -164,6 +164,12 @@ function resolveResourcePermission(req: Request, resource: PermissionResource): 
     if (method === 'DELETE') return 'projects.delete';
   }
 
+  if (resource === 'admin_settings') {
+    if (method === 'GET' && path === '/visual') {
+      return ['calculator.view', 'admin_settings.view'];
+    }
+  }
+
   return null;
 }
 
