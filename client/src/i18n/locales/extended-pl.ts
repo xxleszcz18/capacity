@@ -332,6 +332,11 @@ export const extendedPl: TranslationTree = {
     setMode: 'Set detali',
     chooseSourceOp: '— wybierz operację źródłową —',
     chooseVolumeSource: '— wybierz detal źródłowy —',
+    setVolumeSourceNoVolumeShort: 'Brak wolumenu źródła setu',
+    setVolumeSourceNoVolume:
+      'Źródło wolumenu ({{part}}) nie ma skutecznego wolumenu w latach SOP–EOP ({{years}}). Kalkulator użyje wartości z operacji ({{opVolume}}). Uzupełnij wolumeny detalu lub wybierz inne źródło.',
+    setVolumeSourceNoVolumeModal:
+      'Wybrany detal nie ma skutecznego wolumenu w latach SOP–EOP projektu ({{years}}). Kalkulator obciążeń użyje wartości zapisanej przy operacji zamiast wolumenu detalu.',
     setCycleHint: 'Czas cyklu jest wspólny dla całego setu; w jednym cyklu powstaje po 1 szt każdego detalu. Wolumen = liczba setów.',
     removeFromSet: 'Usuń z setu',
     oeePlaceholder: 'puste = z ustawień',

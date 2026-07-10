@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 import { initDb, saveDb } from './db/connection.js';
 import { bootstrapAuthIfEmpty } from './auth/userService.js';
 import { optionalAuth, requireAuth, requirePermissionForResource, requireAdminAccess } from './middleware/auth.js';
@@ -27,6 +28,26 @@ app.use(
   }),
 );
 app.use(express.json());
+
+/** Kompresja gzip dla dużych odpowiedzi JSON (kalkulator). */
+app.use((req, res, next) => {
+  const accept = req.headers['accept-encoding'];
+  if (typeof accept !== 'string' || !accept.includes('gzip')) return next();
+  const originalJson = res.json.bind(res);
+  res.json = (body: unknown) => {
+    const payload = JSON.stringify(body);
+    if (payload.length < 2048) return originalJson(body);
+    zlib.gzip(payload, (err, compressed) => {
+      if (err) return originalJson(body);
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(compressed);
+    });
+    return res;
+  };
+  next();
+});
+
 app.use(optionalAuth);
 
 app.use('/api/auth', authRouter);

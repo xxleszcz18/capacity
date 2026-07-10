@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useScenarioMode } from '../context/ScenarioModeContext';
 import { useEffectiveCalculationProfile } from '../context/OcuModeContext';
@@ -27,6 +27,20 @@ import {
   type DimFilterOp,
   type DimFiltersState,
 } from '../utils/machineDimensionFilters';
+import {
+  buildHorizontalTimelineColumns,
+  getTimelineColumnLoad,
+  getVerticalExpansionRows,
+  getVerticalCellLoad,
+  getYearMarkers,
+  getMonthMarkers,
+  monthAbbrev,
+  periodMachineMonthKey,
+  periodMonthKey,
+  type PeriodBreakdownMachine,
+  type TimelineColumn,
+  type YearSopEopMarkers,
+} from '../utils/calculatorPeriodExpansion';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -75,6 +89,13 @@ type VisualSettings = {
   danger_color: string;
   contractual_calculator_frame_color: string;
   calculator_page_size: number;
+  load_expansion_direction?: 'horizontal' | 'vertical';
+  show_sop_marker: boolean;
+  show_eop_marker: boolean;
+  period_month_header_color: string;
+  period_month_frame_color: string;
+  period_week_header_color: string;
+  period_week_frame_color: string;
 };
 
 const defaultVisualSettings: VisualSettings = {
@@ -98,6 +119,13 @@ const defaultVisualSettings: VisualSettings = {
   danger_color: '#ffcdd2',
   contractual_calculator_frame_color: '#ff9800',
   calculator_page_size: 25,
+  load_expansion_direction: 'horizontal',
+  show_sop_marker: true,
+  show_eop_marker: true,
+  period_month_header_color: '#dbeafe',
+  period_month_frame_color: '#3b82f6',
+  period_week_header_color: '#e0e7ff',
+  period_week_frame_color: '#6366f1',
 };
 
 function normalizeCalculatorPageSize(v: unknown): number {
@@ -157,6 +185,67 @@ function percentCellStyle(
   };
 }
 
+type PeriodCellKind = 'year' | 'month' | 'week';
+
+function periodCellStyle(
+  pct: number,
+  altBorder: 'none' | 'unused' | 'all_alt' | 'mixed' | undefined,
+  visual: VisualSettings,
+  periodKind: PeriodCellKind,
+  allocEnabled = true
+): CSSProperties {
+  const base = percentCellStyle(pct, altBorder, visual, allocEnabled);
+  if (periodKind === 'year') return base;
+  const frame =
+    periodKind === 'month' ? visual.period_month_frame_color ?? '#3b82f6' : visual.period_week_frame_color ?? '#6366f1';
+  return { ...base, boxShadow: `inset 0 0 0 2px ${frame}` };
+}
+
+function renderSopEopMarkers(
+  hasSop: boolean,
+  hasEop: boolean,
+  visual: VisualSettings,
+  t: (key: string) => string
+) {
+  if (!hasSop && !hasEop) return null;
+  return (
+    <span style={{ position: 'absolute', top: 2, left: 2, display: 'flex', gap: 2, pointerEvents: 'none' }}>
+      {visual.show_sop_marker && hasSop && (
+        <span className="calc-sop-marker" title={t('calculator.sopMarker')}>
+          SOP
+        </span>
+      )}
+      {visual.show_eop_marker && hasEop && (
+        <span className="calc-eop-marker" title={t('calculator.eopMarker')}>
+          EOP
+        </span>
+      )}
+    </span>
+  );
+}
+
+function renderPeriodCellContent(
+  loading: boolean,
+  pct: number,
+  markers: { has_sop: boolean; has_eop: boolean },
+  visual: VisualSettings,
+  t: (key: string) => string
+) {
+  if (loading) {
+    return (
+      <span className="calc-period-cell-loading" role="status" aria-live="polite">
+        <span className="data-loading-spinner" aria-hidden="true" />
+      </span>
+    );
+  }
+  return (
+    <>
+      {renderSopEopMarkers(markers.has_sop, markers.has_eop, visual, t)}
+      {pct}%
+    </>
+  );
+}
+
 function percentCellTitle(
   year: number,
   altBorder: 'none' | 'unused' | 'all_alt' | 'mixed' | undefined,
@@ -170,9 +259,11 @@ function percentCellTitle(
     if (rounded === 0 && v > 0) return '<0.01';
     return String(rounded).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
   };
+  const activeDetails =
+    detailBreakdown?.filter((d) => Number(d.contribution_percent) > 0.005) ?? [];
   const detailLines =
-    detailBreakdown && detailBreakdown.length > 0
-      ? `\n\n${t('calculator.tooltip.detailsHeader')}\n${detailBreakdown
+    activeDetails.length > 0
+      ? `\n\n${t('calculator.tooltip.detailsHeader')}\n${activeDetails
           .map((d) => {
             const projectPrefix = d.project_label ? `${d.project_label} · ` : '';
             const rfqSuffix = d.has_rfq ? ` (${t('common.rfq')})` : '';
@@ -433,6 +524,16 @@ export default function Calculator() {
   const [machineGroups, setMachineGroups] = useState<{ id: number; name: string }[]>([]);
   const [yearFrom, setYearFrom] = useState(() => calendarYear() - 1);
   const [yearTo, setYearTo] = useState(() => calendarYear() + 10);
+  const [debouncedYearFrom, setDebouncedYearFrom] = useState(() => calendarYear() - 1);
+  const [debouncedYearTo, setDebouncedYearTo] = useState(() => calendarYear() + 10);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedYearFrom(yearFrom);
+      setDebouncedYearTo(yearTo);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [yearFrom, yearTo]);
   const [types, setTypes] = useState<string[]>([]);
   const [overloaded, setOverloaded] = useState<any[]>([]);
   const [overloadedBarHidden, setOverloadedBarHidden] = useState(() => {
@@ -466,6 +567,15 @@ export default function Calculator() {
   const [viewPdfGenerating, setViewPdfGenerating] = useState(false);
   const [reportMessage, setReportMessage] = useState<string | null>(null);
   const [visualSettings, setVisualSettings] = useState<VisualSettings>(defaultVisualSettings);
+  const [expandedYears, setExpandedYears] = useState<Set<number>>(() => new Set());
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(() => new Set());
+  const [expandedMachines, setExpandedMachines] = useState<Set<number>>(() => new Set());
+  const [expandedMachineMonths, setExpandedMachineMonths] = useState<Set<string>>(() => new Set());
+  const [periodCache, setPeriodCache] = useState<Record<number, PeriodBreakdownMachine[]>>({});
+  const periodCacheRef = useRef(periodCache);
+  periodCacheRef.current = periodCache;
+  const [sopEopMarkerIndex, setSopEopMarkerIndex] = useState<Map<number, Record<number, YearSopEopMarkers>>>(() => new Map());
+  const [periodLoading, setPeriodLoading] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const headScrollRef = useRef<HTMLDivElement>(null);
   const bodyScrollRef = useRef<HTMLDivElement>(null);
@@ -502,6 +612,14 @@ export default function Calculator() {
             ...defaultVisualSettings,
             ...raw,
             calculator_page_size: normalizeCalculatorPageSize(raw.calculator_page_size),
+            load_expansion_direction:
+              raw.load_expansion_direction === 'vertical' ? 'vertical' : 'horizontal',
+            show_sop_marker: raw.show_sop_marker !== false,
+            show_eop_marker: raw.show_eop_marker !== false,
+            period_month_header_color: raw.period_month_header_color ?? '#dbeafe',
+            period_month_frame_color: raw.period_month_frame_color ?? '#3b82f6',
+            period_week_header_color: raw.period_week_header_color ?? '#e0e7ff',
+            period_week_frame_color: raw.period_week_frame_color ?? '#6366f1',
           });
         })
         .catch(() => {});
@@ -522,29 +640,132 @@ export default function Calculator() {
       .catch(() => {});
   }, [scenarioId, setActiveScenario]);
 
-  const effectiveYearFrom = Math.min(yearFrom, yearTo);
-  const effectiveYearTo = Math.max(yearFrom, yearTo);
+  const effectiveYearFrom = Math.min(debouncedYearFrom, debouncedYearTo);
+  const effectiveYearTo = Math.max(debouncedYearFrom, debouncedYearTo);
+
+  const buildCalcApiParams = useCallback(
+    (extra?: Record<string, unknown>) => {
+      const params: Record<string, unknown> = { yearFrom: effectiveYearFrom, yearTo: effectiveYearTo, ...extra };
+      const typesCsv = joinCsvFilter(typeFilter);
+      if (typesCsv) params.types = typesCsv;
+      const clientsCsv = joinCsvFilter(clientFilter);
+      if (clientsCsv) params.clients = clientsCsv;
+      if (scenarioId != null && !isNaN(scenarioId)) params.scenarioId = scenarioId;
+      if (useContractualVolumes) params.useContractualVolumes = true;
+      const statuses = joinCsvFilter(machineStatusFilter);
+      if (statuses) params.machineStatuses = statuses;
+      if (settingsProfile === 'ocu') params.settingsProfile = 'ocu';
+      if (groupFilter.length > 0) params.groupIds = groupFilter.join(',');
+      Object.assign(params, buildDimensionApiParams(dimFilters));
+      return params;
+    },
+    [
+      effectiveYearFrom,
+      effectiveYearTo,
+      typeFilter,
+      clientFilter,
+      machineStatusFilter,
+      groupFilter,
+      scenarioId,
+      useContractualVolumes,
+      dimFilters,
+      settingsProfile,
+    ]
+  );
 
   const fetchCalculator = useCallback(() => {
-    const params: any = { yearFrom: effectiveYearFrom, yearTo: effectiveYearTo };
-    const types = joinCsvFilter(typeFilter);
-    if (types) params.types = types;
-    const clientsCsv = joinCsvFilter(clientFilter);
-    if (clientsCsv) params.clients = clientsCsv;
-    if (scenarioId != null && !isNaN(scenarioId)) params.scenarioId = scenarioId;
-    if (useContractualVolumes) params.useContractualVolumes = true;
-    const statuses = joinCsvFilter(machineStatusFilter);
-    if (statuses) params.machineStatuses = statuses;
-    if (settingsProfile === 'ocu') params.settingsProfile = 'ocu';
-    if (groupFilter.length > 0) params.groupIds = groupFilter.join(',');
-    Object.assign(params, buildDimensionApiParams(dimFilters));
-    return api.capacity.calculator(params).then(setData);
-  }, [effectiveYearFrom, effectiveYearTo, typeFilter, clientFilter, machineStatusFilter, groupFilter, scenarioId, useContractualVolumes, dimFilters, settingsProfile]);
+    return api.capacity.calculator(buildCalcApiParams() as Parameters<typeof api.capacity.calculator>[0]).then(setData);
+  }, [buildCalcApiParams]);
 
   useEffect(() => {
     setLoading(true);
     fetchCalculator().finally(() => setLoading(false));
   }, [fetchCalculator]);
+
+  useEffect(() => {
+    setPeriodCache({});
+    setSopEopMarkerIndex(new Map());
+    setExpandedYears(new Set());
+    setExpandedMonths(new Set());
+    setExpandedMachines(new Set());
+    setExpandedMachineMonths(new Set());
+  }, [buildCalcApiParams]);
+
+  const expansionDirection = visualSettings.load_expansion_direction ?? 'horizontal';
+  const isHorizontalExpansion = expansionDirection === 'horizontal';
+
+  const toggleExpandedYear = useCallback(
+    (year: number) => {
+      if (!isHorizontalExpansion) return;
+      setExpandedYears((prev) => {
+        const next = new Set(prev);
+        if (next.has(year)) {
+          next.delete(year);
+          setExpandedMonths((months) => {
+            const nm = new Set(months);
+            for (const k of months) {
+              if (k.startsWith(`${year}-`)) nm.delete(k);
+            }
+            return nm;
+          });
+        } else {
+          next.add(year);
+          if (!periodCacheRef.current[year]) setPeriodLoading(true);
+        }
+        return next;
+      });
+    },
+    [isHorizontalExpansion]
+  );
+
+  const toggleExpandedMonth = useCallback((year: number, month: number) => {
+    const key = periodMonthKey(year, month);
+    setExpandedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const toggleExpandedMachine = useCallback(
+    (machineId: number) => {
+      if (isHorizontalExpansion) return;
+      setExpandedMachines((prev) => {
+        const next = new Set(prev);
+        if (next.has(machineId)) {
+          next.delete(machineId);
+          setExpandedMachineMonths((months) => {
+            const nm = new Set(months);
+            for (const k of months) {
+              if (k.startsWith(`${machineId}-`)) nm.delete(k);
+            }
+            return nm;
+          });
+        } else {
+          next.add(machineId);
+          for (let y = effectiveYearFrom; y <= effectiveYearTo; y++) {
+            if (!periodCacheRef.current[y]) {
+              setPeriodLoading(true);
+              break;
+            }
+          }
+        }
+        return next;
+      });
+    },
+    [isHorizontalExpansion, effectiveYearFrom, effectiveYearTo]
+  );
+
+  const toggleExpandedMachineMonth = useCallback((machineId: number, month: number) => {
+    const key = periodMachineMonthKey(machineId, month);
+    setExpandedMachineMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const onVisible = () => {
@@ -658,6 +879,81 @@ export default function Calculator() {
     return sortedMachines.slice(start, start + calculatorPageSize);
   }, [sortedMachines, calculatorPageSize, machinesCurrentPage]);
 
+  const yearsNeedingPeriodData = useMemo(() => {
+    if (isHorizontalExpansion) {
+      return [...expandedYears];
+    }
+    if (expandedMachines.size === 0) return [];
+    const yr: number[] = [];
+    for (let y = effectiveYearFrom; y <= effectiveYearTo; y++) yr.push(y);
+    return yr;
+  }, [expandedYears, expandedMachines, isHorizontalExpansion, effectiveYearFrom, effectiveYearTo]);
+
+  useEffect(() => {
+    const machineIds = displayedMachines
+      .map((m: { machine_id?: number }) => Number(m.machine_id))
+      .filter((id) => Number.isFinite(id))
+      .join(',');
+    if (!machineIds) {
+      setSopEopMarkerIndex(new Map());
+      return;
+    }
+    let cancelled = false;
+    api.capacity
+      .sopEopMarkers({
+        ...(buildCalcApiParams() as Parameters<typeof api.capacity.sopEopMarkers>[0]),
+        machineIds,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        const map = new Map<number, Record<number, YearSopEopMarkers>>();
+        for (const row of res.machines) {
+          map.set(row.machine_id, row.years);
+        }
+        setSopEopMarkerIndex(map);
+      })
+      .catch(() => {
+        if (!cancelled) setSopEopMarkerIndex(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayedMachines, buildCalcApiParams]);
+
+  useEffect(() => {
+    const missing = yearsNeedingPeriodData.filter((y) => !periodCache[y]);
+    if (missing.length === 0) return;
+    const machineIds = displayedMachines
+      .map((m: { machine_id?: number }) => Number(m.machine_id))
+      .filter((id) => Number.isFinite(id))
+      .join(',');
+    if (!machineIds) return;
+    let cancelled = false;
+    setPeriodLoading(true);
+    Promise.all(
+      missing.map((year) =>
+        api.capacity
+          .periodBreakdown({ ...(buildCalcApiParams() as Parameters<typeof api.capacity.periodBreakdown>[0]), year, machineIds })
+          .then((res) => ({ year, machines: res.machines as PeriodBreakdownMachine[] }))
+      )
+    )
+      .then((results) => {
+        if (cancelled) return;
+        setPeriodCache((prev) => {
+          const next = { ...prev };
+          for (const r of results) next[r.year] = r.machines;
+          return next;
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setPeriodLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      setPeriodLoading(false);
+    };
+  }, [yearsNeedingPeriodData, periodCache, displayedMachines, buildCalcApiParams]);
+
   useEffect(() => {
     setMachinesPage(1);
   }, [
@@ -737,6 +1033,29 @@ export default function Calculator() {
       : 'scenariusz';
 
   const years = data ? Array.from({ length: data.yearTo - data.yearFrom + 1 }, (_, i) => data.yearFrom + i) : [];
+  const timelineColumns: TimelineColumn[] = isHorizontalExpansion
+    ? buildHorizontalTimelineColumns(years, expandedYears, expandedMonths)
+    : years.map((year) => ({ kind: 'year' as const, year }));
+  const getMachineMonthsData = (machineId: number, year: number) =>
+    periodCache[year]?.find((row) => row.machine_id === machineId)?.months;
+  const isYearPeriodDataPending = (year: number) =>
+    yearsNeedingPeriodData.includes(year) && !periodCache[year];
+  const isPeriodColumnPending = (col: TimelineColumn) =>
+    col.kind !== 'year' && (periodLoading || isYearPeriodDataPending(col.year));
+  const renderPeriodExpandBtn = (title: string, expanded: boolean, onClick: () => void) => (
+    <button
+      type="button"
+      className="calc-period-expand-btn"
+      title={title}
+      aria-expanded={expanded}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      {expanded ? '▼' : '▶'}
+    </button>
+  );
   const reportMachineOptions = filteredMachines.map((m: any) => ({
     machine_id: Number(m.machine_id),
     sap_number: m.sap_number ?? '-',
@@ -756,8 +1075,15 @@ export default function Calculator() {
   const pinnedTypeWidth = 94;
   const detailsColWidth = 210;
   const yearColMinWidth = 56;
+  const periodColMinWidth = 44;
+  const extraPeriodCols = Math.max(0, timelineColumns.length - years.length);
   const calcTableMinWidth =
-    pinnedSapWidth + pinnedNumberWidth + pinnedTypeWidth + detailsColWidth + years.length * yearColMinWidth;
+    pinnedSapWidth +
+    pinnedNumberWidth +
+    pinnedTypeWidth +
+    detailsColWidth +
+    years.length * yearColMinWidth +
+    extraPeriodCols * periodColMinWidth;
   const calcTableStyle: CSSProperties = { minWidth: calcTableMinWidth };
   const calcTheadBg = '#f5f5f5';
   const calcTheadSticky: CSSProperties = { background: calcTheadBg };
@@ -768,8 +1094,17 @@ export default function Calculator() {
       <col style={{ width: pinnedSapWidth }} />
       <col style={{ width: pinnedNumberWidth }} />
       <col style={{ width: pinnedTypeWidth }} />
-      {years.map((y) => (
-        <col key={`col-${y}`} className="calc-year-col" />
+      {timelineColumns.map((col) => (
+        <col
+          key={
+            col.kind === 'year'
+              ? `col-y-${col.year}`
+              : col.kind === 'month'
+                ? `col-m-${col.year}-${col.month}`
+                : `col-w-${col.year}-${col.month}-${col.week}`
+          }
+          className={col.kind === 'year' ? 'calc-year-col' : 'calc-period-col'}
+        />
       ))}
       <col style={{ width: detailsColWidth }} />
     </colgroup>
@@ -801,18 +1136,63 @@ export default function Calculator() {
         style={{ width: pinnedTypeWidth, minWidth: pinnedTypeWidth, maxWidth: pinnedTypeWidth, position: 'sticky', left: pinnedSapWidth + pinnedNumberWidth, ...calcTheadPinnedSticky, whiteSpace: 'normal', lineHeight: 1.15 }}
         className="calc-th-pinned"
       />
-      {years.map((y) => (
-        <th
-          key={y}
-          className="calc-year-col"
-          style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', ...calcTheadSticky }}
-          onClick={() => handleCalcSort('year', y)}
-          title={t('calculator.sortYearLoad')}
-        >
-          {y}
-          {calcSortCol === 'year' && calcSortYear === y ? sortIndicator(true, calcSortDir) : ''}
-        </th>
-      ))}
+      {timelineColumns.map((col) => {
+        if (col.kind === 'year') {
+          const y = col.year;
+          const yearExpanded = expandedYears.has(y);
+          return (
+            <th
+              key={`head-y-${y}`}
+              className="calc-year-col"
+              style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none', ...calcTheadSticky }}
+              onClick={() => handleCalcSort('year', y)}
+              title={t('calculator.sortYearLoad')}
+            >
+              {y}
+              {isHorizontalExpansion &&
+                renderPeriodExpandBtn(
+                  yearExpanded ? t('calculator.collapseYear') : t('calculator.expandYear'),
+                  yearExpanded,
+                  () => toggleExpandedYear(y)
+                )}
+              {calcSortCol === 'year' && calcSortYear === y ? sortIndicator(true, calcSortDir) : ''}
+            </th>
+          );
+        }
+        if (col.kind === 'month') {
+          const monthKey = periodMonthKey(col.year, col.month);
+          const monthExpanded = expandedMonths.has(monthKey);
+          return (
+            <th
+              key={`head-m-${col.year}-${col.month}`}
+              className="calc-period-col calc-period-col--month"
+              style={{ background: visualSettings.period_month_header_color ?? '#dbeafe', ...calcTheadSticky }}
+              title={t('calculator.periodMonthLabel', { year: col.year, month: monthAbbrev(col.month, locale) })}
+            >
+              {monthAbbrev(col.month, locale)}
+              {renderPeriodExpandBtn(
+                monthExpanded ? t('calculator.collapseMonth') : t('calculator.expandMonth'),
+                monthExpanded,
+                () => toggleExpandedMonth(col.year, col.month)
+              )}
+            </th>
+          );
+        }
+        return (
+          <th
+            key={`head-w-${col.year}-${col.month}-${col.week}`}
+            className="calc-period-col calc-period-col--week"
+            style={{ background: visualSettings.period_week_header_color ?? '#e0e7ff', ...calcTheadSticky }}
+            title={t('calculator.periodWeekLabel', {
+              year: col.year,
+              month: monthAbbrev(col.month, locale),
+              week: col.week,
+            })}
+          >
+            T{col.week}
+          </th>
+        );
+      })}
       <th
         className="calc-details-col"
         style={{
@@ -1519,7 +1899,10 @@ export default function Calculator() {
           <MachineGroupsMultiFilter className="cap-filter-select" groups={machineGroups} selected={groupFilter} onChange={setGroupFilter} />
         </label>
         <div className="filter-actions">
-          <DataLoadingBadge active={loading && Boolean(data)} />
+          <DataLoadingBadge
+            active={(loading && Boolean(data)) || periodLoading}
+            label={periodLoading ? t('calculator.loadingPeriodBreakdown') : undefined}
+          />
           <button type="button" className="calculator-primary-btn" onClick={clearAllFilters}>{t('common.clearFilters')}</button>
         </div>
       </div>
@@ -1637,7 +2020,11 @@ export default function Calculator() {
           </div>
         </div>
       )}
-      <DataLoadingOverlay active={loading && Boolean(data)} className="calculator-data-panel">
+      <DataLoadingOverlay
+        active={(loading && Boolean(data)) || periodLoading}
+        label={periodLoading ? t('calculator.loadingPeriodBreakdown') : undefined}
+        className="calculator-data-panel"
+      >
       {!scenarioId && overloaded.length > 0 && overloadedBarHidden && (
         <div style={{ marginBottom: '0.75rem' }}>
           <button
@@ -1744,7 +2131,8 @@ export default function Calculator() {
               const inScenarioCalc = scenarioId != null && Number.isFinite(scenarioId) && scenarioId > 0;
               const machineRowIsRfq = inScenarioCalc && machineStatusFromDb(m.machine_status) === 'RFQ';
               return (
-              <tr key={m.machine_id}>
+              <Fragment key={m.machine_id}>
+              <tr>
                 <td style={{ width: pinnedSapWidth, minWidth: pinnedSapWidth, maxWidth: pinnedSapWidth, padding: '0.75rem', position: 'sticky', left: 0, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.sap_number ?? '-'}</td>
                 <td
                   style={{
@@ -1761,6 +2149,12 @@ export default function Calculator() {
                   }}
                 >
                   <span>{m.internal_number ?? '-'}</span>
+                  {!isHorizontalExpansion &&
+                    renderPeriodExpandBtn(
+                      expandedMachines.has(m.machine_id) ? t('calculator.collapseRow') : t('calculator.expandRow'),
+                      expandedMachines.has(m.machine_id),
+                      () => toggleExpandedMachine(m.machine_id)
+                    )}
                   {machineRowIsRfq && (
                     <span
                       style={{
@@ -1780,39 +2174,71 @@ export default function Calculator() {
                   )}
                 </td>
                 <td style={{ width: pinnedTypeWidth, minWidth: pinnedTypeWidth, maxWidth: pinnedTypeWidth, padding: '0.75rem', position: 'sticky', left: pinnedSapWidth + pinnedNumberWidth, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.type}</td>
-                {years.map((y) => {
-                  const cell = m.years?.[y];
-                  const pct = cell?.load_percent ?? 0;
+                {timelineColumns.map((col) => {
+                  const yearForCell = col.year;
+                  const cell = m.years?.[yearForCell];
+                  const monthsData = col.kind === 'year' ? undefined : getMachineMonthsData(m.machine_id, yearForCell);
+                  const pct = getTimelineColumnLoad(col, cell?.load_percent, monthsData);
+                  const isYearCell = col.kind === 'year';
                   const altRaw = cell?.alternative_border as 'none' | 'unused' | 'all_alt' | 'mixed' | undefined;
-                  const altB = visualSettings.show_alternative_borders ? altRaw : 'none';
+                  const altB =
+                    visualSettings.show_alternative_borders && isYearCell && pct > 0 ? altRaw : 'none';
+                  const periodKind: PeriodCellKind = col.kind === 'year' ? 'year' : col.kind === 'month' ? 'month' : 'week';
+                  const yearMarkers = getYearMarkers(sopEopMarkerIndex, m.machine_id, yearForCell);
+                  const monthMarkers =
+                    col.kind === 'year'
+                      ? { has_sop: yearMarkers?.has_sop ?? false, has_eop: yearMarkers?.has_eop ?? false }
+                      : col.kind === 'month'
+                        ? {
+                            has_sop: monthsData?.[col.month]?.has_sop ?? getMonthMarkers(yearMarkers, col.month).has_sop,
+                            has_eop: monthsData?.[col.month]?.has_eop ?? getMonthMarkers(yearMarkers, col.month).has_eop,
+                          }
+                        : getMonthMarkers(yearMarkers, col.month);
+                  const periodCellPending = isPeriodColumnPending(col);
                   return (
                     <td
-                      key={y}
-                      role={canAllocate ? 'button' : undefined}
-                      tabIndex={canAllocate ? 0 : undefined}
-                      className="calc-year-col"
-                      style={percentCellStyle(pct, altB, visualSettings, canAllocate)}
-                      title={percentCellTitle(y, altB, cell?.detail_breakdown, t, canAllocate)}
+                      key={
+                        col.kind === 'year'
+                          ? `cell-y-${m.machine_id}-${yearForCell}`
+                          : col.kind === 'month'
+                            ? `cell-m-${m.machine_id}-${yearForCell}-${col.month}`
+                            : `cell-w-${m.machine_id}-${yearForCell}-${col.month}-${col.week}`
+                      }
+                      role={canAllocate && isYearCell ? 'button' : undefined}
+                      tabIndex={canAllocate && isYearCell ? 0 : undefined}
+                      className={
+                        isYearCell
+                          ? 'calc-year-col'
+                          : col.kind === 'month'
+                            ? 'calc-period-col calc-period-col--month'
+                            : 'calc-period-col calc-period-col--week'
+                      }
+                      style={periodCellStyle(pct, altB, visualSettings, periodKind, canAllocate && isYearCell)}
+                      title={
+                        isYearCell
+                          ? percentCellTitle(yearForCell, altB, cell?.detail_breakdown, t, canAllocate)
+                          : undefined
+                      }
                       onClick={
-                        canAllocate
+                        canAllocate && isYearCell
                           ? () =>
                               setAllocationModal({
                                 machineId: m.machine_id,
                                 internal_number: m.internal_number,
-                                preselectedYear: y,
+                                preselectedYear: yearForCell,
                                 calculatorYears: m.years,
                               })
                           : undefined
                       }
                       onKeyDown={
-                        canAllocate
+                        canAllocate && isYearCell
                           ? (e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
                                 setAllocationModal({
                                   machineId: m.machine_id,
                                   internal_number: m.internal_number,
-                                  preselectedYear: y,
+                                  preselectedYear: yearForCell,
                                   calculatorYears: m.years,
                                 });
                               }
@@ -1820,8 +2246,8 @@ export default function Calculator() {
                           : undefined
                       }
                     >
-                      {pct}%
-                      {visualSettings.show_rfq_badge && cell?.has_rfq && (
+                      {renderPeriodCellContent(periodCellPending, pct, monthMarkers, visualSettings, t)}
+                      {visualSettings.show_rfq_badge && isYearCell && cell?.has_rfq && (
                         <span
                           style={{
                             position: 'absolute',
@@ -1880,6 +2306,62 @@ export default function Calculator() {
                   </div>
                 </td>
               </tr>
+              {!isHorizontalExpansion &&
+                getVerticalExpansionRows(m.machine_id, expandedMachines, expandedMachineMonths, years).map((row) => {
+                  const monthExpanded = expandedMachineMonths.has(periodMachineMonthKey(m.machine_id, row.month));
+                  return (
+                    <tr key={`${m.machine_id}-${row.kind}-${row.month}${row.kind === 'week' ? `-${row.week}` : ''}`}>
+                      <td
+                        colSpan={3}
+                        className={`calc-period-row-label calc-period-indent-${row.indent}`}
+                        style={{ padding: '0.45rem 0.75rem', position: 'sticky', left: 0, background: '#fafbfc' }}
+                      >
+                        {row.kind === 'month' ? (
+                          <>
+                            {t('calculator.periodMonthOnly', { month: monthAbbrev(row.month, locale) })}
+                            {renderPeriodExpandBtn(
+                              monthExpanded ? t('calculator.collapseMonth') : t('calculator.expandMonth'),
+                              monthExpanded,
+                              () => toggleExpandedMachineMonth(m.machine_id, row.month)
+                            )}
+                          </>
+                        ) : (
+                          t('calculator.periodWeekOnly', { week: row.week })
+                        )}
+                      </td>
+                      {years.map((y) => {
+                        const monthsData = getMachineMonthsData(m.machine_id, y);
+                        const pct = getVerticalCellLoad(y, row, monthsData);
+                        const yearMarkers = getYearMarkers(sopEopMarkerIndex, m.machine_id, y);
+                        const monthMarkers =
+                          row.kind === 'month'
+                            ? {
+                                has_sop: monthsData?.[row.month]?.has_sop ?? getMonthMarkers(yearMarkers, row.month).has_sop,
+                                has_eop: monthsData?.[row.month]?.has_eop ?? getMonthMarkers(yearMarkers, row.month).has_eop,
+                              }
+                            : getMonthMarkers(yearMarkers, row.month);
+                        const periodKind: PeriodCellKind = row.kind === 'month' ? 'month' : 'week';
+                        const periodCellPending = periodLoading || isYearPeriodDataPending(y);
+                        const cellStyle = periodCellStyle(pct, 'none', visualSettings, periodKind, false);
+                        return (
+                          <td
+                            key={`sub-val-${m.machine_id}-${y}-${row.kind}-${row.month}`}
+                            className={
+                              periodKind === 'month'
+                                ? 'calc-period-col calc-period-col--month'
+                                : 'calc-period-col calc-period-col--week'
+                            }
+                            style={cellStyle}
+                          >
+                            {renderPeriodCellContent(periodCellPending, pct, monthMarkers, visualSettings, t)}
+                          </td>
+                        );
+                      })}
+                      <td className="calc-details-col" style={{ background: '#fafbfc' }} />
+                    </tr>
+                  );
+                })}
+              </Fragment>
               );
             })}
             {filteredMachines.length > 0 && (
@@ -1888,10 +2370,24 @@ export default function Calculator() {
                   <td style={{ padding: '0.75rem', position: 'sticky', left: 0, background: '#f5f5f5', zIndex: 1 }} colSpan={3}>
                     {t('calculator.sumLoadsWithCount', { count: filteredMachines.length })}
                   </td>
-                  {loadSummaryByYear.map((s) => (
+                  {timelineColumns.map((col) => {
+                    const sum = filteredMachines.reduce((acc: number, m: any) => {
+                      const monthsData = col.kind === 'year' ? undefined : getMachineMonthsData(m.machine_id, col.year);
+                      return (
+                        acc +
+                        getTimelineColumnLoad(col, m.years?.[col.year]?.load_percent, monthsData)
+                      );
+                    }, 0);
+                    return (
                     <td
-                      key={`sum-${s.year}`}
-                      className="calc-year-col"
+                      key={
+                        col.kind === 'year'
+                          ? `sum-y-${col.year}`
+                          : col.kind === 'month'
+                            ? `sum-m-${col.year}-${col.month}`
+                            : `sum-w-${col.year}-${col.month}-${col.week}`
+                      }
+                      className={col.kind === 'year' ? 'calc-year-col' : 'calc-period-col'}
                       style={{
                         padding: '0.35rem 0',
                         textAlign: 'center',
@@ -1899,19 +2395,41 @@ export default function Calculator() {
                         background: visualSettings.colorize_sum_row ? '#eef5ff' : undefined,
                       }}
                     >
-                      {Math.round(s.sum)}%
+                      {isPeriodColumnPending(col) ? (
+                        <span className="calc-period-cell-loading" aria-hidden="true">
+                          <span className="data-loading-spinner" />
+                        </span>
+                      ) : (
+                        `${Math.round(sum)}%`
+                      )}
                     </td>
-                  ))}
+                    );
+                  })}
                   <td style={{ padding: '0.75rem' }}></td>
                 </tr>
                 <tr style={{ background: '#fafafa', fontWeight: 600 }}>
                   <td style={{ padding: '0.75rem', position: 'sticky', left: 0, background: '#fafafa', zIndex: 1 }} colSpan={3}>
                     {t('calculator.avgLoadsWithCount', { count: filteredMachines.length })}
                   </td>
-                  {loadSummaryByYear.map((s) => (
+                  {timelineColumns.map((col) => {
+                    const sum = filteredMachines.reduce((acc: number, m: any) => {
+                      const monthsData = col.kind === 'year' ? undefined : getMachineMonthsData(m.machine_id, col.year);
+                      return (
+                        acc +
+                        getTimelineColumnLoad(col, m.years?.[col.year]?.load_percent, monthsData)
+                      );
+                    }, 0);
+                    const avg = filteredMachines.length > 0 ? sum / filteredMachines.length : 0;
+                    return (
                     <td
-                      key={`avg-${s.year}`}
-                      className="calc-year-col"
+                      key={
+                        col.kind === 'year'
+                          ? `avg-y-${col.year}`
+                          : col.kind === 'month'
+                            ? `avg-m-${col.year}-${col.month}`
+                            : `avg-w-${col.year}-${col.month}-${col.week}`
+                      }
+                      className={col.kind === 'year' ? 'calc-year-col' : 'calc-period-col'}
                       style={{
                         padding: '0.35rem 0',
                         textAlign: 'center',
@@ -1919,9 +2437,16 @@ export default function Calculator() {
                         background: visualSettings.colorize_avg_row ? '#f3f8ff' : undefined,
                       }}
                     >
-                      {Math.round(s.avg)}%
+                      {isPeriodColumnPending(col) ? (
+                        <span className="calc-period-cell-loading" aria-hidden="true">
+                          <span className="data-loading-spinner" />
+                        </span>
+                      ) : (
+                        `${Math.round(avg)}%`
+                      )}
                     </td>
-                  ))}
+                    );
+                  })}
                   <td style={{ padding: '0.75rem' }}></td>
                 </tr>
               </>

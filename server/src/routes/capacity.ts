@@ -4,12 +4,15 @@ import { parseGroupIdsParam, resolveMachineIdsFromGroups } from '../services/mac
 import {
   getMachineCapacityByYears,
   getMachineCapacitiesForYear,
+  getMachinePeriodBreakdown,
+  getMachineSopEopMarkersByYears,
   getNestCapacitiesForYear,
   getCapacityScopeBreakdown,
   resolveSettingsForYear,
   type CalculatorMachineStatusFilter,
   type CapacityBreakdownSeriesKey,
 } from '../services/capacityService.js';
+import { calculatorCacheKey, getCalculatorCache, setCalculatorCache } from '../services/calculatorCache.js';
 import { parseCalculationSettingsProfile, isOcuEnabled } from '../utils/ocuSettings.js';
 import { parseScenarioSnapshotJson, scenarioHydratedOperationsForActiveProjects } from '../services/scenarioSnapshotService.js';
 import { parseInternalMachineNumber } from '../utils/internalMachineNumber.js';
@@ -219,6 +222,25 @@ capacityRouter.get('/calculator', (req, res) => {
     return res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, scenarioId: ctx.scenarioId ?? null, machines: [] });
   }
 
+  const cacheKey = calculatorCacheKey({
+    yearFrom: ctx.yearFrom,
+    yearTo: ctx.yearTo,
+    machineIds: machineIds ?? [],
+    types: ctx.types,
+    scenarioId: ctx.scenarioId ?? null,
+    useContractualVolumes,
+    machineStatus: ctx.machineStatus,
+    dimensionFilters: ctx.dimensionFilters,
+    settingsProfile: ctx.settingsProfile,
+    groupIds: groupIdsParam ?? '',
+  });
+  const cached = getCalculatorCache<ReturnType<typeof getMachineCapacityByYears>>(cacheKey);
+  if (cached) {
+    res.set('Cache-Control', 'private, max-age=30');
+    res.set('X-Calculator-Cache', 'HIT');
+    return res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, scenarioId: ctx.scenarioId ?? null, machines: cached });
+  }
+
   const data = getMachineCapacityByYears(
     ctx.yearFrom,
     ctx.yearTo,
@@ -232,8 +254,124 @@ capacityRouter.get('/calculator', (req, res) => {
     ctx.dimensionFilters,
     ctx.settingsProfile,
   );
-  res.set('Cache-Control', 'no-store');
+  setCalculatorCache(cacheKey, data);
+  res.set('Cache-Control', 'private, max-age=30');
+  res.set('X-Calculator-Cache', 'MISS');
   res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, scenarioId: ctx.scenarioId ?? null, machines: data });
+});
+
+capacityRouter.get('/calculator/period-breakdown', (req, res) => {
+  const useContractualVolumes = parseUseContractualVolumes(req.query.useContractualVolumes);
+  const groupIdsParam = req.query.groupIds as string | undefined;
+  const year = Number(req.query.year);
+  if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+    return res.status(400).json({ error: 'Invalid year' });
+  }
+  const ctx = resolveCalculatorContext(req);
+  let machineIds = ctx.empty ? ([] as number[]) : ctx.machineIds;
+
+  const groupIds = parseGroupIdsParam(groupIdsParam);
+  if (groupIds.length > 0) {
+    const groupMachineIds = resolveMachineIdsFromGroups(groupIds);
+    if (groupMachineIds.length === 0) {
+      return res.json({ year, machines: [] });
+    }
+    if (machineIds?.length) {
+      const set = new Set(groupMachineIds);
+      machineIds = machineIds.filter((id) => set.has(id));
+      if (machineIds.length === 0) {
+        return res.json({ year, machines: [] });
+      }
+    } else {
+      machineIds = groupMachineIds;
+    }
+  }
+
+  const machineIdsParam = req.query.machineIds as string | undefined;
+  if (machineIdsParam?.trim()) {
+    const ids = parseIdList(machineIdsParam, undefined);
+    if (ids.length > 0) {
+      if (machineIds?.length) {
+        const set = new Set(ids);
+        machineIds = machineIds.filter((id) => set.has(id));
+      } else {
+        machineIds = ids;
+      }
+    }
+  }
+
+  if (ctx.empty && (!machineIds || machineIds.length === 0)) {
+    return res.json({ year, machines: [] });
+  }
+
+  const data = getMachinePeriodBreakdown(
+    year,
+    machineIds,
+    ctx.types.length ? ctx.types : undefined,
+    ctx.operationsOverride,
+    ctx.scenarioBundle,
+    ctx.scenarioId != null && ctx.scenarioBundle ? ctx.scenarioIncludeRfq : undefined,
+    useContractualVolumes,
+    ctx.machineStatus,
+    ctx.dimensionFilters,
+    ctx.settingsProfile
+  );
+  res.set('Cache-Control', 'no-store');
+  res.json({ year, machines: data });
+});
+
+capacityRouter.get('/calculator/sop-eop-markers', (req, res) => {
+  const groupIdsParam = req.query.groupIds as string | undefined;
+  const ctx = resolveCalculatorContext(req);
+  let machineIds = ctx.empty ? ([] as number[]) : ctx.machineIds;
+
+  const groupIds = parseGroupIdsParam(groupIdsParam);
+  if (groupIds.length > 0) {
+    const groupMachineIds = resolveMachineIdsFromGroups(groupIds);
+    if (groupMachineIds.length === 0) {
+      return res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, machines: [] });
+    }
+    if (machineIds?.length) {
+      const set = new Set(groupMachineIds);
+      machineIds = machineIds.filter((id) => set.has(id));
+      if (machineIds.length === 0) {
+        return res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, machines: [] });
+      }
+    } else {
+      machineIds = groupMachineIds;
+    }
+  }
+
+  const machineIdsParam = req.query.machineIds as string | undefined;
+  if (machineIdsParam?.trim()) {
+    const ids = parseIdList(machineIdsParam, undefined);
+    if (ids.length > 0) {
+      if (machineIds?.length) {
+        const set = new Set(ids);
+        machineIds = machineIds.filter((id) => set.has(id));
+      } else {
+        machineIds = ids;
+      }
+    }
+  }
+
+  if (ctx.empty && (!machineIds || machineIds.length === 0)) {
+    return res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, machines: [] });
+  }
+
+  const data = getMachineSopEopMarkersByYears(
+    ctx.yearFrom,
+    ctx.yearTo,
+    machineIds,
+    ctx.types.length ? ctx.types : undefined,
+    ctx.operationsOverride,
+    ctx.scenarioBundle,
+    ctx.scenarioId != null && ctx.scenarioBundle ? ctx.scenarioIncludeRfq : undefined,
+    ctx.machineStatus,
+    ctx.dimensionFilters
+  );
+  res.set('Cache-Control', 'no-store');
+  res.json({ yearFrom: ctx.yearFrom, yearTo: ctx.yearTo, machines: data });
 });
 
 capacityRouter.get('/machine/:machineId', (req, res) => {

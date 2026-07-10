@@ -45,6 +45,13 @@ type VisualSettings = {
   data_viz_color_ref_line_overload: string;
   data_viz_color_ref_line_free: string;
   data_viz_compare_palette: string[];
+  load_expansion_direction: 'horizontal' | 'vertical';
+  show_sop_marker: boolean;
+  show_eop_marker: boolean;
+  period_month_header_color: string;
+  period_month_frame_color: string;
+  period_week_header_color: string;
+  period_week_frame_color: string;
 };
 
 function calendarYearNow(): number {
@@ -89,6 +96,14 @@ function normalizeVisualResponse(v: Record<string, unknown>): VisualSettings {
     data_viz_color_ref_line_overload: colors.refLineOverload,
     data_viz_color_ref_line_free: colors.refLineFree,
     data_viz_compare_palette: colors.comparePalette,
+    load_expansion_direction:
+      (v as { load_expansion_direction?: string }).load_expansion_direction === 'vertical' ? 'vertical' : 'horizontal',
+    show_sop_marker: (v as { show_sop_marker?: boolean }).show_sop_marker !== false,
+    show_eop_marker: (v as { show_eop_marker?: boolean }).show_eop_marker !== false,
+    period_month_header_color: String((v as { period_month_header_color?: string }).period_month_header_color ?? '#dbeafe'),
+    period_month_frame_color: String((v as { period_month_frame_color?: string }).period_month_frame_color ?? '#3b82f6'),
+    period_week_header_color: String((v as { period_week_header_color?: string }).period_week_header_color ?? '#e0e7ff'),
+    period_week_frame_color: String((v as { period_week_frame_color?: string }).period_week_frame_color ?? '#6366f1'),
   };
 }
 
@@ -237,10 +252,29 @@ export default function SettingsVisual() {
           <input type="checkbox" checked={form.show_alternative_borders} onChange={(e) => setBool('show_alternative_borders', e.target.checked)} />
           <span style={{ marginLeft: 8 }}>{t('visual.altBorders')}</span>
         </label>
-        <label style={{ display: 'block' }}>
+        <label style={{ display: 'block', marginBottom: 8 }}>
           <input type="checkbox" checked={form.show_rfq_badge} onChange={(e) => setBool('show_rfq_badge', e.target.checked)} />
           <span style={{ marginLeft: 8 }}>{t('visual.rfqBadge')}</span>
         </label>
+        <label style={{ display: 'block', marginBottom: 8 }}>
+          <input type="checkbox" checked={form.show_sop_marker} onChange={(e) => setBool('show_sop_marker', e.target.checked)} />
+          <span style={{ marginLeft: 8 }}>{t('visual.sopMarker')}</span>
+        </label>
+        <label style={{ display: 'block' }}>
+          <input type="checkbox" checked={form.show_eop_marker} onChange={(e) => setBool('show_eop_marker', e.target.checked)} />
+          <span style={{ marginLeft: 8 }}>{t('visual.eopMarker')}</span>
+        </label>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.periodColors')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 12 }}>{t('visual.periodColorsHelp')}</p>
+        <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+          <ColorField label={t('visual.periodMonthHeader')} value={form.period_month_header_color} onChange={(v) => setStr('period_month_header_color', v)} />
+          <ColorField label={t('visual.periodMonthFrame')} value={form.period_month_frame_color} onChange={(v) => setStr('period_month_frame_color', v)} />
+          <ColorField label={t('visual.periodWeekHeader')} value={form.period_week_header_color} onChange={(v) => setStr('period_week_header_color', v)} />
+          <ColorField label={t('visual.periodWeekFrame')} value={form.period_week_frame_color} onChange={(v) => setStr('period_week_frame_color', v)} />
+        </div>
       </div>
 
       <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
@@ -257,6 +291,31 @@ export default function SettingsVisual() {
           <input type="checkbox" checked={form.colorize_avg_row} onChange={(e) => setBool('colorize_avg_row', e.target.checked)} />
           <span style={{ marginLeft: 8 }}>{t('visual.colorAvg')}</span>
         </label>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.loadExpansion')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.loadExpansionHelp')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="loadexp"
+              checked={form.load_expansion_direction === 'horizontal'}
+              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'horizontal' } : f))}
+            />
+            {t('visual.loadExpansionHorizontal')}
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="loadexp"
+              checked={form.load_expansion_direction === 'vertical'}
+              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'vertical' } : f))}
+            />
+            {t('visual.loadExpansionVertical')}
+          </label>
+        </div>
       </div>
 
       <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>

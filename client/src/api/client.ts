@@ -532,6 +532,13 @@ export const api = {
           danger_color: string;
           contractual_calculator_frame_color: string;
           calculator_page_size: number;
+          load_expansion_direction?: 'horizontal' | 'vertical';
+          show_sop_marker?: boolean;
+          show_eop_marker?: boolean;
+          period_month_header_color?: string;
+          period_month_frame_color?: string;
+          period_week_header_color?: string;
+          period_week_frame_color?: string;
           data_viz_default_year_from: number;
           data_viz_default_year_to: number;
         }>('/settings/visual'),
@@ -557,6 +564,13 @@ export const api = {
         danger_color: string;
         contractual_calculator_frame_color: string;
         calculator_page_size: number;
+        load_expansion_direction?: 'horizontal' | 'vertical';
+        show_sop_marker?: boolean;
+        show_eop_marker?: boolean;
+        period_month_header_color?: string;
+        period_month_frame_color?: string;
+        period_week_header_color?: string;
+        period_week_frame_color?: string;
         data_viz_default_year_from: number;
         data_viz_default_year_to: number;
       }) => request<any>('/settings/visual', { method: 'PUT', body: JSON.stringify(body) }),
@@ -896,6 +910,118 @@ export const api = {
       }
       const qs = q.toString();
       return request<{ yearFrom: number; yearTo: number; scenarioId: number | null; machines: any[] }>(`/capacity/calculator${qs ? `?${qs}` : ''}`);
+    },
+    periodBreakdown: (params: {
+      year: number;
+      machineIds?: string;
+      yearFrom?: number;
+      yearTo?: number;
+      type?: string;
+      types?: string;
+      machines?: string;
+      scenarioId?: number;
+      client?: string;
+      clients?: string;
+      useContractualVolumes?: boolean;
+      machineStatus?: 'active' | 'inactive' | 'RFQ' | 'all';
+      machineStatuses?: string;
+      groupIds?: string;
+      widthOp?: 'gte' | 'lte';
+      widthValue?: number;
+      depthOp?: 'gte' | 'lte';
+      depthValue?: number;
+      heightOp?: 'gte' | 'lte';
+      heightValue?: number;
+      strokeOp?: 'gte' | 'lte';
+      strokeValue?: number;
+      settingsProfile?: 'capacity' | 'ocu';
+    }) => {
+      const q = new URLSearchParams();
+      q.set('year', String(params.year));
+      if (params.machineIds) q.set('machineIds', params.machineIds);
+      if (params.yearFrom != null) q.set('yearFrom', String(params.yearFrom));
+      if (params.yearTo != null) q.set('yearTo', String(params.yearTo));
+      if (params.type) q.set('type', params.type);
+      if (params.types) q.set('types', params.types);
+      if (params.machines) q.set('machines', params.machines);
+      if (params.scenarioId != null) q.set('scenarioId', String(params.scenarioId));
+      if (params.client) q.set('client', params.client);
+      if (params.clients) q.set('clients', params.clients);
+      if (params.useContractualVolumes) q.set('useContractualVolumes', '1');
+      if (params.machineStatuses) q.set('machineStatuses', params.machineStatuses);
+      else if (params.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
+      if (params.groupIds) q.set('groupIds', params.groupIds);
+      if (params.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
+      const dimPairs = [
+        ['width', params.widthOp, params.widthValue],
+        ['depth', params.depthOp, params.depthValue],
+        ['height', params.heightOp, params.heightValue],
+        ['stroke', params.strokeOp, params.strokeValue],
+      ] as const;
+      for (const [prefix, op, val] of dimPairs) {
+        if (op && val != null && Number.isFinite(val)) {
+          q.set(`${prefix}Op`, op);
+          q.set(`${prefix}Value`, String(val));
+        }
+      }
+      return request<{ year: number; machines: { machine_id: number; has_sop?: boolean; has_eop?: boolean; months: Record<number, { load_percent: number; weeks: Record<number, { load_percent: number }>; has_sop?: boolean; has_eop?: boolean }> }[] }>(
+        `/capacity/calculator/period-breakdown?${q.toString()}`
+      );
+    },
+    sopEopMarkers: (params: {
+      machineIds?: string;
+      yearFrom?: number;
+      yearTo?: number;
+      type?: string;
+      types?: string;
+      machines?: string;
+      scenarioId?: number;
+      client?: string;
+      clients?: string;
+      machineStatus?: 'active' | 'inactive' | 'RFQ' | 'all';
+      machineStatuses?: string;
+      groupIds?: string;
+      widthOp?: 'gte' | 'lte';
+      widthValue?: number;
+      depthOp?: 'gte' | 'lte';
+      depthValue?: number;
+      heightOp?: 'gte' | 'lte';
+      heightValue?: number;
+      strokeOp?: 'gte' | 'lte';
+      strokeValue?: number;
+      settingsProfile?: 'capacity' | 'ocu';
+    }) => {
+      const q = new URLSearchParams();
+      if (params.machineIds) q.set('machineIds', params.machineIds);
+      if (params.yearFrom != null) q.set('yearFrom', String(params.yearFrom));
+      if (params.yearTo != null) q.set('yearTo', String(params.yearTo));
+      if (params.type) q.set('type', params.type);
+      if (params.types) q.set('types', params.types);
+      if (params.machines) q.set('machines', params.machines);
+      if (params.scenarioId != null) q.set('scenarioId', String(params.scenarioId));
+      if (params.client) q.set('client', params.client);
+      if (params.clients) q.set('clients', params.clients);
+      if (params.machineStatuses) q.set('machineStatuses', params.machineStatuses);
+      else if (params.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
+      if (params.groupIds) q.set('groupIds', params.groupIds);
+      if (params.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
+      const dimPairs = [
+        ['width', params.widthOp, params.widthValue],
+        ['depth', params.depthOp, params.depthValue],
+        ['height', params.heightOp, params.heightValue],
+        ['stroke', params.strokeOp, params.strokeValue],
+      ] as const;
+      for (const [prefix, op, val] of dimPairs) {
+        if (op && val != null && Number.isFinite(val)) {
+          q.set(`${prefix}Op`, op);
+          q.set(`${prefix}Value`, String(val));
+        }
+      }
+      return request<{
+        yearFrom: number;
+        yearTo: number;
+        machines: { machine_id: number; years: Record<number, { has_sop: boolean; has_eop: boolean; months: Record<number, { has_sop: boolean; has_eop: boolean }> }> }[];
+      }>(`/capacity/calculator/sop-eop-markers?${q.toString()}`);
     },
     breakdown: (params: {
       year: number;

@@ -223,6 +223,37 @@ function syncProjectVolumesToSopEop(projectId: number, sop: string, eop: string)
   }
 }
 
+const PART_VOLUME_YEAR_TABLES = [
+  'part_volume_by_year',
+  'part_volume_contract_by_year',
+  'part_volume_share_by_year',
+  'part_volume_contract_share_by_year',
+] as const;
+
+/** Usuwa lata wolumenów detali poza zakresem SOP–EOP (po skróceniu EOP). */
+function syncPartVolumesToSopEop(projectId: number, sop: string, eop: string): void {
+  const { eopYear } = getSopEopYears(sop, eop);
+  if (eopYear <= 0) return;
+  const partIds = (db.prepare('SELECT id FROM parts WHERE project_id = ?').all(projectId) as { id: number }[]).map((p) => p.id);
+  for (const partId of partIds) {
+    for (const table of PART_VOLUME_YEAR_TABLES) {
+      try {
+        const rows = db.prepare(`SELECT year FROM ${table} WHERE part_id = ? AND year > ?`).all(partId, eopYear) as { year: number }[];
+        const delStmt = db.prepare(`DELETE FROM ${table} WHERE part_id = ? AND year = ?`);
+        for (const { year } of rows) delStmt.run(partId, year);
+      } catch (_) {
+        /* tabela opcjonalna */
+      }
+    }
+  }
+}
+
+/** Synchronizuje wolumeny projektu i detali z zakresem SOP–EOP. */
+function syncVolumesToSopEop(projectId: number, sop: string, eop: string): void {
+  syncProjectVolumesToSopEop(projectId, sop, eop);
+  syncPartVolumesToSopEop(projectId, sop, eop);
+}
+
 projectsRouter.get('/', (req, res) => {
   const statuses = parseMachineStatusList(req.query.status, req.query.statuses);
   const clients = parseCsvQueryParamSingleOrMulti(req.query.client, req.query.clients);
@@ -841,9 +872,10 @@ projectsRouter.put('/:id', (req, res) => {
   if (eop !== project.eop && !eopExtensionValue) changed.push(`EOP: "${project.eop}" → "${eop}"`);
   if (status !== project.status) changed.push(`status: "${project.status}" → "${status}"`);
   if (changed.length > 0) insertProjectNote(id, `Automatyczna zmiana: ${changed.join('; ')}`, actor, 'auto');
-  if (eopExtensionValue) {
+  if (eop !== project.eop) {
     try {
-      syncProjectVolumesToSopEop(id, sop, eop);
+      syncVolumesToSopEop(id, sop, eop);
+      saveDb();
     } catch (_) {}
   }
   const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as any;
@@ -1372,6 +1404,8 @@ projectsRouter.post('/:projectId/parts/:partId/volume-year', (req, res) => {
     return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
   }
   const extendsEop = eopYear > 0 && year > eopYear;
+  /** Rok poza bieżącym EOP, ale zapisany w bazie po wcześniejszym przedłużeniu — przywróć zamiast blokować. */
+  const orphanedBeyondEop = (existsInTable: boolean) => existsInTable && year > eopYear;
   try {
     if (volumeMode === 'share') {
       if (volumeSide === 'contract') {
@@ -1379,44 +1413,52 @@ projectsRouter.post('/:projectId/parts/:partId/volume-year', (req, res) => {
           (db.prepare('SELECT 1 AS x FROM part_volume_contract_share_by_year WHERE part_id = ? AND year = ?').get(partId, year) as
             | { x: number }
             | undefined) != null;
-        if (exists) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
-        const contractPct = part.contract_volume_share_percent != null ? Number(part.contract_volume_share_percent) : 0;
-        db.prepare('INSERT INTO part_volume_contract_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(
-          partId,
-          year,
-          contractPct
-        );
+        if (exists && !orphanedBeyondEop(exists)) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
+        if (!exists) {
+          const contractPct = part.contract_volume_share_percent != null ? Number(part.contract_volume_share_percent) : 0;
+          db.prepare('INSERT INTO part_volume_contract_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(
+            partId,
+            year,
+            contractPct
+          );
+        }
       } else {
         const exists =
           (db.prepare('SELECT 1 AS x FROM part_volume_share_by_year WHERE part_id = ? AND year = ?').get(partId, year) as { x: number } | undefined) !=
           null;
-        if (exists) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
-        const sharePct = part.volume_share_percent != null ? Number(part.volume_share_percent) : 0;
-        db.prepare('INSERT INTO part_volume_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(partId, year, sharePct);
-        try {
-          const contractPct = part.contract_volume_share_percent != null ? Number(part.contract_volume_share_percent) : sharePct;
-          db.prepare('INSERT INTO part_volume_contract_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(partId, year, contractPct);
-        } catch (_) {}
+        if (exists && !orphanedBeyondEop(exists)) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
+        if (!exists) {
+          const sharePct = part.volume_share_percent != null ? Number(part.volume_share_percent) : 0;
+          db.prepare('INSERT INTO part_volume_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(partId, year, sharePct);
+          try {
+            const contractPct = part.contract_volume_share_percent != null ? Number(part.contract_volume_share_percent) : sharePct;
+            db.prepare('INSERT INTO part_volume_contract_share_by_year (part_id, year, share_percent) VALUES (?, ?, ?)').run(partId, year, contractPct);
+          } catch (_) {}
+        }
       }
     } else if (volumeSide === 'contract') {
       const exists =
         (db.prepare('SELECT 1 AS x FROM part_volume_contract_by_year WHERE part_id = ? AND year = ?').get(partId, year) as { x: number } | undefined) !=
         null;
-      if (exists) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
-      db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(
-        partId,
-        year,
-        0,
-        'annual'
-      );
+      if (exists && !orphanedBeyondEop(exists)) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
+      if (!exists) {
+        db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(
+          partId,
+          year,
+          0,
+          'annual'
+        );
+      }
     } else {
       const exists =
         (db.prepare('SELECT 1 AS x FROM part_volume_by_year WHERE part_id = ? AND year = ?').get(partId, year) as { x: number } | undefined) != null;
-      if (exists) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
-      db.prepare('INSERT INTO part_volume_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(partId, year, 0, 'annual');
-      try {
-        db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(partId, year, 0, 'annual');
-      } catch (_) {}
+      if (exists && !orphanedBeyondEop(exists)) return res.status(400).json({ error: 'Ten rok jest już w tabeli.' });
+      if (!exists) {
+        db.prepare('INSERT INTO part_volume_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(partId, year, 0, 'annual');
+        try {
+          db.prepare('INSERT INTO part_volume_contract_by_year (part_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(partId, year, 0, 'annual');
+        } catch (_) {}
+      }
     }
     let newEop = project.eop;
     if (extendsEop) {
@@ -1427,7 +1469,7 @@ projectsRouter.post('/:projectId/parts/:partId/volume-year', (req, res) => {
       try {
         db.prepare('INSERT INTO project_eop_extensions (project_id, eop_before, eop_after) VALUES (?, ?, ?)').run(projectId, oldEop, newEop);
       } catch (_) {}
-      syncProjectVolumesToSopEop(projectId, project.sop, newEop);
+      syncVolumesToSopEop(projectId, project.sop, newEop);
     }
     saveDb();
     const volumeLabel = volumeSide === 'contract' ? 'wolumenie kontraktowym detalu' : 'wolumenie detalu';

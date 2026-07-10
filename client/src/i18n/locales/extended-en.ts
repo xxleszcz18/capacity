@@ -331,6 +331,11 @@ export const extendedEn: TranslationTree = {
     setMode: 'Part set',
     chooseSourceOp: '— select source operation —',
     chooseVolumeSource: '— select volume source part —',
+    setVolumeSourceNoVolumeShort: 'Set volume source has no volume',
+    setVolumeSourceNoVolume:
+      'Volume source ({{part}}) has no effective volume in SOP–EOP years ({{years}}). The calculator will use the operation value ({{opVolume}}). Fill in part volumes or choose another source.',
+    setVolumeSourceNoVolumeModal:
+      'The selected part has no effective volume in the project SOP–EOP years ({{years}}). Capacity calculation will use the value stored on the operation instead of part volume.',
     setCycleHint: 'Cycle time is shared for the whole set; one cycle produces one of each part. Volume = number of sets.',
     removeFromSet: 'Remove from set',
     oeePlaceholder: 'empty = from settings',

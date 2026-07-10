@@ -15,6 +15,11 @@ import { useTableSort, sortRows } from '../utils/tableSort';
 import { parseYearValuePaste } from '../utils/parseYearValueTable';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat';
 import { isDesignationDuplicateError } from '../utils/designationDuplicate';
+import {
+  partHasPositiveVolumeInSopEopRange,
+  sopEopYearsLabel,
+  type ProjectVolumeContext,
+} from '../utils/partEffectiveVolume';
 
 /** Krótka etykieta projektu (klient + nazwa) do nagłówków zakładek. */
 function projectContextSubtitle(project: { id?: number; client?: string; name?: string } | null | undefined): string {
@@ -170,6 +175,11 @@ export default function ProjectDetail() {
           projectId={project.id}
           parts={project.parts ?? []}
           phases={phases}
+          projectVolumeContext={{
+            sop: project.sop,
+            eop: project.eop,
+            project_volumes: project.project_volumes ?? [],
+          }}
           edit={opModal.edit}
           onClose={() => setOpModal({ open: false })}
           onSaved={() => { setOpModal({ open: false }); load(); }}
@@ -488,6 +498,21 @@ function ProjectOperationsTab({
     }
     return map;
   }, [project.parts, referenceDisplay]);
+  const partById = useMemo(() => {
+    const map = new Map<number, any>();
+    for (const part of project.parts ?? []) {
+      map.set(Number(part.id), part);
+    }
+    return map;
+  }, [project.parts]);
+  const projectVolumeContext = useMemo<ProjectVolumeContext>(
+    () => ({
+      sop: project.sop,
+      eop: project.eop,
+      project_volumes: project.project_volumes ?? [],
+    }),
+    [project.sop, project.eop, project.project_volumes]
+  );
   const detailLabelForOperation = (op: any): string => {
     if (op?.is_set) return String(op.part_designation ?? 'Set');
     const fromPart = partLabelById.get(Number(op?.part_id));
@@ -536,8 +561,35 @@ function ProjectOperationsTab({
 
   const volUnitLabel = (u: string) =>
     u === 'annual' ? t('common.unitAnnual') : u === 'monthly' ? t('common.unitMonthly') : u === 'weekly' ? t('common.unitWeekly') : u;
-  const volumeCell = (op: any) =>
-    op.volume_value === 0 ? t('projectDetailExtra.volumeFromPart') : `${op.volume_value} (${volUnitLabel(op.volume_unit)})`;
+  const formatOpVolumeFallback = (op: any) =>
+    op.volume_value === 0 ? `0 (${volUnitLabel(op.volume_unit ?? 'annual')})` : `${op.volume_value} (${volUnitLabel(op.volume_unit)})`;
+  const setVolumeSourceWarningTitle = (op: any): string | null => {
+    if (!op?.is_set || op.part_id == null) return null;
+    const part = partById.get(Number(op.part_id));
+    if (!part || partHasPositiveVolumeInSopEopRange(part, projectVolumeContext)) return null;
+    return t('projectDetailExtra.setVolumeSourceNoVolume', {
+      part: partLabelById.get(Number(op.part_id)) ?? String(op.part_id),
+      years: sopEopYearsLabel(projectVolumeContext),
+      opVolume: formatOpVolumeFallback(op),
+    });
+  };
+  const volumeCell = (op: any) => {
+    const warnTitle = setVolumeSourceWarningTitle(op);
+    return (
+      <>
+        {op.volume_value === 0 ? t('projectDetailExtra.volumeFromPart') : `${op.volume_value} (${volUnitLabel(op.volume_unit)})`}
+        {warnTitle && (
+          <span
+            style={{ marginLeft: 6, fontSize: 11, color: '#e65100', fontWeight: 700, cursor: 'help' }}
+            title={warnTitle}
+            aria-label={t('projectDetailExtra.setVolumeSourceNoVolumeShort')}
+          >
+            ⚠
+          </span>
+        )}
+      </>
+    );
+  };
   const cycleCell = (op: any) => {
     const baseCycle = Number(op?.cycle_time_seconds);
     const altCycle = Number(op?.alt_cycle_time_seconds);
@@ -2798,7 +2850,23 @@ function AddNoteForm({ projectId, onAdded }: { projectId: number; onAdded: () =>
   );
 }
 
-function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { projectId: number; parts: any[]; phases: any[]; edit?: any; onClose: () => void; onSaved: () => void }) {
+function OperationModal({
+  projectId,
+  parts,
+  phases,
+  projectVolumeContext,
+  edit,
+  onClose,
+  onSaved,
+}: {
+  projectId: number;
+  parts: any[];
+  phases: any[];
+  projectVolumeContext: ProjectVolumeContext;
+  edit?: any;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { t } = useI18n();
   const { referenceDisplay, machineDisplay } = useReferenceDisplay();
   const setMemberKey = (m: { part_id?: number; designation_id?: number }) => {
@@ -2888,6 +2956,24 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
   });
   const [setAddDesignationId, setSetAddDesignationId] = useState<number | ''>('');
   const [setVolumeSourceKey, setSetVolumeSourceKey] = useState<string>('');
+
+  const resolvedVolumeSourcePart = useMemo(() => {
+    if (!isSet || !setVolumeSourceKey) return null;
+    const member = setMembers.find((m) => setMemberKey(m) === setVolumeSourceKey);
+    if (!member) return null;
+    if (member.part_id != null) {
+      return partsList.find((p) => Number(p.id) === Number(member.part_id)) ?? null;
+    }
+    if (member.designation_id != null) {
+      return partsList.find((p) => Number(p.designation_id) === Number(member.designation_id)) ?? null;
+    }
+    return null;
+  }, [isSet, setVolumeSourceKey, setMembers, partsList]);
+
+  const volumeSourcePartMissingVolume = useMemo(() => {
+    if (!resolvedVolumeSourcePart) return false;
+    return !partHasPositiveVolumeInSopEopRange(resolvedVolumeSourcePart, projectVolumeContext);
+  }, [resolvedVolumeSourcePart, projectVolumeContext]);
 
   const designationListFilter = (d: { sap_number?: string | null; alias?: string | null; free_text?: string | null }, by: 'sap' | 'alias') => {
     const sap = (d.sap_number ?? '').trim();
@@ -3586,6 +3672,24 @@ function OperationModal({ projectId, parts, phases, edit, onClose, onSaved }: { 
                 <p style={{ margin: '4px 0 0', fontSize: 12, color: '#555' }}>
                   {t('projectDetailExtra.setSaveRequiresVolumeSource')}
                 </p>
+                {volumeSourcePartMissingVolume && (
+                  <p
+                    role="alert"
+                    style={{
+                      margin: '8px 0 0',
+                      padding: '8px 10px',
+                      fontSize: 12,
+                      color: '#bf360c',
+                      background: '#fff3e0',
+                      border: '1px solid #ffcc80',
+                      borderRadius: 4,
+                    }}
+                  >
+                    {t('projectDetailExtra.setVolumeSourceNoVolumeModal', {
+                      years: sopEopYearsLabel(projectVolumeContext),
+                    })}
+                  </p>
+                )}
               </div>
             </div>
           )}

@@ -331,6 +331,11 @@ export const extendedDe: TranslationTree = {
     setMode: 'Teile-Set',
     chooseSourceOp: '— Quellvorgang wählen —',
     chooseVolumeSource: '— Volumen-Quellteil wählen —',
+    setVolumeSourceNoVolumeShort: 'Set-Volumenquelle ohne Volumen',
+    setVolumeSourceNoVolume:
+      'Volumenquelle ({{part}}) hat kein wirksames Volumen in den SOP–EOP-Jahren ({{years}}). Der Rechner verwendet den Vorgangswert ({{opVolume}}). Teilvolumen ergänzen oder andere Quelle wählen.',
+    setVolumeSourceNoVolumeModal:
+      'Das gewählte Teil hat kein wirksames Volumen in den SOP–EOP-Jahren des Projekts ({{years}}). Die Kapazitätsberechnung verwendet den am Vorgang gespeicherten Wert statt des Teilvolumens.',
     setCycleHint: 'Zykluszeit gilt für ganzes Set; ein Zyklus = je 1 Stk jedes Teils. Volumen = Anzahl Sets.',
     removeFromSet: 'Aus Set entfernen',
     oeePlaceholder: 'leer = aus Einstellungen',

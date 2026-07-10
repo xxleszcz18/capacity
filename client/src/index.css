@@ -345,6 +345,97 @@ header nav a:not(.active):hover {
   white-space: nowrap;
 }
 
+.calculator-table-block .calc-period-col {
+  min-width: 42px;
+  max-width: 52px;
+  font-size: 11px;
+  text-align: center;
+  vertical-align: middle;
+  padding: 0.25rem 0.1rem !important;
+  line-height: 1.15;
+  background: #f8fafc;
+}
+
+.calculator-table-block thead th.calc-period-col {
+  font-weight: 500;
+  color: #455a64;
+}
+
+.calculator-table-block .calc-period-col--month {
+  /* tło kafelka = zakres obciążenia; ramka z ustawień wizualnych */
+}
+
+.calculator-table-block .calc-period-col--week {
+  font-size: 10px;
+}
+
+.calculator-table-block .calc-period-cell-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #546e7a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.calculator-table-block .calc-period-cell-loading .data-loading-spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
+.calculator-table-block .calc-sop-marker,
+.calculator-table-block .calc-eop-marker {
+  padding: 1px 3px;
+  border-radius: 4px;
+  font-size: 8px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #fff;
+}
+
+.calculator-table-block .calc-sop-marker {
+  background: #008BC1;
+}
+
+.calculator-table-block .calc-eop-marker {
+  background: #E86A10;
+}
+
+.calculator-table-block .calc-period-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0 3px;
+  border: none;
+  background: transparent;
+  color: #546e7a;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.calculator-table-block .calc-period-expand-btn:hover {
+  color: #008BC1;
+}
+
+.calculator-table-block .calc-period-row-label {
+  font-size: 12px;
+  color: #546e7a;
+  white-space: nowrap;
+}
+
+.calculator-table-block .calc-period-indent-1 {
+  padding-left: 1.25rem !important;
+}
+
+.calculator-table-block .calc-period-indent-2 {
+  padding-left: 2.35rem !important;
+}
+
 .calculator-table-block .calc-details-col {
   padding: 0.5rem 0.35rem !important;
   vertical-align: middle;

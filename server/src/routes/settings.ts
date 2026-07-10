@@ -586,6 +586,14 @@ type VisualSettings = {
   data_viz_color_ref_line_overload: string;
   data_viz_color_ref_line_free: string;
   data_viz_compare_palette: string[];
+  /** Kierunek rozwinięcia obciążeń w kalkulatorze: poziomo (kolumny) lub pionowo (wiersze). */
+  load_expansion_direction: 'horizontal' | 'vertical';
+  show_sop_marker: boolean;
+  show_eop_marker: boolean;
+  period_month_header_color: string;
+  period_month_frame_color: string;
+  period_week_header_color: string;
+  period_week_frame_color: string;
 };
 
 function calendarYearNow(): number {
@@ -648,6 +656,13 @@ const visualDefaults: VisualSettings = {
     '#B9BE66',
     '#F1A670',
   ],
+  load_expansion_direction: 'horizontal',
+  show_sop_marker: true,
+  show_eop_marker: true,
+  period_month_header_color: '#dbeafe',
+  period_month_frame_color: '#3b82f6',
+  period_week_header_color: '#e0e7ff',
+  period_week_frame_color: '#6366f1',
 };
 
 function toBool(v: unknown, fallback: boolean): boolean {
@@ -690,6 +705,13 @@ function toCalculatorPageSize(v: unknown, fallback: number): number {
   return fallback;
 }
 
+function normalizeLoadExpansionDirection(v: unknown, fallback: 'horizontal' | 'vertical'): 'horizontal' | 'vertical' {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (s === 'vertical' || s === 'pionowy' || s === 'pionowe') return 'vertical';
+  if (s === 'horizontal' || s === 'poziomy' || s === 'poziome') return 'horizontal';
+  return fallback;
+}
+
 function loadVisualSettings(): VisualSettings {
   const keys = [
     'visual_show_alternative_borders',
@@ -724,6 +746,13 @@ function loadVisualSettings(): VisualSettings {
     'visual_data_viz_color_ref_line_overload',
     'visual_data_viz_color_ref_line_free',
     'visual_data_viz_compare_palette',
+    'visual_load_expansion_direction',
+    'visual_show_sop_marker',
+    'visual_show_eop_marker',
+    'visual_period_month_header_color',
+    'visual_period_month_frame_color',
+    'visual_period_week_header_color',
+    'visual_period_week_frame_color',
   ];
   const rows = db.prepare(
     `SELECT key, value FROM admin_settings WHERE key IN (${keys.map(() => '?').join(',')})`
@@ -781,6 +810,16 @@ function loadVisualSettings(): VisualSettings {
     ),
     data_viz_color_ref_line_free: toColor(map.get('visual_data_viz_color_ref_line_free'), visualDefaults.data_viz_color_ref_line_free),
     data_viz_compare_palette: toComparePalette(map.get('visual_data_viz_compare_palette'), visualDefaults.data_viz_compare_palette),
+    load_expansion_direction: normalizeLoadExpansionDirection(
+      map.get('visual_load_expansion_direction'),
+      visualDefaults.load_expansion_direction
+    ),
+    show_sop_marker: toBool(map.get('visual_show_sop_marker'), visualDefaults.show_sop_marker),
+    show_eop_marker: toBool(map.get('visual_show_eop_marker'), visualDefaults.show_eop_marker),
+    period_month_header_color: toColor(map.get('visual_period_month_header_color'), visualDefaults.period_month_header_color),
+    period_month_frame_color: toColor(map.get('visual_period_month_frame_color'), visualDefaults.period_month_frame_color),
+    period_week_header_color: toColor(map.get('visual_period_week_header_color'), visualDefaults.period_week_header_color),
+    period_week_frame_color: toColor(map.get('visual_period_week_frame_color'), visualDefaults.period_week_frame_color),
   };
 }
 
@@ -794,6 +833,10 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     ),
     machine_display: normalizeMachineDisplayMode(
       payload.machine_display !== undefined ? payload.machine_display : current.machine_display
+    ),
+    load_expansion_direction: normalizeLoadExpansionDirection(
+      payload.load_expansion_direction !== undefined ? payload.load_expansion_direction : current.load_expansion_direction,
+      visualDefaults.load_expansion_direction
     ),
     contractual_calculator_frame_color: toColor(
       payload.contractual_calculator_frame_color !== undefined
@@ -865,6 +908,13 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     ['visual_colorize_avg_row', merged.colorize_avg_row ? '1' : '0'],
     ['visual_reference_display', merged.reference_display],
     ['visual_machine_display', merged.machine_display],
+    ['visual_load_expansion_direction', merged.load_expansion_direction],
+    ['visual_show_sop_marker', merged.show_sop_marker ? '1' : '0'],
+    ['visual_show_eop_marker', merged.show_eop_marker ? '1' : '0'],
+    ['visual_period_month_header_color', merged.period_month_header_color],
+    ['visual_period_month_frame_color', merged.period_month_frame_color],
+    ['visual_period_week_header_color', merged.period_week_header_color],
+    ['visual_period_week_frame_color', merged.period_week_frame_color],
     ['visual_ok_enabled', merged.ok_enabled ? '1' : '0'],
     ['visual_ok_from', String(merged.ok_from)],
     ['visual_ok_to', String(merged.ok_to)],

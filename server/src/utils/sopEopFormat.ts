@@ -95,3 +95,30 @@ export function getProductionMonthsInYear(sop: unknown, eop: unknown, year: numb
   if (year === eopP.year) return eopP.month;
   return 12;
 }
+
+/** Czy dany miesiąc kalendarzowy mieści się w okresie SOP–EOP (brak dat = cały rok). */
+export function isMonthInProduction(sop: unknown, eop: unknown, year: number, month: number): boolean {
+  if (month < 1 || month > 12) return false;
+  const sopP = parseSopEop(sop);
+  const eopP = parseSopEop(eop);
+  if (!sopP || !eopP) return true;
+  if (year < sopP.year || year > eopP.year) return false;
+  if (year === sopP.year && month < sopP.month) return false;
+  if (year === eopP.year && month > eopP.month) return false;
+  return true;
+}
+
+/** Numery miesięcy (1–12) aktywnych w danym roku wg SOP/EOP. */
+export function getProductionMonthNumbersInYear(sop: unknown, eop: unknown, year: number): number[] {
+  const months: number[] = [];
+  for (let m = 1; m <= 12; m++) {
+    if (isMonthInProduction(sop, eop, year, m)) months.push(m);
+  }
+  return months;
+}
+
+/** Liczba tygodni kalendarzowych w miesiącu (1. tydzień = dni 1–7 itd.). */
+export function getWeekCountInMonth(year: number, month: number): number {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  return Math.max(1, Math.ceil(daysInMonth / 7));
+}

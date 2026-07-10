@@ -1,6 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
+import { invalidateCalculatorCache } from '../services/calculatorCache.js';
 
 function readPkgName(dir: string): string | undefined {
   try {
@@ -49,6 +50,7 @@ let _sqlModule: Awaited<ReturnType<typeof initSqlJs>> | null = null;
 
 export function markDbDirty(): void {
   _dbDirty = true;
+  invalidateCalculatorCache();
 }
 
 type PrepareFn = (sql: string) => { bind: (p: (number | string | null)[]) => void; step: () => boolean; getAsObject: () => Record<string, unknown>; free: () => void };
