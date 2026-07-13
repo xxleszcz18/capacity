@@ -11,6 +11,15 @@ import {
   colorPickerValue,
   normalizeHexColor,
 } from '../utils/dataVizColors';
+import {
+  DEFAULT_CALL_OFF_IMPORT_PANEL,
+  DEFAULT_WORKSPACE_THEMES,
+  callOffImportPanelFromVisualSettings,
+  flattenWorkspaceThemes,
+  workspaceThemesFromVisualSettings,
+  type WorkspaceThemeColors,
+  type WorkspaceThemeSettings,
+} from '../utils/workspaceTheme';
 
 type VisualSettings = {
   show_alternative_borders: boolean;
@@ -52,7 +61,11 @@ type VisualSettings = {
   period_month_frame_color: string;
   period_week_header_color: string;
   period_week_frame_color: string;
-};
+  workspace_calloffs_import_bg: string;
+  workspace_calloffs_import_border: string;
+  workspace_calloffs_import_accent: string;
+  workspace_calloffs_import_table_header_bg: string;
+} & ReturnType<typeof flattenWorkspaceThemes>;
 
 function calendarYearNow(): number {
   return new Date().getFullYear();
@@ -74,6 +87,8 @@ function normalizeVisualResponse(v: Record<string, unknown>): VisualSettings {
     calendarYearNow() + 10
   );
   const colors = dataVizColorsFromVisualSettings(v);
+  const workspaceFlat = flattenWorkspaceThemes(workspaceThemesFromVisualSettings(v));
+  const importPanel = callOffImportPanelFromVisualSettings(v);
   return {
     ...(v as VisualSettings),
     machine_display: normalizeMachineDisplayMode((v as { machine_display?: string }).machine_display),
@@ -104,6 +119,11 @@ function normalizeVisualResponse(v: Record<string, unknown>): VisualSettings {
     period_month_frame_color: String((v as { period_month_frame_color?: string }).period_month_frame_color ?? '#3b82f6'),
     period_week_header_color: String((v as { period_week_header_color?: string }).period_week_header_color ?? '#e0e7ff'),
     period_week_frame_color: String((v as { period_week_frame_color?: string }).period_week_frame_color ?? '#6366f1'),
+    workspace_calloffs_import_bg: importPanel.panel_bg,
+    workspace_calloffs_import_border: importPanel.panel_border,
+    workspace_calloffs_import_accent: importPanel.accent,
+    workspace_calloffs_import_table_header_bg: importPanel.table_header_bg,
+    ...workspaceFlat,
   };
 }
 
@@ -190,6 +210,16 @@ export default function SettingsVisual() {
   const setMachineDisplay = (value: 'sap' | 'internal' | 'both') => {
     setForm((prev) => (prev ? { ...prev, machine_display: value } : prev));
   };
+  const setWorkspaceColor = (section: keyof WorkspaceThemeSettings, key: keyof WorkspaceThemeColors, value: string) => {
+    const flatKey = `workspace_${section}_${key}` as keyof ReturnType<typeof flattenWorkspaceThemes>;
+    setForm((prev) => (prev ? { ...prev, [flatKey]: value } : prev));
+  };
+
+  const workspaceSections: { id: keyof WorkspaceThemeSettings; titleKey: string; showBanner: boolean }[] = [
+    { id: 'capacity', titleKey: 'visual.workspaceCapacity', showBanner: false },
+    { id: 'scenarios', titleKey: 'visual.workspaceScenarios', showBanner: true },
+    { id: 'calloffs', titleKey: 'visual.workspaceCallOffs', showBanner: true },
+  ];
 
   if (!form) return <p>{t('common.loading')}</p>;
 
@@ -267,6 +297,163 @@ export default function SettingsVisual() {
       </div>
 
       <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.loadExpansion')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.loadExpansionHelp')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="loadexp"
+              checked={form.load_expansion_direction === 'horizontal'}
+              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'horizontal' } : f))}
+            />
+            {t('visual.loadExpansionHorizontal')}
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="loadexp"
+              checked={form.load_expansion_direction === 'vertical'}
+              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'vertical' } : f))}
+            />
+            {t('visual.loadExpansionVertical')}
+          </label>
+        </div>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.calculatorList')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.pageSizeHelp')}</p>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {t('visual.pageSize')}
+          <select
+            value={String(form.calculator_page_size)}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              setNum('calculator_page_size', n === 50 ? 50 : n === 0 ? 0 : 25);
+            }}
+            style={{ minWidth: 72, padding: '4px 8px', borderRadius: 6, border: '1px solid #ccc' }}
+          >
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="0">{t('common.all')}</option>
+          </select>
+        </label>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.dataVizDefaults')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.dataVizDefaultsHelp')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
+          <label>
+            {t('visual.dataVizYearFrom')}
+            <input
+              type="number"
+              min={2000}
+              max={2100}
+              value={form.data_viz_default_year_from}
+              onChange={(e) => setNum('data_viz_default_year_from', Number(e.target.value))}
+              style={{ width: 88, marginLeft: 6, padding: 4 }}
+            />
+          </label>
+          <label>
+            {t('visual.dataVizYearTo')}
+            <input
+              type="number"
+              min={2000}
+              max={2100}
+              value={form.data_viz_default_year_to}
+              onChange={(e) => setNum('data_viz_default_year_to', Number(e.target.value))}
+              style={{ width: 88, marginLeft: 6, padding: 4 }}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
+        <h3 style={{ marginTop: 0 }}>{t('visual.workspaceThemes')}</h3>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 16 }}>{t('visual.workspaceThemesHelp')}</p>
+        <div style={{ display: 'grid', gap: '1.25rem' }}>
+          {workspaceSections.map(({ id, titleKey, showBanner }) => {
+            const themes = workspaceThemesFromVisualSettings(form as Record<string, unknown>);
+            const theme = themes[id];
+            const defaults = DEFAULT_WORKSPACE_THEMES[id];
+            return (
+              <div key={id} style={{ border: '1px solid #eee', borderRadius: 8, padding: '1rem', background: '#fafafa' }}>
+                <h4 style={{ margin: '0 0 0.75rem', fontSize: '1rem' }}>{t(titleKey)}</h4>
+                <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+                  <ColorField
+                    label={t('visual.workspacePageBg')}
+                    value={theme.page_bg}
+                    fallback={defaults.page_bg}
+                    onChange={(v) => setWorkspaceColor(id, 'page_bg', v)}
+                  />
+                  <ColorField
+                    label={t('visual.workspaceMainBg')}
+                    value={theme.main_bg}
+                    fallback={defaults.main_bg}
+                    onChange={(v) => setWorkspaceColor(id, 'main_bg', v)}
+                  />
+                  <ColorField
+                    label={t('visual.workspaceHeaderBg')}
+                    value={theme.header_bg}
+                    fallback={defaults.header_bg}
+                    onChange={(v) => setWorkspaceColor(id, 'header_bg', v)}
+                  />
+                  <ColorField
+                    label={t('visual.workspaceAccent')}
+                    value={theme.accent}
+                    fallback={defaults.accent}
+                    onChange={(v) => setWorkspaceColor(id, 'accent', v)}
+                  />
+                  {showBanner && (
+                    <ColorField
+                      label={t('visual.workspaceBannerBg')}
+                      value={theme.banner_bg}
+                      fallback={defaults.banner_bg}
+                      onChange={(v) => setWorkspaceColor(id, 'banner_bg', v)}
+                    />
+                  )}
+                </div>
+                {id === 'calloffs' && (
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #e8e8e8' }}>
+                    <strong style={{ display: 'block', marginBottom: 6, fontSize: 14 }}>{t('visual.callOffImportPanel')}</strong>
+                    <p style={{ fontSize: 13, color: '#666', margin: '0 0 10px' }}>{t('visual.callOffImportPanelHelp')}</p>
+                    <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+                      <ColorField
+                        label={t('visual.callOffImportPanelBg')}
+                        value={form.workspace_calloffs_import_bg}
+                        fallback={DEFAULT_CALL_OFF_IMPORT_PANEL.panel_bg}
+                        onChange={(v) => setStr('workspace_calloffs_import_bg', v)}
+                      />
+                      <ColorField
+                        label={t('visual.callOffImportPanelBorder')}
+                        value={form.workspace_calloffs_import_border}
+                        fallback={DEFAULT_CALL_OFF_IMPORT_PANEL.panel_border}
+                        onChange={(v) => setStr('workspace_calloffs_import_border', v)}
+                      />
+                      <ColorField
+                        label={t('visual.callOffImportPanelAccent')}
+                        value={form.workspace_calloffs_import_accent}
+                        fallback={DEFAULT_CALL_OFF_IMPORT_PANEL.accent}
+                        onChange={(v) => setStr('workspace_calloffs_import_accent', v)}
+                      />
+                      <ColorField
+                        label={t('visual.callOffImportTableHeaderBg')}
+                        value={form.workspace_calloffs_import_table_header_bg}
+                        fallback={DEFAULT_CALL_OFF_IMPORT_PANEL.table_header_bg}
+                        onChange={(v) => setStr('workspace_calloffs_import_table_header_bg', v)}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
         <h3 style={{ marginTop: 0 }}>{t('visual.periodColors')}</h3>
         <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 12 }}>{t('visual.periodColorsHelp')}</p>
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
@@ -294,56 +481,11 @@ export default function SettingsVisual() {
       </div>
 
       <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
-        <h3 style={{ marginTop: 0 }}>{t('visual.loadExpansion')}</h3>
-        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.loadExpansionHelp')}</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="radio"
-              name="loadexp"
-              checked={form.load_expansion_direction === 'horizontal'}
-              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'horizontal' } : f))}
-            />
-            {t('visual.loadExpansionHorizontal')}
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="radio"
-              name="loadexp"
-              checked={form.load_expansion_direction === 'vertical'}
-              onChange={() => setForm((f) => (f ? { ...f, load_expansion_direction: 'vertical' } : f))}
-            />
-            {t('visual.loadExpansionVertical')}
-          </label>
-        </div>
-      </div>
-
-      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
         <h3 style={{ marginTop: 0 }}>{t('visual.contractFrame')}</h3>
         <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.contractFrameHelp')}</p>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {t('visual.frameColor')}
           <HexColorInput value={form.contractual_calculator_frame_color} fallback="#ff9800" onChange={(v) => setStr('contractual_calculator_frame_color', v)} />
-        </label>
-      </div>
-
-      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
-        <h3 style={{ marginTop: 0 }}>{t('visual.calculatorList')}</h3>
-        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.pageSizeHelp')}</p>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {t('visual.pageSize')}
-          <select
-            value={String(form.calculator_page_size)}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              setNum('calculator_page_size', n === 50 ? 50 : n === 0 ? 0 : 25);
-            }}
-            style={{ minWidth: 72, padding: '4px 8px', borderRadius: 6, border: '1px solid #ccc' }}
-          >
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="0">{t('common.all')}</option>
-          </select>
         </label>
       </div>
 
@@ -415,35 +557,6 @@ export default function SettingsVisual() {
           >
             {t('visual.dataVizResetPalette')}
           </button>
-        </div>
-      </div>
-
-      <div style={{ background: 'white', border: '1px solid #eee', borderRadius: 8, padding: '1rem', marginBottom: '1rem' }}>
-        <h3 style={{ marginTop: 0 }}>{t('visual.dataVizDefaults')}</h3>
-        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.dataVizDefaultsHelp')}</p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-          <label>
-            {t('visual.dataVizYearFrom')}
-            <input
-              type="number"
-              min={2000}
-              max={2100}
-              value={form.data_viz_default_year_from}
-              onChange={(e) => setNum('data_viz_default_year_from', Number(e.target.value))}
-              style={{ width: 88, marginLeft: 6, padding: 4 }}
-            />
-          </label>
-          <label>
-            {t('visual.dataVizYearTo')}
-            <input
-              type="number"
-              min={2000}
-              max={2100}
-              value={form.data_viz_default_year_to}
-              onChange={(e) => setNum('data_viz_default_year_to', Number(e.target.value))}
-              style={{ width: 88, marginLeft: 6, padding: 4 }}
-            />
-          </label>
         </div>
       </div>
 
@@ -521,11 +634,21 @@ function HexColorInput({
   );
 }
 
-function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function ColorField({
+  label,
+  value,
+  onChange,
+  fallback = '#A4C400',
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  fallback?: string;
+}) {
   return (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 14 }}>
       <span style={{ minWidth: 0, flex: '1 1 140px' }}>{label}</span>
-      <HexColorInput value={value} fallback={DEFAULT_DATA_VIZ_COLORS.production} onChange={onChange} />
+      <HexColorInput value={value} fallback={fallback} onChange={onChange} />
     </label>
   );
 }

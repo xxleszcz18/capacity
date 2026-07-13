@@ -19,6 +19,7 @@ import {
   resolveAttachmentsDirectory,
 } from '../services/projectAttachmentService.js';
 import { parseCsvQueryParamSingleOrMulti, parseIdList, parseMachineStatusList, sqlInClause } from '../utils/queryListParams.js';
+import { normalizeClientName, parseClientFilterQuery } from '../utils/clientName.js';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat.js';
 import { resolveActor } from '../utils/authActor.js';
 
@@ -256,7 +257,7 @@ function syncVolumesToSopEop(projectId: number, sop: string, eop: string): void 
 
 projectsRouter.get('/', (req, res) => {
   const statuses = parseMachineStatusList(req.query.status, req.query.statuses);
-  const clients = parseCsvQueryParamSingleOrMulti(req.query.client, req.query.clients);
+  const clients = parseClientFilterQuery(req.query.client, req.query.clients);
   const search = (req.query.search as string)?.trim();
 
   let sql = `
@@ -315,8 +316,19 @@ projectsRouter.get('/', (req, res) => {
 });
 
 projectsRouter.get('/clients', (_req, res) => {
-  const rows = db.prepare('SELECT DISTINCT client FROM projects ORDER BY client').all() as { client: string }[];
-  res.json(rows.map((r) => r.client));
+  const rows = db.prepare('SELECT DISTINCT client FROM projects WHERE TRIM(client) <> "" ORDER BY client').all() as {
+    client: string;
+  }[];
+  const seen = new Set<string>();
+  const clients: string[] = [];
+  for (const r of rows) {
+    const n = normalizeClientName(r.client);
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    clients.push(n);
+  }
+  clients.sort((a, b) => a.localeCompare(b, 'pl'));
+  res.json(clients);
 });
 
 projectsRouter.get('/session/actor', (req, res) => {
@@ -327,6 +339,9 @@ projectsRouter.get('/history/filters', (req, res) => {
   const refMode = referenceModeFromReq(req);
   const projects = db.prepare('SELECT id, client, name FROM projects ORDER BY client, name').all() as { id: number; client: string; name: string }[];
   const clients = db.prepare('SELECT DISTINCT client FROM projects WHERE TRIM(client) <> "" ORDER BY client').all() as { client: string }[];
+  const clientNames = [...new Set(clients.map((r) => normalizeClientName(r.client)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'pl')
+  );
   const machines = db.prepare('SELECT id, sap_number, internal_number, type FROM machines ORDER BY sap_number, internal_number').all() as {
     id: number;
     sap_number: string | null;
@@ -342,7 +357,7 @@ projectsRouter.get('/history/filters', (req, res) => {
   const authors = db.prepare('SELECT DISTINCT author FROM project_notes WHERE TRIM(COALESCE(author, "")) <> "" ORDER BY author').all() as { author: string }[];
   res.json({
     projects,
-    clients: clients.map((r) => r.client),
+    clients: clientNames,
     machines,
     details: details.map((d) => ({ id: Number(d.id), label: formatDetailLabel(d, refMode) })),
     authors: authors.map((r) => r.author),
@@ -354,7 +369,7 @@ projectsRouter.get('/history', (req, res) => {
   const projectIds = parseIdList(req.query.projectId, req.query.projectIds);
   const machineIds = parseIdList(req.query.machineId, req.query.machineIds);
   const partIds = parseIdList(req.query.partId, req.query.partIds);
-  const clients = parseCsvQueryParamSingleOrMulti(req.query.client, req.query.clients);
+  const clients = parseClientFilterQuery(req.query.client, req.query.clients);
   const authors = parseCsvQueryParamSingleOrMulti(req.query.author, req.query.authors);
   const text = String(req.query.text ?? '').trim();
 
@@ -821,7 +836,7 @@ projectsRouter.get('/:id', (req, res) => {
 
 projectsRouter.post('/', (req, res) => {
   const body = req.body as any;
-  const client = String(body.client ?? '').trim();
+  const client = normalizeClientName(body.client ?? '');
   const name = String(body.name ?? '').trim();
   const sop = formatSopEop(body.sop ?? '');
   const eop = formatSopEop(body.eop ?? '');
@@ -840,7 +855,7 @@ projectsRouter.put('/:id', (req, res) => {
   const actor = resolveActor(req);
 
   const body = req.body as any;
-  const client = body.client !== undefined ? String(body.client).trim() : project.client;
+  const client = body.client !== undefined ? normalizeClientName(body.client) : normalizeClientName(project.client);
   const name = body.name !== undefined ? String(body.name).trim() : project.name;
   const sop = body.sop !== undefined ? formatSopEop(body.sop) : formatSopEop(project.sop);
   const status = body.status === 'RFQ' ? 'RFQ' : body.status === 'inactive' ? 'inactive' : 'active';

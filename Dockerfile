@@ -36,6 +36,7 @@ ENV NODE_ENV=production
 ENV PORT=3001
 ENV DB_PATH=/data/capacity.db
 ENV CLIENT_DIST=/app/client/dist
+ENV DOCKER=1
 
 RUN mkdir -p /data
 

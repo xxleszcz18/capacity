@@ -170,6 +170,12 @@ function resolveResourcePermission(req: Request, resource: PermissionResource): 
     }
   }
 
+  if (resource === 'call_offs') {
+    if (method === 'GET' && /^\/\d+\/(source-file|unmatched-report)$/.test(path)) {
+      return 'call_offs.download';
+    }
+  }
+
   return null;
 }
 

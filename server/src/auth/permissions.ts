@@ -6,6 +6,7 @@ export type PermissionResource =
   | 'projects'
   | 'designations'
   | 'scenarios'
+  | 'call_offs'
   | 'admin_database'
   | 'admin_settings'
   | 'admin_data_viz'
@@ -19,6 +20,7 @@ export const PERMISSION_MATRIX: Record<PermissionResource, PermissionAction[]> =
   projects: ['view', 'details', 'change_status', 'edit', 'delete', 'download'],
   designations: ['view', 'edit', 'delete', 'download'],
   scenarios: ['view', 'edit', 'delete', 'download'],
+  call_offs: ['view', 'edit', 'delete', 'download'],
   admin_database: ['view', 'edit', 'download'],
   admin_settings: ['view', 'edit', 'download'],
   admin_data_viz: ['view', 'edit', 'download'],

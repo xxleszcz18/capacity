@@ -9,6 +9,28 @@ import { useAuth } from '../context/AuthContext';
 import { useOcuMode } from '../context/OcuModeContext';
 import LanguageSwitcher from './LanguageSwitcher';
 import UserMenu from './UserMenu';
+import CallOffNewComparisonControl from './callOffs/CallOffNewComparisonControl';
+import ScenarioNewControl from './scenarios/ScenarioNewControl';
+import {
+  DEFAULT_WORKSPACE_THEMES,
+  workspaceAccentMuted,
+  workspaceBannerGradient,
+  workspaceThemesFromVisualSettings,
+  type WorkspaceThemeColors,
+  type WorkspaceThemeSettings,
+} from '../utils/workspaceTheme';
+
+async function pickLatestCallOff(): Promise<{ id: number; name: string } | null> {
+  const list = await api.callOffs.list({ archived: false });
+  if (!list.length) return null;
+  const sorted = [...list].sort((a, b) => {
+    const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+    const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+    return tb - ta;
+  });
+  const pick = sorted[0];
+  return pick ? { id: pick.id, name: pick.name } : null;
+}
 
 async function pickLatestScenario(): Promise<{ id: number; name: string } | null> {
   const list = await api.scenarios.list({ archived: false });
@@ -30,7 +52,8 @@ function MainNavLink({
   activeScenarioId,
   setActiveScenario,
   navigate,
-  scenarioChrome,
+  navTheme,
+  isActivePath,
 }: {
   path: string;
   label: string;
@@ -39,18 +62,23 @@ function MainNavLink({
   activeScenarioId: number | null;
   setActiveScenario: (id: number, name: string) => void;
   navigate: ReturnType<typeof useNavigate>;
-  scenarioChrome: boolean;
+  navTheme: WorkspaceThemeColors;
+  isActivePath?: (pathname: string) => boolean;
 }) {
+  const location = useLocation();
+  const navInactive = workspaceAccentMuted(navTheme.accent);
   const needsScenarioPick =
     appSection === 'scenarios' && path !== '/scenariusze' && (activeScenarioId == null || activeScenarioId <= 0);
   const to =
     appSection === 'capacity'
       ? path
-      : path === '/scenariusze'
+      : appSection === 'calloffs'
         ? path
-        : activeScenarioId != null && activeScenarioId > 0
-          ? `${path}?scenarioId=${activeScenarioId}`
-          : path;
+        : path === '/scenariusze'
+          ? path
+          : activeScenarioId != null && activeScenarioId > 0
+            ? `${path}?scenarioId=${activeScenarioId}`
+            : path;
 
   return (
     <NavLink
@@ -67,13 +95,16 @@ function MainNavLink({
         setActiveScenario(pick.id, pick.name);
         navigate(`${path}?scenarioId=${pick.id}`);
       }}
-      style={({ isActive }) => ({
+      style={({ isActive }) => {
+        const active = isActivePath ? isActivePath(location.pathname) : isActive;
+        return {
         padding: '0.5rem 0.75rem',
-        color: isActive ? '#fff' : scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
+        color: active ? '#fff' : navInactive,
         textDecoration: 'none',
         borderRadius: 4,
-        background: isActive ? (scenarioChrome ? '#1565c0' : 'var(--cap-green)') : 'transparent',
-      })}
+        background: active ? navTheme.accent : 'transparent',
+      };
+      }}
     >
       {label}
     </NavLink>
@@ -83,23 +114,47 @@ function MainNavLink({
 export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeScenarioId, activeScenarioName, setActiveScenario, clearActiveScenario, setAppSection, appSection } =
-    useScenarioMode();
+  const {
+    activeScenarioId,
+    activeScenarioName,
+    activeCallOffId,
+    activeCallOffName,
+    setActiveScenario,
+    clearActiveScenario,
+    setActiveCallOff,
+    clearActiveCallOff,
+    setAppSection,
+    appSection,
+  } = useScenarioMode();
   const { useContractualVolumes, setUseContractualVolumes } = useContractVolumes();
   const { t } = useI18n();
   const { hasPermission, hasAnyPermission } = useAuth();
   const { ocuFeatureEnabled, calculationProfile, toggleCalculationProfile } = useOcuMode();
   const [contractualFrameColor, setContractualFrameColor] = useState('#ff9800');
+  const [workspaceThemes, setWorkspaceThemes] = useState<WorkspaceThemeSettings>(DEFAULT_WORKSPACE_THEMES);
 
-  useEffect(() => {
+  const loadVisualPrefs = useCallback(() => {
     api.settings.visual
       .get()
-      .then((v: { contractual_calculator_frame_color?: string }) => {
-        const c = v?.contractual_calculator_frame_color;
-        if (typeof c === 'string' && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(c.trim())) setContractualFrameColor(c.trim());
+      .then((v) => {
+        const raw = v as { contractual_calculator_frame_color?: string };
+        const c = raw?.contractual_calculator_frame_color;
+        if (typeof c === 'string' && /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(c.trim())) {
+          setContractualFrameColor(c.trim());
+        }
+        setWorkspaceThemes(workspaceThemesFromVisualSettings(v as Record<string, unknown>));
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    loadVisualPrefs();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') loadVisualPrefs();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadVisualPrefs]);
 
   useEffect(() => {
     if (activeScenarioId == null || activeScenarioId <= 0 || activeScenarioName) return;
@@ -109,6 +164,14 @@ export default function Layout({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, [activeScenarioId, activeScenarioName, setActiveScenario]);
 
+  useEffect(() => {
+    if (activeCallOffId == null || activeCallOffId <= 0 || activeCallOffName) return;
+    api.callOffs
+      .get(activeCallOffId)
+      .then((c) => setActiveCallOff(c.id, c.name))
+      .catch(() => {});
+  }, [activeCallOffId, activeCallOffName, setActiveCallOff]);
+
   /** Link z ?scenarioId= do Administracji w trybie Capacity (np. powrót z podstron). */
   const adminQuery = scenarioNavQuery(activeScenarioId);
 
@@ -117,8 +180,12 @@ export default function Layout({ children }: { children: ReactNode }) {
     const sid = Number(sp.get('scenarioId'));
     if (Number.isFinite(sid) && sid > 0) {
       setAppSection('scenarios');
+      return;
     }
-  }, [location.search, setAppSection]);
+    if (location.pathname === '/call-offs' || location.pathname.startsWith('/call-offs/')) {
+      setAppSection('calloffs');
+    }
+  }, [location.search, location.pathname, setAppSection]);
 
   useEffect(() => {
     if (appSection !== 'scenarios') return;
@@ -140,6 +207,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       p === '/kalkulator' ||
       p === '/administracja' ||
       p === '/administracja/historia-zmian' ||
+      p === '/administracja/instrukcja' ||
       p === '/historia-zmian' ||
       p === '/scenariusze' ||
       p.startsWith('/scenariusze/');
@@ -150,15 +218,37 @@ export default function Layout({ children }: { children: ReactNode }) {
     navigate(`/kalkulator${q ? `?${q}` : ''}`, { replace: true });
   }, [appSection, location.pathname, activeScenarioId, navigate]);
 
+  useEffect(() => {
+    if (appSection !== 'calloffs') return;
+    const p = location.pathname;
+    const allowed =
+      p === '/call-offs' ||
+      p.startsWith('/call-offs/') ||
+      p === '/administracja' ||
+      p === '/administracja/historia-zmian' ||
+      p === '/administracja/instrukcja' ||
+      p === '/historia-zmian';
+    if (allowed) return;
+    if (activeCallOffId != null && activeCallOffId > 0) {
+      navigate(`/call-offs/${activeCallOffId}`, { replace: true });
+    } else {
+      navigate('/call-offs', { replace: true });
+    }
+  }, [appSection, location.pathname, activeCallOffId, navigate]);
+
   const scenarioMode = activeScenarioId != null && activeScenarioId > 0;
   const scenarioChrome = appSection === 'scenarios';
-  const headerAccent = scenarioChrome ? '#1565c0' : 'var(--cap-green)';
+  const callOffChrome = appSection === 'calloffs';
+  const theme = workspaceThemes[appSection];
+  const headerAccent = theme.accent;
+  const navTextMuted = workspaceAccentMuted(theme.accent);
 
   const switchSection = useCallback(
     async (next: AppSection) => {
       if (next === appSection) return;
       setAppSection(next);
       if (next === 'scenarios') {
+        clearActiveCallOff();
         let sid = activeScenarioId;
         if (sid == null || sid <= 0) {
           const pick = await pickLatestScenario();
@@ -170,13 +260,35 @@ export default function Layout({ children }: { children: ReactNode }) {
         if (sid != null && sid > 0) {
           const sp = new URLSearchParams(location.search);
           sp.set('scenarioId', String(sid));
-          navigate({ pathname: location.pathname, search: sp.toString() }, { replace: true });
+          navigate({ pathname: '/kalkulator', search: sp.toString() }, { replace: true });
+        } else {
+          navigate('/kalkulator', { replace: true });
+        }
+      } else if (next === 'calloffs') {
+        clearActiveScenario();
+        let cid = activeCallOffId;
+        if (cid == null || cid <= 0) {
+          const pick = await pickLatestCallOff();
+          if (pick) {
+            setActiveCallOff(pick.id, pick.name);
+            cid = pick.id;
+          }
+        }
+        if (cid != null && cid > 0) {
+          navigate(`/call-offs/${cid}`, { replace: true });
+        } else {
+          navigate('/call-offs', { replace: true });
         }
       } else {
         clearActiveScenario();
+        clearActiveCallOff();
         const path = location.pathname;
-        const scenarioOnlyRoute = path === '/scenariusze' || path.startsWith('/scenariusze/');
-        if (scenarioOnlyRoute) {
+        const workspaceOnlyRoute =
+          path === '/scenariusze' ||
+          path.startsWith('/scenariusze/') ||
+          path === '/call-offs' ||
+          path.startsWith('/call-offs/');
+        if (workspaceOnlyRoute) {
           navigate('/kalkulator', { replace: true });
         } else {
           navigate({ pathname: location.pathname, search: '' }, { replace: true });
@@ -187,8 +299,11 @@ export default function Layout({ children }: { children: ReactNode }) {
       appSection,
       setAppSection,
       activeScenarioId,
+      activeCallOffId,
       setActiveScenario,
+      setActiveCallOff,
       clearActiveScenario,
+      clearActiveCallOff,
       navigate,
       location.pathname,
       location.search,
@@ -207,19 +322,45 @@ export default function Layout({ children }: { children: ReactNode }) {
     { path: '/kalkulator', labelKey: 'layout.calculator', end: true, permission: 'calculator.view' },
   ];
 
-  const mainNav = (scenarioChrome ? scenarioMainNav : capacityMainNav).filter((item) => hasPermission(item.permission));
+  const callOffMainNav: { path: string; labelKey: string; end?: boolean; permission: string; isActivePath?: (pathname: string) => boolean }[] = [
+    {
+      path: activeCallOffId != null && activeCallOffId > 0 ? `/call-offs/${activeCallOffId}` : '/call-offs',
+      labelKey: 'layout.calculator',
+      end: true,
+      permission: 'call_offs.view',
+      isActivePath: (pathname) => /^\/call-offs\/\d+/.test(pathname),
+    },
+  ];
 
-  const scenarioListNav = { path: '/scenariusze', labelKey: 'layout.scenarioList', permission: 'scenarios.view' };
+  const mainNav = (
+    callOffChrome ? callOffMainNav : scenarioChrome ? scenarioMainNav : capacityMainNav
+  ).filter((item) => hasPermission(item.permission));
 
-  const showAdminLink = hasAnyPermission([
-    'admin_database.view',
-    'admin_settings.view',
-    'change_history.view',
-    'user_management.view',
-    'role_management.view',
-  ]);
+  const scenarioListNav = { path: '/scenariusze', labelKey: 'layout.scenarioList', permission: 'scenarios.view', end: true as const };
+  const callOffListNav = {
+    path: '/call-offs',
+    labelKey: 'layout.callOffList',
+    permission: 'call_offs.view',
+    end: true as const,
+    isActivePath: (pathname: string) => pathname === '/call-offs',
+  };
+
+  const workspaceChrome = scenarioChrome || callOffChrome;
+
+  const showAdminLink =
+    workspaceChrome ||
+    hasAnyPermission([
+      'admin_database.view',
+      'admin_settings.view',
+      'change_history.view',
+      'user_management.view',
+      'role_management.view',
+    ]);
 
   const showScenariosWorkspace = hasPermission('scenarios.view');
+  const showCallOffsWorkspace = hasPermission('call_offs.view');
+
+  const callOffMode = activeCallOffId != null && activeCallOffId > 0;
 
   return (
     <div
@@ -227,13 +368,13 @@ export default function Layout({ children }: { children: ReactNode }) {
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        background: scenarioChrome ? '#e4ecf7' : '#f7f8fa',
+        background: theme.page_bg,
       }}
     >
       {scenarioChrome && (
         <div
           style={{
-            background: 'linear-gradient(90deg, #1565c0 0%, #0d47a1 100%)',
+            background: workspaceBannerGradient(workspaceThemes.scenarios),
             color: '#fff',
             padding: '0.4rem 1rem',
             display: 'flex',
@@ -255,9 +396,34 @@ export default function Layout({ children }: { children: ReactNode }) {
           </span>
         </div>
       )}
+      {callOffChrome && (
+        <div
+          style={{
+            background: workspaceBannerGradient(workspaceThemes.calloffs),
+            color: '#fff',
+            padding: '0.4rem 1rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '1rem',
+            flexWrap: 'wrap',
+            fontSize: 14,
+            textAlign: 'center',
+          }}
+        >
+          <span>
+            <strong>{t('layout.callOffWorkspace')}</strong>
+            {callOffMode ? (
+              <span style={{ opacity: 0.92 }}> {t('layout.callOffWithActive')}</span>
+            ) : (
+              <span style={{ opacity: 0.9 }}> {t('layout.callOffNoActive')}</span>
+            )}
+          </span>
+        </div>
+      )}
       <header
         style={{
-          background: scenarioChrome ? '#d8e4f5' : '#fff',
+          background: theme.header_bg,
           color: '#333',
           padding: '0.5rem 1.25rem',
           minHeight: 52,
@@ -265,7 +431,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           alignItems: 'center',
           gap: '1rem',
           flexWrap: 'wrap',
-          borderBottom: `2px solid ${scenarioChrome ? '#1565c0' : 'var(--cap-green)'}`,
+          borderBottom: `2px solid ${headerAccent}`,
           boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
         }}
       >
@@ -273,14 +439,14 @@ export default function Layout({ children }: { children: ReactNode }) {
           style={{
             fontWeight: 700,
             fontSize: '1.25rem',
-            color: scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
+            color: navTextMuted,
             display: 'flex',
             alignItems: 'baseline',
             flexWrap: 'wrap',
             gap: '0.25rem 0.75rem',
           }}
         >
-          {ocuFeatureEnabled && !scenarioChrome ? (
+          {ocuFeatureEnabled && !workspaceChrome ? (
             <button
               type="button"
               onClick={toggleCalculationProfile}
@@ -288,9 +454,9 @@ export default function Layout({ children }: { children: ReactNode }) {
               style={{
                 fontWeight: 700,
                 fontSize: '1.25rem',
-                color: 'var(--cap-green)',
+                color: navTextMuted,
                 background: 'transparent',
-                border: calculationProfile === 'ocu' ? '2px solid var(--cap-green)' : '2px solid transparent',
+                border: calculationProfile === 'ocu' ? `2px solid ${theme.accent}` : '2px solid transparent',
                 borderRadius: 4,
                 padding: calculationProfile === 'ocu' ? '2px 8px' : '2px 0',
                 cursor: 'pointer',
@@ -309,7 +475,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               style={{
                 fontWeight: 600,
                 fontSize: '1.05rem',
-                color: '#0d47a1',
+                color: navTextMuted,
                 textDecoration: 'none',
                 cursor: 'pointer',
               }}
@@ -324,7 +490,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               style={{
                 fontWeight: 600,
                 fontSize: '1rem',
-                color: '#1565c0',
+                color: navTextMuted,
                 opacity: 0.95,
                 textDecoration: 'none',
                 cursor: 'pointer',
@@ -332,20 +498,49 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
               {t('layout.scenarioHash', { id: activeScenarioId })}
             </Link>
+          ) : callOffChrome && callOffMode && activeCallOffName ? (
+            <Link
+              to={`/call-offs/${activeCallOffId}`}
+              style={{
+                fontWeight: 600,
+                fontSize: '1.05rem',
+                color: navTextMuted,
+                textDecoration: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              · {activeCallOffName}
+              <span style={{ fontWeight: 500, fontSize: '0.85rem', opacity: 0.88, marginLeft: 8 }}>#{activeCallOffId}</span>
+            </Link>
+          ) : callOffChrome && callOffMode && activeCallOffId ? (
+            <Link
+              to={`/call-offs/${activeCallOffId}`}
+              style={{
+                fontWeight: 600,
+                fontSize: '1rem',
+                color: navTextMuted,
+                opacity: 0.95,
+                textDecoration: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              · #{activeCallOffId}
+            </Link>
           ) : null}
         </span>
         <nav style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
-          {mainNav.map(({ path, labelKey, end }) => (
+          {mainNav.map(({ path, labelKey, end, isActivePath }) => (
             <MainNavLink
               key={path}
               path={path}
               label={t(labelKey)}
               end={end}
+              isActivePath={isActivePath}
               appSection={appSection}
               activeScenarioId={activeScenarioId}
               setActiveScenario={setActiveScenario}
               navigate={navigate}
-              scenarioChrome={scenarioChrome}
+              navTheme={theme}
             />
           ))}
           {appSection === 'scenarios' && showScenariosWorkspace && (
@@ -353,11 +548,26 @@ export default function Layout({ children }: { children: ReactNode }) {
               key={scenarioListNav.path}
               path={scenarioListNav.path}
               label={t(scenarioListNav.labelKey)}
+              end={scenarioListNav.end}
               appSection={appSection}
               activeScenarioId={activeScenarioId}
               setActiveScenario={setActiveScenario}
               navigate={navigate}
-              scenarioChrome={scenarioChrome}
+              navTheme={theme}
+            />
+          )}
+          {appSection === 'calloffs' && showCallOffsWorkspace && (
+            <MainNavLink
+              key={callOffListNav.path}
+              path={callOffListNav.path}
+              label={t(callOffListNav.labelKey)}
+              end={callOffListNav.end}
+              isActivePath={callOffListNav.isActivePath}
+              appSection={appSection}
+              activeScenarioId={activeScenarioId}
+              setActiveScenario={setActiveScenario}
+              navigate={navigate}
+              navTheme={theme}
             />
           )}
           {showAdminLink && (
@@ -365,10 +575,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             to={`/administracja${adminQuery}`}
             style={({ isActive }) => ({
               padding: '0.5rem 0.75rem',
-              color: isActive ? '#fff' : scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
+              color: isActive ? '#fff' : navTextMuted,
               textDecoration: 'none',
               borderRadius: 4,
-              background: isActive ? (scenarioChrome ? '#1565c0' : 'var(--cap-green)') : 'transparent',
+              background: isActive ? theme.accent : 'transparent',
             })}
           >
             {t('layout.administration')}
@@ -376,6 +586,8 @@ export default function Layout({ children }: { children: ReactNode }) {
           )}
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {scenarioChrome && showScenariosWorkspace && <ScenarioNewControl activateOnCreate />}
+          {callOffChrome && showCallOffsWorkspace && <CallOffNewComparisonControl />}
           <div
             style={{
               display: 'inline-flex',
@@ -383,7 +595,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               gap: 10,
               fontSize: 13,
               userSelect: 'none',
-              color: scenarioChrome ? '#0d47a1' : '#333',
+              color: navTextMuted,
             }}
             title={t('layout.contractualVolumesTitle')}
           >
@@ -397,7 +609,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 width: 46,
                 height: 26,
                 borderRadius: 13,
-                border: `2px solid ${scenarioChrome ? '#1565c0' : 'var(--cap-green)'}`,
+                border: `2px solid ${headerAccent}`,
                 background: useContractualVolumes ? contractualFrameColor : '#e0e0e0',
                 cursor: 'pointer',
                 flexShrink: 0,
@@ -444,8 +656,11 @@ export default function Layout({ children }: { children: ReactNode }) {
                 fontSize: 13,
                 fontWeight: 600,
                 whiteSpace: 'nowrap',
-                background: appSection === 'capacity' ? 'var(--cap-green)' : 'transparent',
-                color: appSection === 'capacity' ? '#fff' : scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
+                background: appSection === 'capacity' ? workspaceThemes.capacity.accent : 'transparent',
+                color:
+                  appSection === 'capacity'
+                    ? '#fff'
+                    : workspaceAccentMuted(workspaceThemes[appSection].accent),
               }}
             >
               {t('layout.versionCapacity')}
@@ -463,11 +678,36 @@ export default function Layout({ children }: { children: ReactNode }) {
                 fontWeight: 600,
                 whiteSpace: 'nowrap',
                 opacity: showScenariosWorkspace ? 1 : 0.45,
-                background: appSection === 'scenarios' ? '#1565c0' : 'transparent',
-                color: appSection === 'scenarios' ? '#fff' : scenarioChrome ? '#0d47a1' : 'var(--cap-green)',
+                background: appSection === 'scenarios' ? workspaceThemes.scenarios.accent : 'transparent',
+                color:
+                  appSection === 'scenarios'
+                    ? '#fff'
+                    : workspaceAccentMuted(workspaceThemes[appSection].accent),
               }}
             >
               {t('layout.scenarios')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void switchSection('calloffs')}
+              disabled={!showCallOffsWorkspace}
+              style={{
+                padding: '0.45rem 0.85rem',
+                border: 'none',
+                borderLeft: `1px solid ${headerAccent}`,
+                cursor: showCallOffsWorkspace ? 'pointer' : 'not-allowed',
+                fontSize: 13,
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                opacity: showCallOffsWorkspace ? 1 : 0.45,
+                background: appSection === 'calloffs' ? workspaceThemes.calloffs.accent : 'transparent',
+                color:
+                  appSection === 'calloffs'
+                    ? '#fff'
+                    : workspaceAccentMuted(workspaceThemes[appSection].accent),
+              }}
+            >
+              {t('layout.callOffs')}
             </button>
           </div>
           <UserMenu accentColor={headerAccent} scenarioChrome={scenarioChrome} />
@@ -491,7 +731,15 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Link>
         </div>
       </header>
-      <main style={{ flex: 1, padding: '1.5rem', background: scenarioChrome ? '#e8f0fa' : 'transparent' }}>{children}</main>
+      <main
+        style={{
+          flex: 1,
+          padding: '1.5rem',
+          background: theme.main_bg,
+        }}
+      >
+        {children}
+      </main>
     </div>
   );
 }

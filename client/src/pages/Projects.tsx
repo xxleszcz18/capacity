@@ -16,6 +16,7 @@ import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import { useI18n } from '../context/I18nContext';
 import { useAuth } from '../context/AuthContext';
 import { formatSopEop, parseSopEop } from '../utils/sopEopFormat';
+import { normalizeClientName } from '../utils/clientName';
 
 type PartToAdd = { type: 'existing'; designation_id: number } | { type: 'new'; sap_number?: string; alias?: string; free_text?: string };
 
@@ -121,7 +122,7 @@ export default function Projects() {
             return { ...p, machines, parts };
           });
           if (statusFilter.length > 0) projects = projects.filter((p: any) => statusFilter.includes(p.status));
-          if (clientFilter.length > 0) projects = projects.filter((p: any) => clientFilter.includes(String(p.client ?? '')));
+          if (clientFilter.length > 0) projects = projects.filter((p: any) => clientFilter.includes(normalizeClientName(p.client)));
           if (search.trim()) {
             const q = search.trim().toLowerCase();
             projects = projects.filter(
@@ -142,7 +143,7 @@ export default function Projects() {
           }
           setList(projects);
           const clientSet = Array.from(
-            new Set((snap.projects || []).map((p: any) => String(p.client ?? '').trim()).filter((c: string) => c.length > 0))
+            new Set((snap.projects || []).map((p: any) => normalizeClientName(p.client)).filter((c: string) => c.length > 0))
           ) as string[];
           setClients([...clientSet].sort((a, b) => a.localeCompare(b, 'pl')));
         })
@@ -206,7 +207,7 @@ export default function Projects() {
         setSaving(false);
         return;
       }
-      const created = await api.projects.create({ client: form.client.trim(), name: form.name.trim(), sop: formatSopEop(form.sop) || undefined, eop: formatSopEop(form.eop) || undefined, status: form.status });
+      const created = await api.projects.create({ client: normalizeClientName(form.client), name: form.name.trim(), sop: formatSopEop(form.sop) || undefined, eop: formatSopEop(form.eop) || undefined, status: form.status });
       setAddModal(false);
       setForm({ client: '', name: '', sop: '', eop: '', status: 'active' });
       setSopMonth(''); setEopMonth(''); setPartsToAdd([]);
@@ -575,7 +576,7 @@ export default function Projects() {
             <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
               <label>
                 {t('projects.clientRequired')}{' '}
-                <input type="text" value={form.client} onChange={(e) => setForm((f) => ({ ...f, client: e.target.value }))} style={{ width: '100%', padding: 6 }} />
+                <input type="text" value={form.client} onChange={(e) => setForm((f) => ({ ...f, client: e.target.value.toUpperCase() }))} style={{ width: '100%', padding: 6 }} />
               </label>
               <label>
                 {t('projects.nameRequired')}{' '}

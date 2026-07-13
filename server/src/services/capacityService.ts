@@ -289,6 +289,18 @@ export function volumeToWeekly(volumeValue: number, volumeUnit: 'annual' | 'mont
   return volumeValue / workWeeks;
 }
 
+/** Tygodniowy wolumen → ilość do tooltipa (roczna / miesięczna / tygodniowa). */
+export function weeklyToDisplayVolume(
+  weekly: number,
+  period: 'annual' | 'monthly' | 'weekly',
+  workWeeks: number
+): number {
+  const ww = Math.max(1, workWeeks);
+  if (period === 'weekly') return weekly;
+  if (period === 'monthly') return (weekly * ww) / 12;
+  return weekly * ww;
+}
+
 /**
  * Ułamek roku dla capacity: pierwszy rok od startMonth, ostatni do endMonth (SOP/EOP w formacie MM.YYYY).
  */
@@ -645,7 +657,14 @@ export interface MachineCapacityRow {
   /** Oznaczenie kafelka % w kalkulatorze (operacje z alternatywą na maszynie w tym roku). */
   alternative_border?: 'none' | 'unused' | 'all_alt' | 'mixed';
   /** Udział detali w obciążeniu tej maszyny (dla tooltipa w kalkulatorze). */
-  detail_breakdown?: { project_label: string; detail_label: string; contribution_percent: number; share_percent: number; has_rfq: boolean }[];
+  detail_breakdown?: {
+    project_label: string;
+    detail_label: string;
+    contribution_percent: number;
+    share_percent: number;
+    volume_quantity: number;
+    has_rfq: boolean;
+  }[];
   /** Czy w tym roku na tej maszynie liczy się przynajmniej jedna operacja z projektu RFQ. */
   has_rfq?: boolean;
   /** Status maszyny w bazie (np. RFQ) — do znacznika w kalkulatorze scenariusza. */
@@ -761,7 +780,11 @@ export function getMachineCapacitiesForYear(
   /** Gdy podany — liczy obciążenie tylko dla operacji aktywnych w tym miesiącu (SOP/EOP). */
   activeMonth?: number,
   /** Współdzielony kontekst obliczeń (prefetch wolumenów, indeks operacji). */
-  shared?: CapacityComputeShared
+  shared?: CapacityComputeShared,
+  /** Wolumeny z pliku SAP Call off. Gdy ustawione, nadpisuje wolumen operacji. */
+  callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null,
+  /** Jednostka ilości w detail_breakdown (domyślnie: roczna lub miesięczna przy activeMonth). */
+  detailVolumePeriod?: 'annual' | 'monthly' | 'weekly'
 ): MachineCapacityRow[] {
   const useContract = useContractualVolumes === true;
   const computeShared =
@@ -772,6 +795,9 @@ export function getMachineCapacitiesForYear(
   const settings = computeShared.settingsByYear.get(year) ?? resolveSettingsForYear(year, effectiveProfile);
   const refMode = computeShared.refMode;
   const volumePrefetch = computeShared.volumePrefetchByYear.get(year);
+  const volumePeriod: 'annual' | 'monthly' | 'weekly' =
+    detailVolumePeriod ?? (activeMonth != null ? 'monthly' : 'annual');
+  const workWeeksForVolume = Math.max(1, settings.working_weeks_per_year ?? 48);
 
   const scenarioRfqs =
     scenarioSnapshotEff != null && operationsOverride != null
@@ -824,14 +850,98 @@ export function getMachineCapacitiesForYear(
     let altBorderUnused = 0;
     const detailContributionSec = new Map<
       string,
-      { project_label: string; detail_label: string; requiredSec: number; hasRfq: boolean }
+      { project_label: string; detail_label: string; requiredSec: number; volumeQuantity: number; hasRfq: boolean }
     >();
     let hasRfq = false;
+
+    /** Udział operacji w wolumenie SAP detalu na tej maszynie (tylko gdy ma produkcyjną alokację). */
+    const callOffOpShare = new Map<number, number>();
+    if (callOffVolumes) {
+      const partProdWeeklyTotal = new Map<number, number>();
+      const opPartId = new Map<number, number>();
+      const opProdWeekly = new Map<number, number>();
+
+      for (const op of machineOps) {
+        const opKey = Number(op.operation_id ?? op.id);
+        if (!Number.isFinite(opKey)) continue;
+        const prodResolved = resolveOperationVolumeForYear(
+          {
+            operation_id: opKey,
+            project_id: op.project_id,
+            part_id: op.part_id,
+            volume_value: op.volume_value,
+            volume_unit: op.volume_unit,
+            split_from_operation_id: op.split_from_operation_id,
+          },
+          year,
+          volumeMap.get(opKey),
+          scenarioSnapshotEff,
+          useContract,
+          volumePrefetch
+        );
+        if (
+          !shouldIncludeOperationInCapacity(
+            op.sop ?? '',
+            op.eop ?? '',
+            year,
+            activeMonth ?? undefined,
+            Boolean(prodResolved.count_after_eop),
+            op.project_id != null
+          )
+        ) {
+          continue;
+        }
+        const prodWeeklyResolved = resolveWeeklyVolumeFromResolved(
+          prodResolved.volume_value,
+          prodResolved.volume_unit,
+          settings,
+          {
+            sop: op.sop ?? '',
+            eop: op.eop ?? '',
+            year,
+            volume_origin: prodResolved.volume_origin,
+            count_after_eop: prodResolved.count_after_eop,
+            has_project: op.project_id != null,
+          }
+        );
+        if (prodWeeklyResolved.weekly <= 1e-9) continue;
+        const partId = op.part_id != null ? Number(op.part_id) : null;
+        if (partId == null || !Number.isFinite(partId)) continue;
+        opProdWeekly.set(opKey, prodWeeklyResolved.weekly);
+        opPartId.set(opKey, partId);
+        partProdWeeklyTotal.set(partId, (partProdWeeklyTotal.get(partId) ?? 0) + prodWeeklyResolved.weekly);
+      }
+
+      for (const [opKey, weekly] of opProdWeekly) {
+        const partId = opPartId.get(opKey);
+        if (partId == null) continue;
+        const total = partProdWeeklyTotal.get(partId) ?? weekly;
+        if (total <= 1e-9) continue;
+        callOffOpShare.set(opKey, weekly / total);
+      }
+    }
 
     for (const op of machineOps) {
       const opKey = Number(op.operation_id ?? op.id);
       if (!Number.isFinite(opKey)) continue;
-      const opVolumeOverride = volumeMap.get(opKey);
+      let opVolumeOverride = volumeMap.get(opKey);
+      if (callOffVolumes) {
+        const share = callOffOpShare.get(opKey);
+        if (share == null || share <= 0) continue;
+        const partId = op.part_id != null ? Number(op.part_id) : null;
+        if (partId != null && Number.isFinite(partId)) {
+          const sapRaw =
+            activeMonth != null
+              ? callOffVolumes.monthly.get(partId)?.get(year)?.get(activeMonth) ?? 0
+              : callOffVolumes.annual.get(partId)?.get(year) ?? 0;
+          opVolumeOverride = {
+            volume_value: sapRaw * share,
+            volume_unit: activeMonth != null ? 'monthly' : 'annual',
+          };
+        } else {
+          continue;
+        }
+      }
       const resolved = resolveOperationVolumeForYear(
         {
           operation_id: opKey,
@@ -896,15 +1006,18 @@ export function getMachineCapacitiesForYear(
         const projectLabel = formatProjectLabel(op.project_client, op.project_name);
         const contribKey = `${Number(op.project_id)}|${detailLabel}`;
         const isOpRfq = String(op.project_status ?? '').toUpperCase() === 'RFQ';
+        const volQty = weeklyToDisplayVolume(weeklyVol, volumePeriod, workWeeksForVolume);
         const existing = detailContributionSec.get(contribKey);
         if (existing) {
           existing.requiredSec += requiredSecOp;
+          existing.volumeQuantity += volQty;
           if (isOpRfq) existing.hasRfq = true;
         } else {
           detailContributionSec.set(contribKey, {
             project_label: projectLabel,
             detail_label: detailLabel,
             requiredSec: requiredSecOp,
+            volumeQuantity: volQty,
             hasRfq: isOpRfq,
           });
         }
@@ -936,11 +1049,12 @@ export function getMachineCapacitiesForYear(
       else alternative_border = 'mixed';
     }
     const detail_breakdown = Array.from(detailContributionSec.values())
-      .map(({ project_label, detail_label, requiredSec, hasRfq }) => {
+      .map(({ project_label, detail_label, requiredSec, volumeQuantity, hasRfq }) => {
         const contribution_percent =
           availabilitySec > 0 ? Math.round((requiredSec / availabilitySec) * 10000) / 100 : 0;
         const share_percent = totalRequiredSec > 0 ? Math.round((requiredSec / totalRequiredSec) * 10000) / 100 : 0;
-        return { project_label, detail_label, contribution_percent, share_percent, has_rfq: hasRfq };
+        const volume_quantity = Math.round(volumeQuantity * 100) / 100;
+        return { project_label, detail_label, contribution_percent, share_percent, volume_quantity, has_rfq: hasRfq };
       })
       .sort((a, b) => b.contribution_percent - a.contribution_percent)
       .slice(0, 12);
@@ -1155,7 +1269,8 @@ export function getMachineCapacityByYears(
   useContractualVolumes?: boolean,
   machineStatusFilter?: MachineStatusFilterInput,
   dimensionFilters?: MachineDimensionFilter[],
-  settingsProfile?: CalculationSettingsProfile
+  settingsProfile?: CalculationSettingsProfile,
+  callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null
 ): {
   machine_id: number;
   internal_number: string | number;
@@ -1171,6 +1286,15 @@ export function getMachineCapacityByYears(
       required_sec_per_week: number;
       availability_sec_per_week?: number;
       alternative_border?: 'none' | 'unused' | 'all_alt' | 'mixed';
+      detail_breakdown?: {
+        project_label: string;
+        detail_label: string;
+        contribution_percent: number;
+        share_percent: number;
+        volume_quantity: number;
+        has_rfq: boolean;
+      }[];
+      has_rfq?: boolean;
     }
   >;
 }[] {
@@ -1207,7 +1331,8 @@ export function getMachineCapacityByYears(
       dimensionFilters,
       settingsProfile,
       undefined,
-      shared
+      shared,
+      callOffVolumes
     );
     for (const r of rows) {
       if (!machineMap.has(r.machine_id)) {
@@ -1246,9 +1371,30 @@ export function getMachineCapacityByYears(
 
 export type MachinePeriodMonthBreakdown = {
   load_percent: number;
-  weeks: Record<number, { load_percent: number }>;
+  weeks: Record<
+    number,
+    {
+      load_percent: number;
+      detail_breakdown?: {
+        project_label: string;
+        detail_label: string;
+        contribution_percent: number;
+        share_percent: number;
+        volume_quantity: number;
+        has_rfq: boolean;
+      }[];
+    }
+  >;
   has_sop: boolean;
   has_eop: boolean;
+  detail_breakdown?: {
+    project_label: string;
+    detail_label: string;
+    contribution_percent: number;
+    share_percent: number;
+    volume_quantity: number;
+    has_rfq: boolean;
+  }[];
 };
 
 export type MachinePeriodBreakdownRow = {
@@ -1370,7 +1516,8 @@ export function getMachinePeriodBreakdown(
   useContractualVolumes?: boolean,
   machineStatusFilter?: MachineStatusFilterInput,
   dimensionFilters?: MachineDimensionFilter[],
-  settingsProfile?: CalculationSettingsProfile
+  settingsProfile?: CalculationSettingsProfile,
+  callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null
 ): MachinePeriodBreakdownRow[] {
   const shared = buildCapacityComputeShared(year, year, operationsOverride, scenarioSnapshot ?? null, settingsProfile);
   const operationsByMachine = shared.operationsByMachine;
@@ -1387,7 +1534,8 @@ export function getMachinePeriodBreakdown(
     dimensionFilters,
     settingsProfile,
     undefined,
-    shared
+    shared,
+    callOffVolumes
   );
   const result: MachinePeriodBreakdownRow[] = [];
   for (const m of machines) {
@@ -1407,13 +1555,31 @@ export function getMachinePeriodBreakdown(
         dimensionFilters,
         settingsProfile,
         month,
-        shared
+        shared,
+        callOffVolumes
       );
       const load = monthRows[0]?.load_percent ?? 0;
       const weekCount = getWeekCountInMonth(year, month);
-      const weeks: Record<number, { load_percent: number }> = {};
+      const weeks: MachinePeriodMonthBreakdown['weeks'] = {};
+      const weekBreakdownRows = getMachineCapacitiesForYear(
+        year,
+        [m.machine_id],
+        machineType,
+        operationsOverride,
+        scenarioSnapshot,
+        scenarioIncludeRfqProjects,
+        useContractualVolumes,
+        machineStatusFilter,
+        dimensionFilters,
+        settingsProfile,
+        month,
+        shared,
+        callOffVolumes,
+        'weekly'
+      );
+      const weekDetailBreakdown = weekBreakdownRows[0]?.detail_breakdown ?? [];
       for (let w = 1; w <= weekCount; w++) {
-        weeks[w] = { load_percent: load };
+        weeks[w] = { load_percent: load, detail_breakdown: weekDetailBreakdown };
       }
       const monthMarker = yearMarkers.months[month] ?? { has_sop: false, has_eop: false };
       months[month] = {
@@ -1421,6 +1587,7 @@ export function getMachinePeriodBreakdown(
         weeks,
         has_sop: monthMarker.has_sop,
         has_eop: monthMarker.has_eop,
+        detail_breakdown: monthRows[0]?.detail_breakdown ?? [],
       };
     }
     result.push({

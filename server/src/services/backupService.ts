@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { db, getDatabasePath, saveDb } from '../db/connection.js';
+import { resolveStoragePath } from '../utils/storagePath.js';
 
 const DEFAULT_BACKUP_DIR = 'backups';
 
@@ -19,16 +20,7 @@ function setSetting(key: string, value: string): void {
 }
 
 function resolveBackupDir(rawDir: string): string {
-  const dir = rawDir.trim() || DEFAULT_BACKUP_DIR;
-  if (/^file:\/\//i.test(dir)) {
-    try {
-      return path.resolve(decodeURIComponent(new URL(dir).pathname));
-    } catch {
-      return path.resolve(path.dirname(getDatabasePath()), DEFAULT_BACKUP_DIR);
-    }
-  }
-  if (path.isAbsolute(dir)) return dir;
-  return path.resolve(path.dirname(getDatabasePath()), dir);
+  return resolveStoragePath(rawDir, DEFAULT_BACKUP_DIR);
 }
 
 function getBackupOutputDir(): string {

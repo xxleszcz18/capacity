@@ -14,6 +14,7 @@ import SortableTh from '../components/SortableTh';
 import { useTableSort, sortRows } from '../utils/tableSort';
 import { parseYearValuePaste } from '../utils/parseYearValueTable';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat';
+import { normalizeClientName } from '../utils/clientName';
 import { isDesignationDuplicateError } from '../utils/designationDuplicate';
 import {
   partHasPositiveVolumeInSopEopRange,
@@ -814,7 +815,7 @@ function ProjectDescTab({
   const [eopExtension, setEopExtension] = useState('');
   const [saving, setSaving] = useState(false);
   const [showCheckVolumes, setShowCheckVolumes] = useState(false);
-  const [editClient, setEditClient] = useState(project.client ?? '');
+  const [editClient, setEditClient] = useState(normalizeClientName(project.client ?? ''));
   const [editName, setEditName] = useState(project.name ?? '');
   const [editSop, setEditSop] = useState(formatSopEop(project.sop));
   const [editEop, setEditEop] = useState(formatSopEop(project.eop));
@@ -823,14 +824,14 @@ function ProjectDescTab({
   const [projectActivateSaving, setProjectActivateSaving] = useState(false);
 
   useEffect(() => {
-    setEditClient(project.client ?? '');
+    setEditClient(normalizeClientName(project.client ?? ''));
     setEditName(project.name ?? '');
     setEditSop(formatSopEop(project.sop));
     setEditEop(formatSopEop(project.eop));
   }, [project.id, project.client, project.name, project.sop, project.eop]);
 
   const saveDescription = () => {
-    const client = editClient.trim();
+    const client = normalizeClientName(editClient);
     const name = editName.trim();
     if (!client || !name) return;
     setSavingDesc(true);
@@ -895,7 +896,7 @@ function ProjectDescTab({
           <>
             <p style={{ marginBottom: 6 }}>
               <strong>{t('projectDetailExtra.clientLabel')}</strong>{' '}
-              <input type="text" value={editClient} onChange={(e) => setEditClient(e.target.value)} style={{ padding: '0.35rem', width: 280, maxWidth: '100%' }} placeholder={t('projectDetailExtra.clientPlaceholder')} />
+              <input type="text" value={editClient} onChange={(e) => setEditClient(e.target.value.toUpperCase())} style={{ padding: '0.35rem', width: 280, maxWidth: '100%' }} placeholder={t('projectDetailExtra.clientPlaceholder')} />
             </p>
             <p style={{ marginBottom: 6 }}>
               <strong>{t('projectDetailExtra.projectNameLabel')}</strong>{' '}

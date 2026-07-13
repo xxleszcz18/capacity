@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { db, saveDb } from '../db/connection.js';
-import { resolveBackupDirectory } from './backupService.js';
+import { resolveStoragePath } from '../utils/storagePath.js';
 
 export const ATTACHMENTS_STORAGE_NOT_CONFIGURED = 'ATTACHMENTS_STORAGE_NOT_CONFIGURED';
 const SETTING_KEY = 'project_attachments_output_dir';
@@ -36,7 +36,7 @@ export function resolveAttachmentsDirectory(rawDir?: string): string {
     const err = new Error(ATTACHMENTS_STORAGE_NOT_CONFIGURED);
     throw err;
   }
-  return resolveBackupDirectory(raw);
+  return resolveStoragePath(raw, 'attachments');
 }
 
 function sanitizeFilename(name: string): string {

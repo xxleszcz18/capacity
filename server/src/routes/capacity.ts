@@ -23,6 +23,7 @@ import {
   parseMachineStatusList,
   sqlInClause,
 } from '../utils/queryListParams.js';
+import { normalizeClientName, parseClientFilterQuery } from '../utils/clientName.js';
 
 export const capacityRouter = Router();
 
@@ -56,7 +57,7 @@ function resolveCalculatorContext(req: import('express').Request) {
   const yearFrom = Number(req.query.yearFrom ?? 2026);
   const yearTo = Number(req.query.yearTo ?? 2036);
   const types = parseCsvQueryParamSingleOrMulti(req.query.type, req.query.types);
-  const clients = parseCsvQueryParamSingleOrMulti(req.query.client, req.query.clients);
+  const clients = parseClientFilterQuery(req.query.client, req.query.clients);
   const machinesParam = req.query.machines as string | undefined;
   const scenarioId = req.query.scenarioId != null ? Number(req.query.scenarioId) : undefined;
   const statusList = parseCalculatorMachineStatusFilters(req.query.machineStatus, req.query.machineStatuses);
@@ -98,7 +99,10 @@ function resolveCalculatorContext(req: import('express').Request) {
         if (st === 'RFQ') return scenarioIncludeRfq;
         return st === 'active';
       });
-      const selectedProjects = byClient ? activeProjects.filter((p: any) => clients.includes(String(p.client ?? ''))) : activeProjects;
+      const clientSet = new Set(clients);
+      const selectedProjects = byClient
+        ? activeProjects.filter((p: any) => clientSet.has(normalizeClientName(p.client)))
+        : activeProjects;
       const projectIds = new Set(selectedProjects.map((p: any) => p.id));
       operationsOverride = hydrated.filter((o: any) => projectIds.has(o.project_id));
       if (byClient) {

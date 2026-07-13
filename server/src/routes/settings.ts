@@ -594,6 +594,25 @@ type VisualSettings = {
   period_month_frame_color: string;
   period_week_header_color: string;
   period_week_frame_color: string;
+  workspace_capacity_page_bg: string;
+  workspace_capacity_main_bg: string;
+  workspace_capacity_header_bg: string;
+  workspace_capacity_accent: string;
+  workspace_capacity_banner_bg: string;
+  workspace_scenarios_page_bg: string;
+  workspace_scenarios_main_bg: string;
+  workspace_scenarios_header_bg: string;
+  workspace_scenarios_accent: string;
+  workspace_scenarios_banner_bg: string;
+  workspace_calloffs_page_bg: string;
+  workspace_calloffs_main_bg: string;
+  workspace_calloffs_header_bg: string;
+  workspace_calloffs_accent: string;
+  workspace_calloffs_banner_bg: string;
+  workspace_calloffs_import_bg: string;
+  workspace_calloffs_import_border: string;
+  workspace_calloffs_import_accent: string;
+  workspace_calloffs_import_table_header_bg: string;
 };
 
 function calendarYearNow(): number {
@@ -663,6 +682,25 @@ const visualDefaults: VisualSettings = {
   period_month_frame_color: '#3b82f6',
   period_week_header_color: '#e0e7ff',
   period_week_frame_color: '#6366f1',
+  workspace_capacity_page_bg: '#f7f8fa',
+  workspace_capacity_main_bg: '#f7f8fa',
+  workspace_capacity_header_bg: '#ffffff',
+  workspace_capacity_accent: '#A4C400',
+  workspace_capacity_banner_bg: '#A4C400',
+  workspace_scenarios_page_bg: '#e4ecf7',
+  workspace_scenarios_main_bg: '#e8f0fa',
+  workspace_scenarios_header_bg: '#d8e4f5',
+  workspace_scenarios_accent: '#1565c0',
+  workspace_scenarios_banner_bg: '#1565c0',
+  workspace_calloffs_page_bg: '#FFFDDA',
+  workspace_calloffs_main_bg: '#FFF8E3',
+  workspace_calloffs_header_bg: '#F0E8B8',
+  workspace_calloffs_accent: '#7A6510',
+  workspace_calloffs_banner_bg: '#A68920',
+  workspace_calloffs_import_bg: '#FFFDDA',
+  workspace_calloffs_import_border: '#D4C88A',
+  workspace_calloffs_import_accent: '#7A6510',
+  workspace_calloffs_import_table_header_bg: '#F0E8B8',
 };
 
 function toBool(v: unknown, fallback: boolean): boolean {
@@ -753,6 +791,25 @@ function loadVisualSettings(): VisualSettings {
     'visual_period_month_frame_color',
     'visual_period_week_header_color',
     'visual_period_week_frame_color',
+    'visual_workspace_capacity_page_bg',
+    'visual_workspace_capacity_main_bg',
+    'visual_workspace_capacity_header_bg',
+    'visual_workspace_capacity_accent',
+    'visual_workspace_capacity_banner_bg',
+    'visual_workspace_scenarios_page_bg',
+    'visual_workspace_scenarios_main_bg',
+    'visual_workspace_scenarios_header_bg',
+    'visual_workspace_scenarios_accent',
+    'visual_workspace_scenarios_banner_bg',
+    'visual_workspace_calloffs_page_bg',
+    'visual_workspace_calloffs_main_bg',
+    'visual_workspace_calloffs_header_bg',
+    'visual_workspace_calloffs_accent',
+    'visual_workspace_calloffs_banner_bg',
+    'visual_workspace_calloffs_import_bg',
+    'visual_workspace_calloffs_import_border',
+    'visual_workspace_calloffs_import_accent',
+    'visual_workspace_calloffs_import_table_header_bg',
   ];
   const rows = db.prepare(
     `SELECT key, value FROM admin_settings WHERE key IN (${keys.map(() => '?').join(',')})`
@@ -820,6 +877,34 @@ function loadVisualSettings(): VisualSettings {
     period_month_frame_color: toColor(map.get('visual_period_month_frame_color'), visualDefaults.period_month_frame_color),
     period_week_header_color: toColor(map.get('visual_period_week_header_color'), visualDefaults.period_week_header_color),
     period_week_frame_color: toColor(map.get('visual_period_week_frame_color'), visualDefaults.period_week_frame_color),
+    workspace_capacity_page_bg: toColor(map.get('visual_workspace_capacity_page_bg'), visualDefaults.workspace_capacity_page_bg),
+    workspace_capacity_main_bg: toColor(map.get('visual_workspace_capacity_main_bg'), visualDefaults.workspace_capacity_main_bg),
+    workspace_capacity_header_bg: toColor(map.get('visual_workspace_capacity_header_bg'), visualDefaults.workspace_capacity_header_bg),
+    workspace_capacity_accent: toColor(map.get('visual_workspace_capacity_accent'), visualDefaults.workspace_capacity_accent),
+    workspace_capacity_banner_bg: toColor(map.get('visual_workspace_capacity_banner_bg'), visualDefaults.workspace_capacity_banner_bg),
+    workspace_scenarios_page_bg: toColor(map.get('visual_workspace_scenarios_page_bg'), visualDefaults.workspace_scenarios_page_bg),
+    workspace_scenarios_main_bg: toColor(map.get('visual_workspace_scenarios_main_bg'), visualDefaults.workspace_scenarios_main_bg),
+    workspace_scenarios_header_bg: toColor(map.get('visual_workspace_scenarios_header_bg'), visualDefaults.workspace_scenarios_header_bg),
+    workspace_scenarios_accent: toColor(map.get('visual_workspace_scenarios_accent'), visualDefaults.workspace_scenarios_accent),
+    workspace_scenarios_banner_bg: toColor(map.get('visual_workspace_scenarios_banner_bg'), visualDefaults.workspace_scenarios_banner_bg),
+    workspace_calloffs_page_bg: toColor(map.get('visual_workspace_calloffs_page_bg'), visualDefaults.workspace_calloffs_page_bg),
+    workspace_calloffs_main_bg: toColor(map.get('visual_workspace_calloffs_main_bg'), visualDefaults.workspace_calloffs_main_bg),
+    workspace_calloffs_header_bg: toColor(map.get('visual_workspace_calloffs_header_bg'), visualDefaults.workspace_calloffs_header_bg),
+    workspace_calloffs_accent: toColor(map.get('visual_workspace_calloffs_accent'), visualDefaults.workspace_calloffs_accent),
+    workspace_calloffs_banner_bg: toColor(map.get('visual_workspace_calloffs_banner_bg'), visualDefaults.workspace_calloffs_banner_bg),
+    workspace_calloffs_import_bg: toColor(map.get('visual_workspace_calloffs_import_bg'), visualDefaults.workspace_calloffs_import_bg),
+    workspace_calloffs_import_border: toColor(
+      map.get('visual_workspace_calloffs_import_border'),
+      visualDefaults.workspace_calloffs_import_border
+    ),
+    workspace_calloffs_import_accent: toColor(
+      map.get('visual_workspace_calloffs_import_accent'),
+      visualDefaults.workspace_calloffs_import_accent
+    ),
+    workspace_calloffs_import_table_header_bg: toColor(
+      map.get('visual_workspace_calloffs_import_table_header_bg'),
+      visualDefaults.workspace_calloffs_import_table_header_bg
+    ),
   };
 }
 
@@ -890,6 +975,88 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
       payload.data_viz_compare_palette !== undefined ? payload.data_viz_compare_palette : current.data_viz_compare_palette,
       visualDefaults.data_viz_compare_palette
     ),
+    workspace_capacity_page_bg: toColor(
+      payload.workspace_capacity_page_bg !== undefined ? payload.workspace_capacity_page_bg : current.workspace_capacity_page_bg,
+      visualDefaults.workspace_capacity_page_bg
+    ),
+    workspace_capacity_main_bg: toColor(
+      payload.workspace_capacity_main_bg !== undefined ? payload.workspace_capacity_main_bg : current.workspace_capacity_main_bg,
+      visualDefaults.workspace_capacity_main_bg
+    ),
+    workspace_capacity_header_bg: toColor(
+      payload.workspace_capacity_header_bg !== undefined ? payload.workspace_capacity_header_bg : current.workspace_capacity_header_bg,
+      visualDefaults.workspace_capacity_header_bg
+    ),
+    workspace_capacity_accent: toColor(
+      payload.workspace_capacity_accent !== undefined ? payload.workspace_capacity_accent : current.workspace_capacity_accent,
+      visualDefaults.workspace_capacity_accent
+    ),
+    workspace_capacity_banner_bg: toColor(
+      payload.workspace_capacity_banner_bg !== undefined ? payload.workspace_capacity_banner_bg : current.workspace_capacity_banner_bg,
+      visualDefaults.workspace_capacity_banner_bg
+    ),
+    workspace_scenarios_page_bg: toColor(
+      payload.workspace_scenarios_page_bg !== undefined ? payload.workspace_scenarios_page_bg : current.workspace_scenarios_page_bg,
+      visualDefaults.workspace_scenarios_page_bg
+    ),
+    workspace_scenarios_main_bg: toColor(
+      payload.workspace_scenarios_main_bg !== undefined ? payload.workspace_scenarios_main_bg : current.workspace_scenarios_main_bg,
+      visualDefaults.workspace_scenarios_main_bg
+    ),
+    workspace_scenarios_header_bg: toColor(
+      payload.workspace_scenarios_header_bg !== undefined ? payload.workspace_scenarios_header_bg : current.workspace_scenarios_header_bg,
+      visualDefaults.workspace_scenarios_header_bg
+    ),
+    workspace_scenarios_accent: toColor(
+      payload.workspace_scenarios_accent !== undefined ? payload.workspace_scenarios_accent : current.workspace_scenarios_accent,
+      visualDefaults.workspace_scenarios_accent
+    ),
+    workspace_scenarios_banner_bg: toColor(
+      payload.workspace_scenarios_banner_bg !== undefined ? payload.workspace_scenarios_banner_bg : current.workspace_scenarios_banner_bg,
+      visualDefaults.workspace_scenarios_banner_bg
+    ),
+    workspace_calloffs_page_bg: toColor(
+      payload.workspace_calloffs_page_bg !== undefined ? payload.workspace_calloffs_page_bg : current.workspace_calloffs_page_bg,
+      visualDefaults.workspace_calloffs_page_bg
+    ),
+    workspace_calloffs_main_bg: toColor(
+      payload.workspace_calloffs_main_bg !== undefined ? payload.workspace_calloffs_main_bg : current.workspace_calloffs_main_bg,
+      visualDefaults.workspace_calloffs_main_bg
+    ),
+    workspace_calloffs_header_bg: toColor(
+      payload.workspace_calloffs_header_bg !== undefined ? payload.workspace_calloffs_header_bg : current.workspace_calloffs_header_bg,
+      visualDefaults.workspace_calloffs_header_bg
+    ),
+    workspace_calloffs_accent: toColor(
+      payload.workspace_calloffs_accent !== undefined ? payload.workspace_calloffs_accent : current.workspace_calloffs_accent,
+      visualDefaults.workspace_calloffs_accent
+    ),
+    workspace_calloffs_banner_bg: toColor(
+      payload.workspace_calloffs_banner_bg !== undefined ? payload.workspace_calloffs_banner_bg : current.workspace_calloffs_banner_bg,
+      visualDefaults.workspace_calloffs_banner_bg
+    ),
+    workspace_calloffs_import_bg: toColor(
+      payload.workspace_calloffs_import_bg !== undefined ? payload.workspace_calloffs_import_bg : current.workspace_calloffs_import_bg,
+      visualDefaults.workspace_calloffs_import_bg
+    ),
+    workspace_calloffs_import_border: toColor(
+      payload.workspace_calloffs_import_border !== undefined
+        ? payload.workspace_calloffs_import_border
+        : current.workspace_calloffs_import_border,
+      visualDefaults.workspace_calloffs_import_border
+    ),
+    workspace_calloffs_import_accent: toColor(
+      payload.workspace_calloffs_import_accent !== undefined
+        ? payload.workspace_calloffs_import_accent
+        : current.workspace_calloffs_import_accent,
+      visualDefaults.workspace_calloffs_import_accent
+    ),
+    workspace_calloffs_import_table_header_bg: toColor(
+      payload.workspace_calloffs_import_table_header_bg !== undefined
+        ? payload.workspace_calloffs_import_table_header_bg
+        : current.workspace_calloffs_import_table_header_bg,
+      visualDefaults.workspace_calloffs_import_table_header_bg
+    ),
   };
   const mergedYears = normalizeDataVizYearRange(
     payload.data_viz_default_year_from !== undefined ? payload.data_viz_default_year_from : current.data_viz_default_year_from,
@@ -940,6 +1107,25 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     ['visual_data_viz_color_ref_line_overload', merged.data_viz_color_ref_line_overload],
     ['visual_data_viz_color_ref_line_free', merged.data_viz_color_ref_line_free],
     ['visual_data_viz_compare_palette', JSON.stringify(merged.data_viz_compare_palette)],
+    ['visual_workspace_capacity_page_bg', merged.workspace_capacity_page_bg],
+    ['visual_workspace_capacity_main_bg', merged.workspace_capacity_main_bg],
+    ['visual_workspace_capacity_header_bg', merged.workspace_capacity_header_bg],
+    ['visual_workspace_capacity_accent', merged.workspace_capacity_accent],
+    ['visual_workspace_capacity_banner_bg', merged.workspace_capacity_banner_bg],
+    ['visual_workspace_scenarios_page_bg', merged.workspace_scenarios_page_bg],
+    ['visual_workspace_scenarios_main_bg', merged.workspace_scenarios_main_bg],
+    ['visual_workspace_scenarios_header_bg', merged.workspace_scenarios_header_bg],
+    ['visual_workspace_scenarios_accent', merged.workspace_scenarios_accent],
+    ['visual_workspace_scenarios_banner_bg', merged.workspace_scenarios_banner_bg],
+    ['visual_workspace_calloffs_page_bg', merged.workspace_calloffs_page_bg],
+    ['visual_workspace_calloffs_main_bg', merged.workspace_calloffs_main_bg],
+    ['visual_workspace_calloffs_header_bg', merged.workspace_calloffs_header_bg],
+    ['visual_workspace_calloffs_accent', merged.workspace_calloffs_accent],
+    ['visual_workspace_calloffs_banner_bg', merged.workspace_calloffs_banner_bg],
+    ['visual_workspace_calloffs_import_bg', merged.workspace_calloffs_import_bg],
+    ['visual_workspace_calloffs_import_border', merged.workspace_calloffs_import_border],
+    ['visual_workspace_calloffs_import_accent', merged.workspace_calloffs_import_accent],
+    ['visual_workspace_calloffs_import_table_header_bg', merged.workspace_calloffs_import_table_header_bg],
   ];
   const upsert = db.prepare('INSERT INTO admin_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
   entries.forEach(([k, v]) => upsert.run(k, v));

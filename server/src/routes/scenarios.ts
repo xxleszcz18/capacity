@@ -5,6 +5,7 @@ import { db, saveDb } from '../db/connection.js';
 import { formatDetailSapAliasLabel } from '../utils/detailLabel.js';
 import { loadReferenceDisplayMode } from '../utils/referenceDisplayMode.js';
 import { parseCsvQueryParamSingleOrMulti, parseIdList } from '../utils/queryListParams.js';
+import { clientNamesMatch, normalizeClientName, parseClientFilterQuery } from '../utils/clientName.js';
 import {
   applyScenarioBundleSubsetToProduction,
   applyScenarioBundleToProduction,
@@ -442,7 +443,9 @@ scenariosRouter.get('/:id/history/filters', (req, res) => {
     client: String(p.client ?? ''),
     name: String(p.name ?? ''),
   }));
-  const clients = [...new Set(projects.map((p) => p.client).filter(Boolean))].sort();
+  const clients = [...new Set(projects.map((p) => normalizeClientName(p.client)).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'pl')
+  );
   const machines = db.prepare('SELECT id, sap_number, internal_number, type FROM machines ORDER BY sap_number, internal_number').all() as {
     id: number;
     sap_number: string | null;
@@ -486,7 +489,7 @@ scenariosRouter.get('/:id/history', (req, res) => {
   const projectIds = parseIdList(req.query.projectId, req.query.projectIds);
   const machineIds = parseIdList(req.query.machineId, req.query.machineIds);
   const partIds = parseIdList(req.query.partId, req.query.partIds);
-  const clients = parseCsvQueryParamSingleOrMulti(req.query.client, req.query.clients);
+  const clients = parseClientFilterQuery(req.query.client, req.query.clients);
   const authors = parseCsvQueryParamSingleOrMulti(req.query.author, req.query.authors);
   const text = String(req.query.text ?? '').trim();
 
@@ -513,13 +516,13 @@ scenariosRouter.get('/:id/history', (req, res) => {
   if (clients.length === 1) {
     rows = rows.filter((r) => {
       const p = projectsById.get(Number(r.project_id));
-      return p && String((p as any).client ?? '') === clients[0];
+      return p && clientNamesMatch((p as any).client, clients[0]);
     });
   } else if (clients.length > 1) {
     const set = new Set(clients);
     rows = rows.filter((r) => {
       const p = projectsById.get(Number(r.project_id));
-      return p && set.has(String((p as any).client ?? ''));
+      return p && set.has(normalizeClientName((p as any).client));
     });
   }
   if (authors.length === 1) {

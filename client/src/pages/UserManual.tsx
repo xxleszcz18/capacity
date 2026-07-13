@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ManualDiagram, type ManualDiagramId } from '../components/manual/ManualDiagrams';
 import { useI18n } from '../context/I18nContext';
+import { scenarioNavQuery, useScenarioMode } from '../context/ScenarioModeContext';
 
 type SectionDef = {
   id: string;
@@ -163,11 +164,14 @@ function ManualSection({
 
 export default function UserManual() {
   const { t } = useI18n();
+  const { activeScenarioId, appSection } = useScenarioMode();
+  const adminBackTo =
+    appSection === 'scenarios' ? `/administracja${scenarioNavQuery(activeScenarioId)}` : '/administracja';
 
   return (
     <div style={{ maxWidth: 920 }}>
       <div style={{ marginBottom: '1rem' }}>
-        <Link to="/administracja" style={{ color: 'var(--cap-green)' }}>
+        <Link to={adminBackTo} style={{ color: 'var(--cap-green)' }}>
           {t('manual.backAdmin')}
         </Link>
       </div>

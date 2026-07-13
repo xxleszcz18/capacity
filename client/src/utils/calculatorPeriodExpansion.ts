@@ -1,8 +1,28 @@
 export type PeriodMonthData = {
   load_percent: number;
-  weeks: Record<number, { load_percent: number }>;
+  call_off_load_percent?: number;
+  weeks: Record<
+    number,
+    {
+      load_percent: number;
+      call_off_load_percent?: number;
+      detail_breakdown?: DetailBreakdownEntry[];
+      call_off_detail_breakdown?: DetailBreakdownEntry[];
+    }
+  >;
   has_sop?: boolean;
   has_eop?: boolean;
+  detail_breakdown?: DetailBreakdownEntry[];
+  call_off_detail_breakdown?: DetailBreakdownEntry[];
+};
+
+export type DetailBreakdownEntry = {
+  project_label?: string;
+  detail_label: string;
+  contribution_percent: number;
+  share_percent?: number;
+  volume_quantity?: number;
+  has_rfq?: boolean;
 };
 
 export type PeriodBreakdownMachine = {
@@ -99,6 +119,17 @@ export function getTimelineColumnLoad(
   return monthsData[col.month]?.weeks[col.week]?.load_percent ?? 0;
 }
 
+export function getTimelineColumnCallOffLoad(
+  col: TimelineColumn,
+  yearlyCallOffLoad: number | undefined,
+  monthsData: Record<number, PeriodMonthData> | undefined
+): number {
+  if (col.kind === 'year') return yearlyCallOffLoad ?? 0;
+  if (!monthsData) return 0;
+  if (col.kind === 'month') return monthsData[col.month]?.call_off_load_percent ?? 0;
+  return monthsData[col.month]?.weeks[col.week]?.call_off_load_percent ?? 0;
+}
+
 export function getVerticalCellLoad(
   _year: number,
   row: VerticalExpansionRow,
@@ -107,6 +138,16 @@ export function getVerticalCellLoad(
   if (!monthsData) return 0;
   if (row.kind === 'month') return monthsData[row.month]?.load_percent ?? 0;
   return monthsData[row.month]?.weeks[row.week]?.load_percent ?? 0;
+}
+
+export function getVerticalCellCallOffLoad(
+  _year: number,
+  row: VerticalExpansionRow,
+  monthsData: Record<number, PeriodMonthData> | undefined
+): number {
+  if (!monthsData) return 0;
+  if (row.kind === 'month') return monthsData[row.month]?.call_off_load_percent ?? 0;
+  return monthsData[row.month]?.weeks[row.week]?.call_off_load_percent ?? 0;
 }
 
 export function getYearMarkers(

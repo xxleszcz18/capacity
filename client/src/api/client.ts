@@ -170,6 +170,11 @@ export const api = {
         last_backup_file: string;
         volumes_autosave_enabled: boolean;
         ocu_enabled: boolean;
+        pick_location_available?: boolean;
+        is_docker?: boolean;
+        storage_base_dir?: string;
+        suggested_backup_dir?: string;
+        suggested_attachments_dir?: string;
       }>('/admin/backup-settings'),
     setBackupSettings: (body: {
       backup_enabled?: boolean;
@@ -190,6 +195,9 @@ export const api = {
         last_backup_file: string;
         volumes_autosave_enabled: boolean;
         ocu_enabled: boolean;
+        pick_location_available?: boolean;
+        is_docker?: boolean;
+        storage_base_dir?: string;
       }>('/admin/backup-settings', { method: 'PUT', body: JSON.stringify(body) }),
     backupNow: () => request<{ ok: boolean; file_path: string; created_at: string }>('/admin/backup-now', { method: 'POST' }),
     pickBackupDirectory: () => request<{ chosen: boolean; path: string }>('/admin/pick-backup-directory', { method: 'POST' }),
@@ -213,10 +221,21 @@ export const api = {
       throw new Error('Przekroczono czas oczekiwania na wybór lokalizacji.');
     },
     previewStoragePath: (path: string, kind: 'attachments' | 'backup' = 'attachments') =>
-      request<{ absolute_path: string }>('/admin/preview-storage-path', {
-        method: 'POST',
-        body: JSON.stringify({ path, kind }),
-      }),
+      request<{ absolute_path: string; exists?: boolean; writable?: boolean; setting_value?: string }>(
+        '/admin/preview-storage-path',
+        {
+          method: 'POST',
+          body: JSON.stringify({ path, kind }),
+        }
+      ),
+    browseStorage: (body: { path?: string; kind: 'backup' | 'attachments' }) =>
+      request<{
+        current_path: string;
+        setting_value: string;
+        parent_path: string | null;
+        parent_setting_value: string | null;
+        entries: { name: string; path: string; setting_value: string }[];
+      }>('/admin/storage/browse', { method: 'POST', body: JSON.stringify(body) }),
     listBackupFiles: () => request<{ name: string; path: string; modified_at: string; size_bytes: number }[]>('/admin/backup-files'),
     pickBackupFile: () => request<{ chosen: boolean; path: string }>('/admin/pick-backup-file', { method: 'POST' }),
     restoreFromBackup: (body: { backup_file_path: string }) =>
@@ -1280,5 +1299,176 @@ export const api = {
     delete: (id: number) => request<void>(`/scenarios/${id}`, { method: 'DELETE' }),
     archive: (id: number) => request<{ ok: boolean }>(`/scenarios/${id}/archive`, { method: 'POST' }),
     unarchive: (id: number) => request<{ ok: boolean }>(`/scenarios/${id}/unarchive`, { method: 'POST' }),
+  },
+  callOffs: {
+    list: (params?: { archived?: boolean }) =>
+      request<
+        {
+          id: number;
+          name: string;
+          date_from: string;
+          date_to: string;
+          source_filename: string | null;
+          created_at: string;
+          updated_at: string;
+          archived_at?: string | null;
+          volume_row_count?: number;
+        }[]
+      >(`/call-offs${params?.archived ? '?archived=1' : ''}`),
+    get: (id: number) =>
+      request<{
+        id: number;
+        name: string;
+        date_from: string;
+        date_to: string;
+        source_filename: string | null;
+        source_stored_filename?: string | null;
+        created_at: string;
+        updated_at: string;
+        archived_at?: string | null;
+        volume_row_count?: number;
+        source_file_available?: boolean;
+        unmatched_report_available?: boolean;
+        last_import?: {
+          imported: number;
+          skippedOutOfRange: number;
+          skippedInvalid: number;
+          unmatchedSap: number;
+          matchedExact: number;
+          matchedTruncated: number;
+          unmatchedReport: { sap_ref: string; row_count: number; total_quantity: number }[];
+        } | null;
+        stats?: {
+          row_count: number;
+          sap_count: number;
+          part_count: number;
+          min_date: string | null;
+          max_date: string | null;
+        };
+      }>(`/call-offs/${id}`),
+    create: (body: { name: string; date_from: string; date_to: string }) =>
+      request<{ id: number; name: string; date_from: string; date_to: string }>('/call-offs', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    delete: (id: number) => request<void>(`/call-offs/${id}`, { method: 'DELETE' }),
+    archive: (id: number) => request<{ ok: boolean }>(`/call-offs/${id}/archive`, { method: 'POST' }),
+    unarchive: (id: number) => request<{ ok: boolean }>(`/call-offs/${id}/unarchive`, { method: 'POST' }),
+    downloadSourceFile: async (id: number, filename: string) => {
+      let res: Response;
+      try {
+        res = await fetch(`${BASE}/call-offs/${id}/source-file`, { credentials: 'include', cache: 'no-store' });
+      } catch (e) {
+        throw mapFetchFailure(e);
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'SalesFcst.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    downloadUnmatchedReport: async (id: number, filename: string) => {
+      let res: Response;
+      try {
+        res = await fetch(`${BASE}/call-offs/${id}/unmatched-report`, { credentials: 'include', cache: 'no-store' });
+      } catch (e) {
+        throw mapFetchFailure(e);
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    importSalesFcst: async (
+      id: number,
+      file: File
+    ): Promise<{
+      imported: number;
+      skippedOutOfRange: number;
+      skippedInvalid: number;
+      unmatchedSap: number;
+      matchedExact: number;
+      matchedTruncated: number;
+      unmatchedReport: { sap_ref: string; row_count: number; total_quantity: number }[];
+    }> => {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${BASE}/call-offs/${id}/import-sales-fcst`, {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText);
+      return data;
+    },
+    calculator: (id: number, params?: Record<string, string | number | boolean | undefined | null>) =>
+      request<{
+        comparisonId: number;
+        yearFrom: number;
+        yearTo: number;
+        date_from: string;
+        date_to: string;
+        machines: {
+          machine_id: number;
+          internal_number: string | number;
+          sap_number: string | null;
+          type: string;
+          machine_status?: string | null;
+          location?: string | null;
+          years: Record<
+            number,
+            {
+              load_percent: number;
+              call_off_load_percent: number;
+              alternative_border?: string;
+              has_rfq?: boolean;
+              detail_breakdown?: unknown[];
+            }
+          >;
+        }[];
+      }>(`/call-offs/${id}/calculator${toQuery(params ?? {})}`),
+    periodBreakdown: (
+      id: number,
+      params: { year: number; machineIds: string } & Record<string, string | number | boolean | undefined | null>
+    ) =>
+      request<{
+        year: number;
+        machines: {
+          machine_id: number;
+          has_sop?: boolean;
+          has_eop?: boolean;
+          months: Record<
+            number,
+            {
+              load_percent: number;
+              call_off_load_percent: number;
+              weeks: Record<number, { load_percent: number; call_off_load_percent: number }>;
+              has_sop?: boolean;
+              has_eop?: boolean;
+            }
+          >;
+        }[];
+      }>(`/call-offs/${id}/calculator/period-breakdown${toQuery(params)}`),
+    sopEopMarkers: (id: number, params?: Record<string, string | number | boolean | undefined | null>) =>
+      request<{
+        yearFrom: number;
+        yearTo: number;
+        machines: { machine_id: number; years: Record<number, unknown> }[];
+      }>(`/call-offs/${id}/calculator/sop-eop-markers${toQuery(params ?? {})}`),
   },
 };

@@ -36,3 +36,6 @@ server/node_modules/
 
 # Załączniki projektów (lokalne pliki użytkownika)
 załączniki/
+
+# Importy Call offs (pliki SAP i raporty CSV — tylko lokalnie / na serwerze)
+server/call-offs/

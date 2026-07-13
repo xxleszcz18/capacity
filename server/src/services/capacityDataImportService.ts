@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { db, saveDb } from '../db/connection.js';
+import { normalizeClientName } from '../utils/clientName.js';
 import { formatSapNumberForDisplay } from '../utils/detailLabel.js';
 import { excelExportCell } from '../utils/excelExportCell.js';
 import { parseInternalMachineNumber } from '../utils/internalMachineNumber.js';
@@ -245,6 +246,10 @@ function warnCalculatorVolumeContext(
   }
 }
 
+function clientFromImportRow(row: Record<string, unknown>): string {
+  return normalizeClientName(cellStr(row.klient ?? row.client));
+}
+
 function projectKey(client: string, name: string): string {
   return `${client.trim().toLowerCase()}\x00${name.trim().toLowerCase()}`;
 }
@@ -269,7 +274,7 @@ function resolveProjectIdForOperationImport(
   warnings: string[],
   rowTag: string
 ): number | null {
-  const client = cellStr(row.klient ?? row.client);
+  const client = clientFromImportRow(row);
   const name = cellStr(row.nazwa_projektu ?? row.name);
   if (!name) {
     warnings.push(`${rowTag}: brak nazwa_projektu.`);
@@ -307,7 +312,7 @@ function operationRowReadyForImport(row: Record<string, unknown>, projectByKey: 
   const cycleRaw = cellNum(row.czas_cykl_s ?? row.cycle_time_seconds ?? row.cykl_s);
   if (!name || !phaseNorm || internal == null) return false;
   if (cycleRaw == null || cycleRaw <= 0) return false;
-  const client = cellStr(row.klient ?? row.client);
+  const client = clientFromImportRow(row);
   if (client) return projectByKey.has(projectKey(client, name));
   return projectIdsByNameOnly(name, projectByKey).length === 1;
 }
@@ -1082,7 +1087,7 @@ export function importCapacityDataFromBuffer(
     const projectRows = sheetRows(wb, SHEET_PROJECTS);
     for (let i = 0; i < projectRows.length; i++) {
       const row = projectRows[i];
-      const client = cellStr(row.klient ?? row.client);
+      const client = clientFromImportRow(row);
       const name = cellStr(row.nazwa_projektu ?? row.name);
       if (!client || !name) continue;
       const sop = formatSopEop(row.sop ?? '1.2025');
@@ -1130,7 +1135,7 @@ export function importCapacityDataFromBuffer(
     const linkRows = sheetRows(wb, SHEET_LINKS);
     for (let i = 0; i < linkRows.length; i++) {
       const row = linkRows[i];
-      const client = cellStr(row.klient ?? row.client);
+      const client = clientFromImportRow(row);
       const name = cellStr(row.nazwa_projektu ?? row.name);
       const sap = normalizeSap(row.nr_sap_detalu ?? row.nr_sap);
       if (!client || !name || !sap) continue;
@@ -1161,7 +1166,7 @@ export function importCapacityDataFromBuffer(
     const volumeRows = sheetRows(wb, SHEET_VOLUMES);
     for (let i = 0; i < volumeRows.length; i++) {
       const row = volumeRows[i];
-      const client = cellStr(row.klient ?? row.client);
+      const client = clientFromImportRow(row);
       const name = cellStr(row.nazwa_projektu ?? row.name);
       const sap = normalizeSap(row.nr_sap_detalu ?? row.nr_sap);
       const year = cellNum(row.rok ?? row.year);
@@ -1220,7 +1225,7 @@ export function importCapacityDataFromBuffer(
         const rowTag = `Operacje wiersz ${i + 2}`;
         if (!operationRowReadyForImport(row, projectByKey)) {
           const hasAny =
-            cellStr(row.klient ?? row.client) ||
+            clientFromImportRow(row) ||
             cellStr(row.nazwa_projektu ?? row.name) ||
             cellInternalMachineNumber(row.numer_maszyny ?? row.internal_number) != null ||
             phaseNormFromOperationRow(row) != null ||

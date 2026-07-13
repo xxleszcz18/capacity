@@ -6,6 +6,12 @@ import { db, getDatabasePath, restoreDbFromBackupFile, saveDb } from '../db/conn
 import { performDatabaseBackup, resolveBackupDirectory } from '../services/backupService.js';
 import { resolveAttachmentsDirectory } from '../services/projectAttachmentService.js';
 import { getPickLocationJob, startPickLocationJob } from '../services/pickLocationJobService.js';
+import {
+  browseStorageDirectory,
+  checkStoragePath,
+  getStorageInfo,
+  isPickLocationAvailable,
+} from '../utils/storagePath.js';
 import { isOcuEnabled } from '../utils/ocuSettings.js';
 import {
   buildCapacityBundleTemplateBuffer,
@@ -175,7 +181,12 @@ adminRouter.get('/backup-settings', (_req, res) => {
       absoluteAttachmentsOutputDir = '';
     }
   }
-  res.json({ ...cfg, absolute_output_dir: absoluteOutputDir, absolute_attachments_output_dir: absoluteAttachmentsOutputDir });
+  res.json({
+    ...cfg,
+    absolute_output_dir: absoluteOutputDir,
+    absolute_attachments_output_dir: absoluteAttachmentsOutputDir,
+    ...getStorageInfo(),
+  });
 });
 
 adminRouter.put('/backup-settings', (req, res) => {
@@ -189,6 +200,12 @@ adminRouter.put('/backup-settings', (req, res) => {
   }
   if (attachmentsOutputDir && /^https?:\/\//i.test(attachmentsOutputDir)) {
     return res.status(400).json({ error: 'Lokalizacja załączników musi być ścieżką folderu (lokalną, UNC lub file://), nie adresem http/https.' });
+  }
+  try {
+    checkStoragePath(outputDir, DEFAULT_BACKUP_DIR);
+    if (attachmentsOutputDir) checkStoragePath(attachmentsOutputDir, 'attachments');
+  } catch (e: any) {
+    return res.status(400).json({ error: e?.message || 'Nieprawidłowa ścieżka magazynu.' });
   }
   setSetting('backup_enabled', enabled ? '1' : '0');
   setSetting('backup_frequency_days', String(Math.round(freqDays)));
@@ -220,12 +237,16 @@ adminRouter.put('/backup-settings', (req, res) => {
     ...cfg,
     absolute_output_dir: resolveBackupDir(cfg.backup_output_dir),
     absolute_attachments_output_dir: absoluteAttachmentsOutputDir,
+    ...getStorageInfo(),
   });
 });
 
 adminRouter.post('/pick-location/start', (req, res) => {
-  if (process.platform !== 'win32') {
-    return res.status(400).json({ error: 'Wybór lokalizacji przez okno systemowe jest dostępny tylko na Windows.' });
+  if (!isPickLocationAvailable()) {
+    return res.status(400).json({
+      error:
+        'Wybór lokalizacji przez okno systemowe jest dostępny tylko na serwerze Windows uruchomionym lokalnie. W Dockerze wpisz ścieżkę ręcznie lub użyj „Przeglądaj na serwerze”.',
+    });
   }
   const body = req.body as { target?: string; initial_dir?: string };
   const target = body.target;
@@ -248,16 +269,16 @@ adminRouter.get('/pick-location/result/:jobId', (req, res) => {
 });
 
 adminRouter.post('/pick-backup-directory', (_req, res) => {
-  if (process.platform !== 'win32') {
-    return res.status(400).json({ error: 'Wybór lokalizacji przez okno systemowe jest dostępny tylko na Windows.' });
+  if (!isPickLocationAvailable()) {
+    return res.status(400).json({ error: 'Użyj wpisania ścieżki ręcznie lub przeglądarki katalogów serwera.' });
   }
   const jobId = startPickLocationJob('backup');
   return res.json({ job_id: jobId, legacy: true });
 });
 
 adminRouter.post('/pick-attachments-directory', (_req, res) => {
-  if (process.platform !== 'win32') {
-    return res.status(400).json({ error: 'Wybór lokalizacji przez okno systemowe jest dostępny tylko na Windows.' });
+  if (!isPickLocationAvailable()) {
+    return res.status(400).json({ error: 'Użyj wpisania ścieżki ręcznie lub przeglądarki katalogów serwera.' });
   }
   const jobId = startPickLocationJob('attachments');
   return res.json({ job_id: jobId, legacy: true });
@@ -266,12 +287,30 @@ adminRouter.post('/pick-attachments-directory', (_req, res) => {
 adminRouter.post('/preview-storage-path', (req, res) => {
   const raw = String((req.body as { path?: string })?.path ?? '').trim();
   const kind = String((req.body as { kind?: string })?.kind ?? 'attachments');
-  if (!raw) return res.json({ absolute_path: '' });
+  if (!raw) return res.json({ absolute_path: '', exists: false, writable: false, setting_value: '' });
   try {
-    const absolute_path = kind === 'backup' ? resolveBackupDir(raw) : resolveAttachmentsDirectory(raw);
-    return res.json({ absolute_path });
+    const defaultRelative = kind === 'backup' ? DEFAULT_BACKUP_DIR : 'attachments';
+    const check = checkStoragePath(raw, defaultRelative);
+    return res.json({
+      absolute_path: check.absolute_path,
+      exists: check.exists,
+      writable: check.writable,
+      setting_value: check.setting_value,
+    });
   } catch (e: any) {
     return res.status(400).json({ error: e?.message || 'Nieprawidłowa ścieżka.' });
+  }
+});
+
+adminRouter.post('/storage/browse', (req, res) => {
+  const body = req.body as { path?: string; kind?: string };
+  const kind = body.kind === 'backup' ? 'backup' : 'attachments';
+  const defaultRelative = kind === 'backup' ? DEFAULT_BACKUP_DIR : 'attachments';
+  try {
+    const result = browseStorageDirectory(body.path, defaultRelative);
+    return res.json(result);
+  } catch (e: any) {
+    return res.status(400).json({ error: e?.message || 'Nie udało się odczytać katalogu.' });
   }
 });
 
@@ -307,8 +346,8 @@ adminRouter.get('/backup-files', (_req, res) => {
 });
 
 adminRouter.post('/pick-backup-file', (_req, res) => {
-  if (process.platform !== 'win32') {
-    return res.status(400).json({ error: 'Wybór pliku przez okno systemowe jest dostępny tylko na Windows.' });
+  if (!isPickLocationAvailable()) {
+    return res.status(400).json({ error: 'Wybierz plik z listy backupów lub wpisz ścieżkę ręcznie.' });
   }
   const cfg = getBackupConfig();
   const dir = resolveBackupDir(cfg.backup_output_dir);

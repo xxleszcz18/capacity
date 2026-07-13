@@ -8,6 +8,8 @@ import MachineDetail from './pages/MachineDetail';
 import Projects from './pages/Projects';
 import ProjectDetail from './pages/ProjectDetail';
 import Scenarios from './pages/Scenarios';
+import CallOffs from './pages/CallOffs';
+import CallOffView from './pages/CallOffView';
 import ScenarioView from './pages/ScenarioView';
 import ScenarioEdit from './pages/ScenarioEdit';
 import Settings from './pages/Settings';
@@ -99,6 +101,22 @@ function AppShell() {
                     element={
                       <ProtectedRoute permission="change_history.view">
                         <ChangeHistory />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/call-offs"
+                    element={
+                      <ProtectedRoute permission="call_offs.view">
+                        <CallOffs />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/call-offs/:id"
+                    element={
+                      <ProtectedRoute permission="call_offs.view">
+                        <CallOffView />
                       </ProtectedRoute>
                     }
                   />

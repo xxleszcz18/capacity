@@ -31,11 +31,13 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      DOCKER: "1"
     volumes:
       # Baza SQLite (persystencja między restartami)
       - capacity-data:/data
-      # Backupy z ustawień administracyjnych (domyślny katalog „backups” w server/)
-      - capacity-backups:/app/server/backups
+      # Backupy i załączniki — pod /data (zgodne ze ścieżkami względnymi backups, attachments)
+      - capacity-backups:/data/backups
+      - capacity-attachments:/data/attachments
     restart: unless-stopped
     healthcheck:
       test:
@@ -53,3 +55,4 @@ services:
 volumes:
   capacity-data:
   capacity-backups:
+  capacity-attachments:

@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useI18n } from '../context/I18nContext';
 import { confirmDelete } from '../confirmDelete';
-import SearchableSelect from '../components/SearchableSelect';
 import SortableTh from '../components/SortableTh';
 import { useTableSort, sortRows } from '../utils/tableSort';
 
@@ -38,16 +37,8 @@ export default function Scenarios() {
   const { t } = useI18n();
   const [viewMode, setViewMode] = useState<'active' | 'archive'>('active');
   const [list, setList] = useState<ScenarioRow[]>([]);
-  const [activeForSourcePicker, setActiveForSourcePicker] = useState<ScenarioRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [addModal, setAddModal] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newScope, setNewScope] = useState('');
-  const [baseMode, setBaseMode] = useState<'live' | 'scenario'>('live');
-  const [sourceScenarioId, setSourceScenarioId] = useState<number | ''>('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
   const [filterNazwa, setFilterNazwa] = useState('');
   const [filterUtworzono, setFilterUtworzono] = useState('');
 
@@ -63,58 +54,6 @@ export default function Scenarios() {
   useEffect(() => {
     load();
   }, [viewMode]);
-
-  useEffect(() => {
-    api.scenarios
-      .list({ archived: false })
-      .then(setActiveForSourcePicker)
-      .catch(() => setActiveForSourcePicker([]));
-  }, []);
-
-  const openAdd = () => {
-    setAddModal(true);
-    setNewName('');
-    setNewScope('');
-    setBaseMode('live');
-    setSourceScenarioId('');
-    setError('');
-  };
-
-  const handleCreate = () => {
-    const name = newName.trim();
-    const scenario_scope = newScope.trim();
-    if (!name) {
-      setError('Podaj nazwę scenariusza');
-      return;
-    }
-    if (!scenario_scope) {
-      setError('Podaj zakres scenariusza (wymagane pole tekstowe).');
-      return;
-    }
-    if (baseMode === 'scenario') {
-      const sid = Number(sourceScenarioId);
-      if (!Number.isFinite(sid) || sid <= 0) {
-        setError('Wybierz scenariusz źródłowy');
-        return;
-      }
-    }
-    setError('');
-    setSaving(true);
-    api.scenarios
-      .create({
-        name,
-        scenario_scope,
-        sourceScenarioId: baseMode === 'scenario' && sourceScenarioId !== '' ? Number(sourceScenarioId) : null,
-      })
-      .then(() => {
-        setAddModal(false);
-        setNewName('');
-        load();
-        api.scenarios.list({ archived: false }).then(setActiveForSourcePicker).catch(() => {});
-      })
-      .catch((e) => setError(e.message || 'Błąd zapisu'))
-      .finally(() => setSaving(false));
-  };
 
   const handleDelete = (id: number, name: string) => {
     if (!confirmDelete(`Czy na pewno usunąć scenariusz „${name}”? Tej operacji nie można cofnąć.`)) return;
@@ -211,12 +150,6 @@ export default function Scenarios() {
             {t('scenarios.archive')}
           </button>
         </div>
-        <button
-          onClick={openAdd}
-          style={{ padding: '0.5rem 1rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}
-        >
-          {t('scenarios.new')}
-        </button>
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <thead>
@@ -313,68 +246,6 @@ export default function Scenarios() {
         </p>
       )}
 
-      {addModal && (
-        <div
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setAddModal(false);
-          }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-        >
-          <div onMouseDown={(e) => e.stopPropagation()} style={{ background: 'white', padding: '1.5rem', borderRadius: 8, minWidth: 400, maxWidth: '96vw' }}>
-            <h2 style={{ marginTop: 0 }}>{t('scenarios.new')}</h2>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>{t('scenarios.startingPoint')}</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <input type="radio" name="base" checked={baseMode === 'live'} onChange={() => setBaseMode('live')} />
-                {t('scenarios.sourceLiveDb')}
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input type="radio" name="base" checked={baseMode === 'scenario'} onChange={() => setBaseMode('scenario')} />
-                {t('scenarios.sourceFromScenario')}
-              </label>
-              {baseMode === 'scenario' && (
-                <div style={{ marginTop: 8, marginLeft: 24 }}>
-                  <SearchableSelect
-                    value={sourceScenarioId === '' ? '' : String(sourceScenarioId)}
-                    onChange={(e) => setSourceScenarioId(e.target.value === '' ? '' : Number(e.target.value))}
-                    style={{ width: '100%', maxWidth: 360, padding: 6 }}
-                  >
-                    <option value="">{t('scenarios.pickScenario')}</option>
-                    {activeForSourcePicker.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} (#{s.id})
-                      </option>
-                    ))}
-                  </SearchableSelect>
-                </div>
-              )}
-            </div>
-            <label style={{ display: 'block', marginBottom: 8 }}>
-              {t('scenarios.nameRequired')}{' '}
-              <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: '100%', padding: 6, marginTop: 4 }} placeholder={t('scenarios.namePlaceholder')} />
-            </label>
-            <label style={{ display: 'block', marginBottom: 12 }}>
-              {t('scenarios.scopeRequired')}{' '}
-              <textarea
-                value={newScope}
-                onChange={(e) => setNewScope(e.target.value)}
-                rows={4}
-                style={{ width: '100%', padding: 6, marginTop: 4, boxSizing: 'border-box' }}
-                placeholder={t('scenarios.scopePlaceholder')}
-              />
-            </label>
-            {error && <p style={{ color: 'var(--cap-red)', marginBottom: 8 }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleCreate} disabled={saving} style={{ padding: '0.5rem 1rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}>
-                {t('scenarios.createScenario')}
-              </button>
-              <button onClick={() => setAddModal(false)} style={{ padding: '0.5rem 1rem', background: '#9e9e9e', color: 'white', border: 'none', borderRadius: 4 }}>
-                {t('common.cancel')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

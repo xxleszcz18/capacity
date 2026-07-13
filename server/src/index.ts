@@ -17,6 +17,7 @@ import { projectsRouter } from './routes/projects.js';
 import { capacityRouter } from './routes/capacity.js';
 import { allocationRouter } from './routes/allocation.js';
 import { scenariosRouter } from './routes/scenarios.js';
+import { callOffsRouter } from './routes/callOffs.js';
 import { adminRouter, startAdminBackupScheduler } from './routes/admin.js';
 
 const app = express();
@@ -66,6 +67,7 @@ app.use('/api/projects', requireAuth, requirePermissionForResource('projects'), 
 app.use('/api/capacity', requireAuth, requirePermissionForResource('calculator'), capacityRouter);
 app.use('/api/allocation', requireAuth, requirePermissionForResource('projects'), allocationRouter);
 app.use('/api/scenarios', requireAuth, requirePermissionForResource('scenarios'), scenariosRouter);
+app.use('/api/call-offs', requireAuth, requirePermissionForResource('call_offs'), callOffsRouter);
 app.use('/api/admin', requireAuth, requireAdminAccess, adminRouter);
 
 function resolveClientDist(): string | null {
