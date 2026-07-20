@@ -27,7 +27,7 @@ export function pdfTrendHeaders(locale: Locale, opts: TrendTableBuildOptions): s
   return headers;
 }
 
-export function pdfAnalyticsHeaders(locale: Locale, hasScenario: boolean): string[] {
+export function pdfAnalyticsHeaders(locale: Locale, hasScenario: boolean, hasCallOff = false): string[] {
   const headers = [
     tr(locale, 'reports.trend.year'),
     tr(locale, 'reports.trend.production'),
@@ -37,6 +37,10 @@ export function pdfAnalyticsHeaders(locale: Locale, hasScenario: boolean): strin
   if (hasScenario) {
     headers.push(tr(locale, 'reports.trend.scenarioProd'));
     headers.push(tr(locale, 'reports.trend.deltaScenarioMinusProd'));
+  }
+  if (hasCallOff) {
+    headers.push(tr(locale, 'reports.trend.callOff'));
+    headers.push(tr(locale, 'reports.trend.deltaCallOffMinusProd'));
   }
   return headers;
 }

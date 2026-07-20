@@ -8,13 +8,15 @@ import {
 
   unarchiveCallOffComparison,
 
-  createCallOffComparison,
+  createCallOffComparisonWithImport,
 
   deleteCallOffComparison,
 
   getCallOffComparison,
 
   getCallOffVolumeStats,
+
+  getCallOffVolumeYears,
 
   ensureCallOffUnmatchedReportFile,
 
@@ -112,29 +114,41 @@ callOffsRouter.get('/', (req, res) => {
 
 
 
-callOffsRouter.post('/', (req, res) => {
+callOffsRouter.post('/', upload.single('file'), (req, res) => {
 
-  const body = req.body as { name?: string; date_from?: string; date_to?: string };
+  const name = String(req.body?.name ?? '').trim();
 
-  const name = String(body.name ?? '').trim();
+  const notesRaw = req.body?.notes;
 
-  const date_from = String(body.date_from ?? '').trim();
-
-  const date_to = String(body.date_to ?? '').trim();
+  const notes = notesRaw == null ? null : String(notesRaw).trim() || null;
 
   if (!name) return res.status(400).json({ error: 'Nazwa jest wymagana' });
 
-  if (!date_from || !date_to) return res.status(400).json({ error: 'Zakres dat jest wymagany' });
+  const f = req.file;
 
-  if (new Date(date_from) > new Date(date_to)) {
+  if (!f?.buffer?.length) return res.status(400).json({ error: 'Brak pliku SalesFcst (pole: file)' });
 
-    return res.status(400).json({ error: 'Data początkowa musi być przed datą końcową' });
+  try {
+
+    const { comparison, import: importResult } = createCallOffComparisonWithImport(
+
+      name,
+
+      notes,
+
+      f.buffer,
+
+      f.originalname ?? 'SalesFcst.xlsx'
+
+    );
+
+    res.status(201).json({ ...comparison, last_import: importResult });
+
+  } catch (e: any) {
+
+    res.status(400).json({ error: e?.message || 'Błąd tworzenia porównania' });
 
   }
-
-  const row = createCallOffComparison(name, date_from, date_to);
-
-  res.status(201).json(row);
 
 });
 
@@ -370,6 +384,8 @@ callOffsRouter.get('/:id(\\d+)/calculator', (req, res) => {
     date_from: cmp.date_from,
 
     date_to: cmp.date_to,
+
+    volumeYears: getCallOffVolumeYears(id),
 
     machines,
 

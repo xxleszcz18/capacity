@@ -20,6 +20,9 @@ export type AnalyticsTableDataContext = {
   contractMachines: CapacityMachineTrend[];
   scenProdMachines?: CapacityMachineTrend[];
   scenContractMachines?: CapacityMachineTrend[];
+  callOffMachines?: CapacityMachineTrend[];
+  /** Lata z wolumenem Call offs — poza nimi kolumna Call offs = null. */
+  callOffDataYears?: number[];
 };
 
 export type AnalyticsExcelLabels = {
@@ -49,12 +52,16 @@ export function machinesOnLine(line: string, machinesProd: CapacityMachineTrend[
 }
 
 export function analyticsRowForLine(year: number, line: string, ctx: AnalyticsTableDataContext): AnalyticsRow {
+  const callOffOk = !ctx.callOffDataYears?.length || ctx.callOffDataYears.includes(year);
   return buildAnalyticsRow(
     year,
     (y) => lineLoadPercent(ctx.machinesProd, line, y),
     (y) => lineLoadPercent(ctx.contractMachines, line, y),
     ctx.scenProdMachines ? (y) => lineLoadPercent(ctx.scenProdMachines!, line, y) : undefined,
-    ctx.scenContractMachines ? (y) => lineLoadPercent(ctx.scenContractMachines!, line, y) : undefined
+    ctx.scenContractMachines ? (y) => lineLoadPercent(ctx.scenContractMachines!, line, y) : undefined,
+    callOffOk && ctx.callOffMachines?.length
+      ? (y) => lineLoadPercent(ctx.callOffMachines!, line, y)
+      : undefined
   );
 }
 
@@ -62,16 +69,19 @@ export function analyticsRowForMachine(year: number, m: CapacityMachineTrend, ct
   const cm = ctx.contractMachines.find((x) => x.machine_id === m.machine_id);
   const sm = ctx.scenProdMachines?.find((x) => x.machine_id === m.machine_id);
   const scm = ctx.scenContractMachines?.find((x) => x.machine_id === m.machine_id);
+  const com = ctx.callOffMachines?.find((x) => x.machine_id === m.machine_id);
+  const callOffOk = !ctx.callOffDataYears?.length || ctx.callOffDataYears.includes(year);
   return buildAnalyticsRow(
     year,
     (y) => machineLoadPercent(m, y),
     (y) => (cm ? machineLoadPercent(cm, y) : null),
     sm ? (y) => machineLoadPercent(sm, y) : undefined,
-    scm ? (y) => machineLoadPercent(scm, y) : undefined
+    scm ? (y) => machineLoadPercent(scm, y) : undefined,
+    callOffOk && com ? (y) => machineLoadPercent(com, y) : undefined
   );
 }
 
-function analyticsRowToCells(row: AnalyticsRow, hasScenario: boolean): (string | number | null)[] {
+function analyticsRowToCells(row: AnalyticsRow, hasScenario: boolean, hasCallOff: boolean): (string | number | null)[] {
   const cells: (string | number | null)[] = [
     excelExportCell(row.production),
     excelExportCell(row.contract),
@@ -80,19 +90,23 @@ function analyticsRowToCells(row: AnalyticsRow, hasScenario: boolean): (string |
   if (hasScenario) {
     cells.push(excelExportCell(row.scenarioProduction), excelExportCell(row.deltaScenarioProdMinusProd));
   }
+  if (hasCallOff) {
+    cells.push(excelExportCell(row.callOff), excelExportCell(row.deltaCallOffMinusProd));
+  }
   return cells;
 }
 
 function analyticsExcelHeaders(
   locale: Locale,
   hasScenario: boolean,
+  hasCallOff: boolean,
   depth: AnalyticsExcelDepth,
   scope: AnalyticsTableDataContext['scope'],
   colLabels: AnalyticsExcelLabels
 ): string[] {
-  if (depth === 'year') return pdfAnalyticsHeaders(locale, hasScenario);
+  if (depth === 'year') return pdfAnalyticsHeaders(locale, hasScenario, hasCallOff);
 
-  const valueHeaders = pdfAnalyticsHeaders(locale, hasScenario).slice(1);
+  const valueHeaders = pdfAnalyticsHeaders(locale, hasScenario, hasCallOff).slice(1);
   const prefix: string[] = [colLabels.year];
   if (depth === 'line' || (depth === 'machine' && scope === 'plant')) prefix.push(colLabels.line);
   if (depth === 'machine') prefix.push(colLabels.machine);
@@ -108,19 +122,31 @@ export function buildAnalyticsExcelSection(input: {
   locale: Locale;
   yearRows: AnalyticsRow[];
   hasScenario: boolean;
+  hasCallOff?: boolean;
   detailLevel: BreakdownDetailLevel;
   context: AnalyticsTableDataContext;
   colLabels: AnalyticsExcelLabels;
 }): { headers: string[]; rows: (string | number | null)[][] } {
   const depth = analyticsExcelDepth(input.detailLevel, input.context.scope);
-  const headers = analyticsExcelHeaders(input.locale, input.hasScenario, depth, input.context.scope, input.colLabels);
+  const hasCallOff = Boolean(input.hasCallOff);
+  const headers = analyticsExcelHeaders(
+    input.locale,
+    input.hasScenario,
+    hasCallOff,
+    depth,
+    input.context.scope,
+    input.colLabels
+  );
   const out: (string | number | null)[][] = [];
   const ctx = input.context;
   const formatLine = input.colLabels.formatLine;
 
   for (const yearRow of input.yearRows) {
     const year = yearRow.year;
-    out.push([...hierarchyPrefix(depth, ctx.scope, year, '', ''), ...analyticsRowToCells(yearRow, input.hasScenario)]);
+    out.push([
+      ...hierarchyPrefix(depth, ctx.scope, year, '', ''),
+      ...analyticsRowToCells(yearRow, input.hasScenario, hasCallOff),
+    ]);
 
     if (depth === 'year') continue;
 
@@ -128,19 +154,25 @@ export function buildAnalyticsExcelSection(input: {
       const lineRow = analyticsRowForLine(year, line, ctx);
 
       if (depth === 'line' && ctx.scope === 'plant') {
-        out.push([...hierarchyPrefix(depth, ctx.scope, year, formatLine(line), ''), ...analyticsRowToCells(lineRow, input.hasScenario)]);
+        out.push([
+          ...hierarchyPrefix(depth, ctx.scope, year, formatLine(line), ''),
+          ...analyticsRowToCells(lineRow, input.hasScenario, hasCallOff),
+        ]);
         continue;
       }
 
       if (depth === 'machine') {
         if (ctx.scope === 'plant') {
-          out.push([...hierarchyPrefix(depth, ctx.scope, year, formatLine(line), ''), ...analyticsRowToCells(lineRow, input.hasScenario)]);
+          out.push([
+            ...hierarchyPrefix(depth, ctx.scope, year, formatLine(line), ''),
+            ...analyticsRowToCells(lineRow, input.hasScenario, hasCallOff),
+          ]);
         }
         for (const m of machinesOnLine(line, ctx.machinesProd)) {
           const machineRow = analyticsRowForMachine(year, m, ctx);
           out.push([
             ...hierarchyPrefix(depth, ctx.scope, year, ctx.scope === 'plant' ? formatLine(line) : '', machineLabel(m)),
-            ...analyticsRowToCells(machineRow, input.hasScenario),
+            ...analyticsRowToCells(machineRow, input.hasScenario, hasCallOff),
           ]);
         }
       }

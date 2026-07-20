@@ -7,7 +7,12 @@ import {
   saveCallOffSourceFile,
   saveCallOffUnmatchedReport,
 } from './callOffFileService.js';
-import { parseSalesFcstWorkbook, normalizeSalesFcstSapRef, truncateSapRefLastTwo } from './salesFcstImportService.js';
+import {
+  detectSalesFcstDateRange,
+  parseSalesFcstWorkbook,
+  normalizeSalesFcstSapRef,
+  truncateSapRefLastTwo,
+} from './salesFcstImportService.js';
 
 export type CallOffUnmatchedSapRow = {
   sap_ref: string;
@@ -77,6 +82,7 @@ export type CallOffComparisonRow = {
   name: string;
   date_from: string;
   date_to: string;
+  notes: string | null;
   source_filename: string | null;
   source_stored_filename: string | null;
   last_import_json: string | null;
@@ -180,13 +186,32 @@ export function getCallOffComparison(id: number): CallOffComparisonRow | undefin
     .get(id) as CallOffComparisonRow | undefined;
 }
 
-export function createCallOffComparison(name: string, dateFrom: string, dateTo: string): CallOffComparisonRow {
+export function createCallOffComparison(
+  name: string,
+  dateFrom: string,
+  dateTo: string,
+  notes?: string | null
+): CallOffComparisonRow {
+  const notesVal = notes?.trim() ? notes.trim() : null;
   const r = db
-    .prepare(`INSERT INTO call_off_comparisons (name, date_from, date_to) VALUES (?, ?, ?)`)
-    .run(name.trim(), dateFrom, dateTo);
+    .prepare(`INSERT INTO call_off_comparisons (name, date_from, date_to, notes) VALUES (?, ?, ?, ?)`)
+    .run(name.trim(), dateFrom, dateTo, notesVal);
   const id = Number(r.lastInsertRowid);
   saveDb();
   return getCallOffComparison(id)!;
+}
+
+/** Tworzy porównanie z zakresem dat wyliczonym z pliku SalesFcst i od razu importuje dane. */
+export function createCallOffComparisonWithImport(
+  name: string,
+  notes: string | null | undefined,
+  buffer: Buffer,
+  filename: string
+): { comparison: CallOffComparisonRow; import: CallOffImportResult } {
+  const range = detectSalesFcstDateRange(buffer);
+  const created = createCallOffComparison(name, range.dateFrom, range.dateTo, notes);
+  const importResult = importSalesFcstFile(created.id, buffer, filename);
+  return { comparison: getCallOffComparison(created.id)!, import: importResult };
 }
 
 export function deleteCallOffComparison(id: number): void {
@@ -272,14 +297,23 @@ export function importSalesFcstFile(
 export type CallOffVolumeMaps = {
   annual: Map<number, Map<number, number>>;
   monthly: Map<number, Map<number, Map<number, number>>>;
+  /** Tydzień w miesiącu (T1 = dni 1–7, …) — zgodnie z rozwinięciem w kalkulatorze. */
+  weekly: Map<number, Map<number, Map<number, Map<number, number>>>>;
 };
+
+/** Numer tygodnia w miesiącu (1 = dni 1–7, 2 = 8–14, …) — jak kolumny T1…T5 w kalkulatorze. */
+export function weekOfMonthFromDay(day: number): number {
+  const d = Math.floor(Number(day));
+  if (!Number.isFinite(d) || d < 1) return 1;
+  return Math.max(1, Math.ceil(d / 7));
+}
 
 /** Roczny wolumen per part_id z pliku SAP (suma Corr.qty). */
 export function loadCallOffAnnualVolumeByPart(comparisonId: number): Map<number, Map<number, number>> {
   return loadCallOffVolumeMaps(comparisonId).annual;
 }
 
-/** Wolumeny roczne i miesięczne per part_id z pliku SAP. */
+/** Wolumeny roczne, miesięczne i tygodniowe (w miesiącu) per part_id z pliku SAP. */
 export function loadCallOffVolumeMaps(comparisonId: number): CallOffVolumeMaps {
   const annualRows = db
     .prepare(
@@ -298,6 +332,15 @@ export function loadCallOffVolumeMaps(comparisonId: number): CallOffVolumeMaps {
        GROUP BY part_id, year, month`
     )
     .all(comparisonId) as { part_id: number; year: number; month: number; qty: number }[];
+
+  const dailyRows = db
+    .prepare(
+      `SELECT part_id, year, month, volume_date, SUM(quantity) AS qty
+       FROM call_off_volumes
+       WHERE comparison_id = ? AND part_id IS NOT NULL
+       GROUP BY part_id, year, month, volume_date`
+    )
+    .all(comparisonId) as { part_id: number; year: number; month: number; volume_date: string; qty: number }[];
 
   const annual = new Map<number, Map<number, number>>();
   for (const r of annualRows) {
@@ -318,7 +361,24 @@ export function loadCallOffVolumeMaps(comparisonId: number): CallOffVolumeMaps {
     byYear.get(year)!.set(month, Number(r.qty) || 0);
   }
 
-  return { annual, monthly };
+  const weekly = new Map<number, Map<number, Map<number, Map<number, number>>>>();
+  for (const r of dailyRows) {
+    const partId = Number(r.part_id);
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(String(r.volume_date ?? '').slice(8, 10));
+    const wom = weekOfMonthFromDay(day);
+    const qty = Number(r.qty) || 0;
+    if (!weekly.has(partId)) weekly.set(partId, new Map());
+    const byYear = weekly.get(partId)!;
+    if (!byYear.has(year)) byYear.set(year, new Map());
+    const byMonth = byYear.get(year)!;
+    if (!byMonth.has(month)) byMonth.set(month, new Map());
+    const byWeek = byMonth.get(month)!;
+    byWeek.set(wom, (byWeek.get(wom) ?? 0) + qty);
+  }
+
+  return { annual, monthly, weekly };
 }
 
 export function getCallOffVolumeStats(comparisonId: number) {
@@ -339,4 +399,19 @@ export function getCallOffVolumeStats(comparisonId: number) {
     max_date: string | null;
   };
   return row;
+}
+
+/** Lata, w których porównanie ma jakikolwiek wolumen SAP (z pliku). */
+export function getCallOffVolumeYears(comparisonId: number): number[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT year
+       FROM call_off_volumes
+       WHERE comparison_id = ? AND part_id IS NOT NULL AND year IS NOT NULL
+       ORDER BY year`
+    )
+    .all(comparisonId) as { year: number }[];
+  return rows
+    .map((r) => Number(r.year))
+    .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100);
 }

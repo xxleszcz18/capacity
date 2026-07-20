@@ -1948,6 +1948,19 @@ function PartVolumeRow({
     return 0;
   };
 
+  const shareZeroProjectVolumeYears = useMemo(() => {
+    if (mode !== 'share') return [] as number[];
+    const years: number[] = [];
+    for (const y of yearsForShare) {
+      const pct = getEffectiveShareForYear(y);
+      if (pct <= 0) continue;
+      const pv = projVol.find((p) => p.year === y);
+      const projectVol = pv != null ? Number(pv.volume_value) : 0;
+      if (!Number.isFinite(projectVol) || projectVol <= 0) years.push(y);
+    }
+    return years;
+  }, [mode, yearsForShare, projVol, shareByYear, sharePercent]);
+
   const setShareForYear = (year: number, value: string) => {
     setShareByYear((prev) => {
       const next = { ...prev, [year]: value };
@@ -2420,6 +2433,25 @@ function PartVolumeRow({
       </div>
       {mode === 'share' && (
         <div style={{ marginBottom: 8 }}>
+          {shareZeroProjectVolumeYears.length > 0 && (
+            <p
+              role="alert"
+              style={{
+                margin: '0 0 10px',
+                padding: '8px 10px',
+                background: '#fff3e0',
+                border: '1px solid #ffb74d',
+                borderRadius: 6,
+                fontSize: 13,
+                color: '#e65100',
+                lineHeight: 1.45,
+              }}
+            >
+              {t('projectDetailExtra.shareZeroProjectVolumeWarning', {
+                years: shareZeroProjectVolumeYears.join(', '),
+              })}
+            </p>
+          )}
           <div style={{ marginBottom: 10, padding: '8px 10px', background: contractColumn ? '#fff3e0' : '#f0f7ff', borderRadius: 6 }}>
             <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>{t('projectDetailExtra.defaultForAllYears')}</div>
             <label>{t('projectDetailExtra.sharePercentLabel')} <input type="number" min={0} max={100} step={0.1} value={sharePercent} onChange={(e) => { const v = e.target.value; setSharePercent(v); saveStateRef.current = { ...saveStateRef.current, sharePercent: v }; scheduleAutoSave(); }} onBlur={flushAutoSave} style={{ width: 80, marginLeft: 4, padding: 4 }} /></label>
@@ -2429,9 +2461,18 @@ function PartVolumeRow({
           <table style={{ borderCollapse: 'collapse', marginBottom: 4 }}>
             <thead><tr style={{ background: '#eee' }}><th style={{ padding: 4 }}>{t('common.year')}</th><th style={{ padding: 4 }}>{t('projectDetailExtra.shareCol')}</th></tr></thead>
             <tbody>
-              {yearsForShare.map((y) => (
-                <tr key={y}>
-                  <td style={{ padding: 4 }}>{y}</td>
+              {yearsForShare.map((y) => {
+                const zeroProjectVol = shareZeroProjectVolumeYears.includes(y);
+                return (
+                <tr key={y} style={zeroProjectVol ? { background: '#fff8e1' } : undefined}>
+                  <td style={{ padding: 4 }}>
+                    {y}
+                    {zeroProjectVol && (
+                      <span style={{ display: 'block', fontSize: 11, color: '#e65100', fontWeight: 600 }}>
+                        {t('projectDetailExtra.shareZeroProjectVolumeRowHint')}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: 4 }}>
                     <input
                       type="number"
@@ -2446,7 +2487,8 @@ function PartVolumeRow({
                     />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           </div>

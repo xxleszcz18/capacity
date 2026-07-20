@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
+import { API_UNREACHABLE_MESSAGE } from '../i18n/apiErrors';
 
 type AdminContact = {
   display_name: string | null;
@@ -14,7 +15,7 @@ type AdminContact = {
 };
 
 export default function Login() {
-  const { t } = useI18n();
+  const { t, te } = useI18n();
   const { login, loginAsGuest, user, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -24,6 +25,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [guestAvailable, setGuestAvailable] = useState(false);
+  const [serverUnreachable, setServerUnreachable] = useState(false);
   const [recoverOpen, setRecoverOpen] = useState(false);
   const [adminContacts, setAdminContacts] = useState<AdminContact[]>([]);
   const [recoverLoading, setRecoverLoading] = useState(false);
@@ -32,8 +34,15 @@ export default function Login() {
   useEffect(() => {
     api.auth
       .guestAvailable()
-      .then((r) => setGuestAvailable(r.available === true))
-      .catch(() => setGuestAvailable(false));
+      .then((r) => {
+        setServerUnreachable(false);
+        setGuestAvailable(r.available === true);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : '';
+        setServerUnreachable(msg === API_UNREACHABLE_MESSAGE);
+        setGuestAvailable(false);
+      });
   }, []);
 
   if (!loading && user && !user.must_change_password) {
@@ -49,7 +58,7 @@ export default function Login() {
       if (u.must_change_password) navigate('/zmiana-hasla', { replace: true });
       else navigate(from, { replace: true });
     } catch (err: any) {
-      setError(err?.message || t('auth.loginFailed'));
+      setError(te(err?.message) || t('auth.loginFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -62,7 +71,7 @@ export default function Login() {
       await loginAsGuest();
       navigate(from, { replace: true });
     } catch (err: any) {
-      setError(err?.message || t('auth.guestUnavailable'));
+      setError(te(err?.message) || t('auth.guestUnavailable'));
     } finally {
       setSubmitting(false);
     }
@@ -120,6 +129,24 @@ export default function Login() {
         <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 16px 0' }}>
           <LanguageSwitcher />
         </div>
+
+        {serverUnreachable && (
+          <div
+            role="alert"
+            style={{
+              margin: '0 16px',
+              padding: '10px 12px',
+              background: '#fff3e0',
+              border: '1px solid #ffb74d',
+              borderRadius: 6,
+              color: '#e65100',
+              fontSize: 14,
+              lineHeight: 1.45,
+            }}
+          >
+            {t('auth.apiUnreachable')}
+          </div>
+        )}
 
         <div
           style={{

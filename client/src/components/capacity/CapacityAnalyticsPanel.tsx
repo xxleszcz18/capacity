@@ -22,6 +22,8 @@ export type AnalyticsTableExpandContext = {
   contractMachines: CapacityMachineTrend[];
   scenProdMachines?: CapacityMachineTrend[];
   scenContractMachines?: CapacityMachineTrend[];
+  callOffMachines?: CapacityMachineTrend[];
+  callOffDataYears?: number[];
   showScenarioProduction: boolean;
 };
 
@@ -29,6 +31,7 @@ type Props = {
   entityLabel: string;
   rows: AnalyticsRow[];
   hasScenario: boolean;
+  hasCallOff?: boolean;
   expandContext?: AnalyticsTableExpandContext;
 };
 
@@ -93,7 +96,17 @@ function TreeLabelCell({
   );
 }
 
-function ValueCells({ row, hasScenario, background }: { row: AnalyticsRow; hasScenario: boolean; background?: string }) {
+function ValueCells({
+  row,
+  hasScenario,
+  hasCallOff,
+  background,
+}: {
+  row: AnalyticsRow;
+  hasScenario: boolean;
+  hasCallOff?: boolean;
+  background?: string;
+}) {
   const vizColors = useDataVizColors();
   const cellStyle = { padding: '8px 10px', borderTop: '1px solid #eee', background };
   return (
@@ -109,11 +122,23 @@ function ValueCells({ row, hasScenario, background }: { row: AnalyticsRow; hasSc
           {fmtDelta(row.deltaScenarioProdMinusProd)}
         </td>
       )}
+      {hasCallOff && <td style={cellStyle}>{fmtPct(row.callOff)}</td>}
+      {hasCallOff && (
+        <td style={{ ...cellStyle, color: deltaColorHigherIsBad(row.deltaCallOffMinusProd, vizColors) }}>
+          {fmtDelta(row.deltaCallOffMinusProd)}
+        </td>
+      )}
     </>
   );
 }
 
-export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario, expandContext }: Props) {
+export default function CapacityAnalyticsPanel({
+  entityLabel,
+  rows,
+  hasScenario,
+  hasCallOff = false,
+  expandContext,
+}: Props) {
   const { t } = useI18n();
   const tableExportId = useId();
   const settingsProfile = useEffectiveCalculationProfile(false);
@@ -181,6 +206,8 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
               <th style={{ padding: '8px 10px' }}>{t('dataViz.colDeltaContractProd')}</th>
               {hasScenario && <th style={{ padding: '8px 10px' }}>{t('dataViz.colScenarioProdPct')}</th>}
               {hasScenario && <th style={{ padding: '8px 10px' }}>{t('dataViz.colDeltaScenarioProd')}</th>}
+              {hasCallOff && <th style={{ padding: '8px 10px' }}>{t('dataViz.colCallOffPct')}</th>}
+              {hasCallOff && <th style={{ padding: '8px 10px' }}>{t('dataViz.colDeltaCallOffProd')}</th>}
             </tr>
           </thead>
           <tbody>
@@ -201,7 +228,7 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
                     >
                       {r.year}
                     </TreeLabelCell>
-                    <ValueCells row={r} hasScenario={hasScenario} />
+                    <ValueCells row={r} hasScenario={hasScenario} hasCallOff={hasCallOff} />
                   </tr>
 
                   {canExpand && yearOpen && showLineLevel &&
@@ -224,7 +251,12 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
                             >
                               {t('dataViz.lineLabel', { line })}
                             </TreeLabelCell>
-                            <ValueCells row={lineRow} hasScenario={hasScenario} background="#fafafa" />
+                            <ValueCells
+                              row={lineRow}
+                              hasScenario={hasScenario}
+                              hasCallOff={hasCallOff}
+                              background="#fafafa"
+                            />
                           </tr>
                           {lineOpen &&
                             lineMachines.map((m) => {
@@ -234,7 +266,12 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
                                   <TreeLabelCell level={2} background="#f5f7f8" fontSize={13}>
                                     {machineLabel(m)}
                                   </TreeLabelCell>
-                                  <ValueCells row={machineRow} hasScenario={hasScenario} background="#f5f7f8" />
+                                  <ValueCells
+                                    row={machineRow}
+                                    hasScenario={hasScenario}
+                                    hasCallOff={hasCallOff}
+                                    background="#f5f7f8"
+                                  />
                                 </tr>
                               );
                             })}
@@ -251,7 +288,12 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
                             <TreeLabelCell level={1} background="#fafafa" fontSize={13}>
                               {machineLabel(m)}
                             </TreeLabelCell>
-                            <ValueCells row={machineRow} hasScenario={hasScenario} background="#fafafa" />
+                            <ValueCells
+                              row={machineRow}
+                              hasScenario={hasScenario}
+                              hasCallOff={hasCallOff}
+                              background="#fafafa"
+                            />
                           </tr>
                         );
                       })
@@ -271,6 +313,7 @@ export default function CapacityAnalyticsPanel({ entityLabel, rows, hasScenario,
         title={t('dataViz.annualDiffTitle', { label: entityLabel })}
         rows={rows}
         hasScenario={hasScenario}
+        hasCallOff={hasCallOff}
       />
     </div>
   );

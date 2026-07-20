@@ -86,9 +86,12 @@ scenariosRouter.get('/', (req, res) => {
     const list = db
       .prepare(
         `SELECT s.id, s.name, s.created_at, s.source_scenario_id, s.updated_at, s.scenario_scope, s.archived_at,
-                ps.name AS source_scenario_name
+                s.source_call_off_comparison_id,
+                ps.name AS source_scenario_name,
+                co.name AS source_call_off_name
          FROM scenarios s
          LEFT JOIN scenarios ps ON ps.id = s.source_scenario_id
+         LEFT JOIN call_off_comparisons co ON co.id = s.source_call_off_comparison_id
          WHERE ${activeClause}
          ORDER BY ${wantArchived ? 's.archived_at DESC, s.created_at DESC' : 's.created_at DESC'}`
       )
@@ -649,6 +652,10 @@ scenariosRouter.get('/:id', (req, res) => {
     created_at: row.created_at,
     updated_at: row.updated_at ?? null,
     source_scenario_id: row.source_scenario_id != null ? Number(row.source_scenario_id) : null,
+    source_call_off_comparison_id:
+      row.source_call_off_comparison_id != null && Number(row.source_call_off_comparison_id) > 0
+        ? Number(row.source_call_off_comparison_id)
+        : null,
     archived_at: row.archived_at != null && String(row.archived_at).trim() !== '' ? String(row.archived_at) : null,
     snapshot,
   });
@@ -662,6 +669,21 @@ scenariosRouter.post('/', (req, res) => {
   if (!scenario_scope) return res.status(400).json({ error: 'Zakres scenariusza jest wymagany (pole tekstowe).' });
   const rawSource = body.sourceScenarioId != null && body.sourceScenarioId !== '' ? Number(body.sourceScenarioId) : null;
   const sourceScenarioId = rawSource != null && Number.isFinite(rawSource) && rawSource > 0 ? rawSource : null;
+  const rawCallOff =
+    body.sourceCallOffComparisonId != null && body.sourceCallOffComparisonId !== ''
+      ? Number(body.sourceCallOffComparisonId)
+      : null;
+  const sourceCallOffComparisonId =
+    rawCallOff != null && Number.isFinite(rawCallOff) && rawCallOff > 0 ? rawCallOff : null;
+
+  if (sourceCallOffComparisonId != null) {
+    const cmp = db.prepare('SELECT id FROM call_off_comparisons WHERE id = ?').get(sourceCallOffComparisonId);
+    if (!cmp) return res.status(400).json({ error: 'Nie znaleziono porównania Call off' });
+    const stats = db
+      .prepare('SELECT COUNT(*) AS c FROM call_off_volumes WHERE comparison_id = ?')
+      .get(sourceCallOffComparisonId) as { c: number };
+    if (!stats?.c) return res.status(400).json({ error: 'Wybrane porównanie Call off nie ma zaimportowanych wolumenów.' });
+  }
 
   let bundleJson: string;
   try {
@@ -679,16 +701,34 @@ scenariosRouter.post('/', (req, res) => {
 
   try {
     const insert = db.prepare(
-      `INSERT INTO scenarios (name, snapshot, source_scenario_id, updated_at, scenario_scope) VALUES (?, ?, ?, datetime('now'), ?)`
+      `INSERT INTO scenarios (name, snapshot, source_scenario_id, source_call_off_comparison_id, updated_at, scenario_scope) VALUES (?, ?, ?, ?, datetime('now'), ?)`
     );
-    const r = insert.run(name, bundleJson, sourceScenarioId, scenario_scope);
+    const r = insert.run(name, bundleJson, sourceScenarioId, sourceCallOffComparisonId, scenario_scope);
     const newId = Number(r.lastInsertRowid);
-    const row = db.prepare(
-      'SELECT id, name, created_at, source_scenario_id, updated_at, scenario_scope FROM scenarios WHERE id = ?'
-    ).get(newId) as any;
+    const row = db
+      .prepare(
+        'SELECT id, name, created_at, source_scenario_id, source_call_off_comparison_id, updated_at, scenario_scope FROM scenarios WHERE id = ?'
+      )
+      .get(newId) as any;
     saveDb();
     res.status(201).json(row);
   } catch (e: any) {
+    if (String(e?.message || '').includes('no such column')) {
+      try {
+        const insert = db.prepare(
+          `INSERT INTO scenarios (name, snapshot, source_scenario_id, updated_at, scenario_scope) VALUES (?, ?, ?, datetime('now'), ?)`
+        );
+        const r = insert.run(name, bundleJson, sourceScenarioId, scenario_scope);
+        const newId = Number(r.lastInsertRowid);
+        const row = db
+          .prepare('SELECT id, name, created_at, source_scenario_id, updated_at, scenario_scope FROM scenarios WHERE id = ?')
+          .get(newId) as any;
+        saveDb();
+        return res.status(201).json({ ...row, source_call_off_comparison_id: null });
+      } catch {
+        /* fall through */
+      }
+    }
     if (String(e?.message || '').includes('no such column')) {
       try {
         const insert = db.prepare(

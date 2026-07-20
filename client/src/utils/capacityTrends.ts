@@ -1,3 +1,5 @@
+import { formatMachineSapInternalLabel, type MachineDisplayMode } from './machineLabel';
+
 export type YearCapacityPoint = {
   load_percent: number;
   required_sec_per_week?: number;
@@ -16,6 +18,8 @@ export type CapacityMachineTrend = {
 export type CapacityTrendBundle = {
   yearFrom: number;
   yearTo: number;
+  /** Lata z rzeczywistym wolumenem (np. Call offs z pliku SAP) — poza nimi serie = null. */
+  dataYears?: number[];
   machines: CapacityMachineTrend[];
 };
 
@@ -83,6 +87,22 @@ export function machinesLoadPercent(machines: CapacityMachineTrend[], machineIds
   return aggregateLoadPercent(machines, year, (m) => idSet.has(m.machine_id));
 }
 
+/** Obciążenie wybranych maszyn na danej linii (agregacja). */
+export function selectedMachinesOnLineLoadPercent(
+  machines: CapacityMachineTrend[],
+  machineIds: number[] | Set<number>,
+  line: string,
+  year: number
+): number | null {
+  const idSet = machineIds instanceof Set ? machineIds : new Set(machineIds);
+  if (!idSet.size) return null;
+  return aggregateLoadPercent(
+    machines,
+    year,
+    (m) => idSet.has(m.machine_id) && lineKey(m.location) === line
+  );
+}
+
 export function machineLoadPercent(m: CapacityMachineTrend, year: number): number | null {
   const y = m.years[year];
   if (!y) return null;
@@ -113,6 +133,225 @@ export function machineLabel(m: CapacityMachineTrend): string {
   return sap ? `${nr} · ${sap}` : String(nr);
 }
 
+/** Wspólny wiersz dual-bar (produkcja / kontrakt [/ call off]) — maszyna lub linia na osi X. */
+export type DualLoadBarRow = {
+  key: string;
+  /** Pełna etykieta (tooltip). */
+  label: string;
+  /** Krótka etykieta osi X (nr maszyny albo nr linii). */
+  shortLabel: string;
+  production: number | null;
+  contract: number | null;
+  callOff?: number | null;
+  machineCount?: number;
+};
+
+/**
+ * Mapuje odpowiedź kalkulatora Call offs na bundle trendów:
+ * load_percent = jak produkcja (req/avail), tylko miesiące z danymi SAP (call_off_annual_*),
+ * required_sec / availability do agregacji linii.
+ * Punkty tylko w latach z wolumenem w pliku (`volumeYears`) — poza nimi null.
+ */
+export function callOffCalculatorToTrendBundle(res: {
+  yearFrom: number;
+  yearTo: number;
+  date_from?: string;
+  date_to?: string;
+  volumeYears?: number[];
+  machines: Array<{
+    machine_id: number;
+    internal_number: string | number;
+    sap_number: string | null;
+    type: string;
+    location?: string | null;
+    years: Record<
+      number,
+      {
+        call_off_load_percent?: number;
+        call_off_annual_load_percent?: number;
+        call_off_annual_required_sec_per_week?: number;
+        call_off_annual_availability_sec_per_week?: number;
+        availability_sec_per_week?: number;
+        required_sec_per_week?: number;
+        call_off_detail_breakdown?: unknown[];
+      }
+    >;
+  }>;
+}): CapacityTrendBundle {
+  const volumeYearSet = new Set(
+    (res.volumeYears ?? [])
+      .map((y) => Number(y))
+      .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100)
+  );
+
+  // Fallback: jeśli API nie podało volumeYears, wywnioskuj z lat z dodatnim obciążeniem SAP (roczne lub peak).
+  if (volumeYearSet.size === 0) {
+    for (const m of res.machines ?? []) {
+      for (const [yearKey, yd] of Object.entries(m.years ?? {})) {
+        const year = Number(yearKey);
+        const annual = Number(yd.call_off_annual_load_percent ?? 0);
+        const peak = Number(yd.call_off_load_percent ?? 0);
+        const pct = annual > 0 ? annual : peak;
+        if (Number.isFinite(year) && Number.isFinite(pct) && pct > 0) volumeYearSet.add(year);
+      }
+    }
+  }
+
+  // Ostateczny fallback: zakres dat porównania (nie zakres filtrów wizualizacji).
+  if (volumeYearSet.size === 0 && res.date_from && res.date_to) {
+    const a = new Date(res.date_from).getFullYear();
+    const b = new Date(res.date_to).getFullYear();
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      for (let y = lo; y <= hi; y++) volumeYearSet.add(y);
+    }
+  }
+
+  const dataYears = Array.from(volumeYearSet).sort((a, b) => a - b);
+
+  return {
+    yearFrom: res.yearFrom,
+    yearTo: res.yearTo,
+    dataYears,
+    machines: res.machines.map((m) => {
+      const years: CapacityMachineTrend['years'] = {};
+      for (const [yearKey, yd] of Object.entries(m.years ?? {})) {
+        const year = Number(yearKey);
+        if (!Number.isFinite(year) || !volumeYearSet.has(year)) continue;
+
+        const annualRaw = yd.call_off_annual_load_percent;
+        const hasAnnual = annualRaw != null && Number.isFinite(Number(annualRaw));
+        const callOffPct = hasAnnual ? Number(annualRaw) : Number(yd.call_off_load_percent ?? 0);
+        if (!Number.isFinite(callOffPct) || callOffPct <= 0) continue;
+
+        const availAnnual = Number(yd.call_off_annual_availability_sec_per_week ?? 0);
+        const reqAnnual = Number(yd.call_off_annual_required_sec_per_week ?? 0);
+        const availFallback = Number(yd.availability_sec_per_week ?? 0);
+        const avail = availAnnual > 0 ? availAnnual : availFallback;
+        const req =
+          reqAnnual > 0
+            ? reqAnnual
+            : avail > 0
+              ? Math.round((callOffPct / 100) * avail)
+              : 0;
+        years[year] = {
+          load_percent: callOffPct,
+          availability_sec_per_week: avail,
+          required_sec_per_week: req,
+        };
+      }
+      return {
+        machine_id: m.machine_id,
+        internal_number: m.internal_number as number,
+        sap_number: m.sap_number,
+        type: m.type,
+        location: m.location,
+        years,
+      };
+    }),
+  };
+}
+
+/** Obciążenie Call offs — null poza latami z wolumenem w pliku (ważne przy agregacji linii). */
+export function callOffLoadPercent(
+  bundle: CapacityTrendBundle | null | undefined,
+  year: number,
+  scope: { kind: 'machine'; machine: CapacityMachineTrend } | { kind: 'line'; line: string } | { kind: 'lines'; lines: string[] } | { kind: 'machines'; machineIds: number[] } | { kind: 'plant' }
+): number | null {
+  if (!bundle?.machines?.length) return null;
+  if (bundle.dataYears?.length && !bundle.dataYears.includes(year)) return null;
+  switch (scope.kind) {
+    case 'machine':
+      return machineLoadPercent(scope.machine, year);
+    case 'line':
+      return lineLoadPercent(bundle.machines, scope.line, year);
+    case 'lines':
+      return linesLoadPercent(bundle.machines, scope.lines, year);
+    case 'machines':
+      return machinesLoadPercent(bundle.machines, scope.machineIds, year);
+    case 'plant': {
+      let req = 0;
+      let avail = 0;
+      for (const m of bundle.machines) {
+        const y = m.years[year];
+        if (!y) continue;
+        req += y.required_sec_per_week ?? 0;
+        avail += y.availability_sec_per_week ?? 0;
+      }
+      if (avail <= 0) return req > 0 ? 100 : null;
+      return Math.round((req / avail) * 100);
+    }
+    default:
+      return null;
+  }
+}
+
+/** Słupki: jedna pozycja na zaznaczoną maszynę. */
+export function buildMachineBarRows(
+  machinesProd: CapacityMachineTrend[],
+  machinesContract: CapacityMachineTrend[],
+  selectedMachineIds: number[] | Set<number>,
+  year: number,
+  labelMode: MachineDisplayMode = 'internal',
+  machinesCallOff?: CapacityMachineTrend[] | null,
+  callOffDataYears?: number[] | null
+): DualLoadBarRow[] {
+  const idSet = selectedMachineIds instanceof Set ? selectedMachineIds : new Set(selectedMachineIds);
+  const contractById = new Map(machinesContract.map((m) => [m.machine_id, m]));
+  const callOffById = new Map((machinesCallOff ?? []).map((m) => [m.machine_id, m]));
+  const callOffYearOk = !callOffDataYears?.length || callOffDataYears.includes(year);
+  return machinesProd
+    .filter((m) => idSet.has(m.machine_id))
+    .slice()
+    .sort((a, b) => {
+      const na = Number(a.internal_number);
+      const nb = Number(b.internal_number);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+      return String(a.internal_number).localeCompare(String(b.internal_number), 'pl');
+    })
+    .map((m) => {
+      const c = contractById.get(m.machine_id);
+      const co = callOffById.get(m.machine_id);
+      const axisLabel = formatMachineSapInternalLabel(m, labelMode);
+      return {
+        key: String(m.machine_id),
+        label: axisLabel,
+        shortLabel: axisLabel,
+        production: machineLoadPercent(m, year),
+        contract: c ? machineLoadPercent(c, year) : null,
+        callOff: callOffYearOk && co ? machineLoadPercent(co, year) : null,
+      };
+    });
+}
+
+/** Słupki: jedna pozycja na zaznaczoną linię (agregacja maszyn na linii). */
+export function buildLineBarRows(
+  machinesProd: CapacityMachineTrend[],
+  machinesContract: CapacityMachineTrend[],
+  selectedLines: string[] | Set<string>,
+  year: number,
+  machinesCallOff?: CapacityMachineTrend[] | null,
+  callOffDataYears?: number[] | null
+): DualLoadBarRow[] {
+  const lineSet = selectedLines instanceof Set ? selectedLines : new Set(selectedLines);
+  const lines = uniqueLines(machinesProd).filter((line) => lineSet.has(line));
+  const callOffYearOk = !callOffDataYears?.length || callOffDataYears.includes(year);
+  return lines.map((line) => {
+    const machineCount = machinesProd.filter((m) => lineKey(m.location) === line).length;
+    return {
+      key: line,
+      label: line,
+      shortLabel: line,
+      production: lineLoadPercent(machinesProd, line, year),
+      contract: lineLoadPercent(machinesContract, line, year),
+      callOff:
+        callOffYearOk && machinesCallOff?.length ? lineLoadPercent(machinesCallOff, line, year) : null,
+      machineCount,
+    };
+  });
+}
+
 export type AnalyticsRow = {
   year: number;
   production: number | null;
@@ -121,6 +360,8 @@ export type AnalyticsRow = {
   scenarioProduction: number | null;
   scenarioContract: number | null;
   deltaScenarioProdMinusProd: number | null;
+  callOff: number | null;
+  deltaCallOffMinusProd: number | null;
 };
 
 export function buildAnalyticsRow(
@@ -128,16 +369,20 @@ export function buildAnalyticsRow(
   getProduction: (year: number) => number | null,
   getContract: (year: number) => number | null,
   getScenarioProduction?: (year: number) => number | null,
-  getScenarioContract?: (year: number) => number | null
+  getScenarioContract?: (year: number) => number | null,
+  getCallOff?: (year: number) => number | null
 ): AnalyticsRow {
   const production = getProduction(year);
   const contract = getContract(year);
   const scenarioProduction = getScenarioProduction?.(year) ?? null;
   const scenarioContract = getScenarioContract?.(year) ?? null;
+  const callOff = getCallOff?.(year) ?? null;
   const deltaContractMinusProd =
     production != null && contract != null ? Math.round((production - contract) * 10) / 10 : null;
   const deltaScenarioProdMinusProd =
     production != null && scenarioProduction != null ? Math.round((scenarioProduction - production) * 10) / 10 : null;
+  const deltaCallOffMinusProd =
+    production != null && callOff != null ? Math.round((callOff - production) * 10) / 10 : null;
   return {
     year,
     production,
@@ -146,6 +391,8 @@ export function buildAnalyticsRow(
     scenarioProduction,
     scenarioContract,
     deltaScenarioProdMinusProd,
+    callOff,
+    deltaCallOffMinusProd,
   };
 }
 
@@ -154,16 +401,24 @@ export function buildAnalyticsRows(
   getProduction: (year: number) => number | null,
   getContract: (year: number) => number | null,
   getScenarioProduction?: (year: number) => number | null,
-  getScenarioContract?: (year: number) => number | null
+  getScenarioContract?: (year: number) => number | null,
+  getCallOff?: (year: number) => number | null
 ): AnalyticsRow[] {
   return years.map((year) =>
-    buildAnalyticsRow(year, getProduction, getContract, getScenarioProduction, getScenarioContract)
+    buildAnalyticsRow(year, getProduction, getContract, getScenarioProduction, getScenarioContract, getCallOff)
   );
 }
 
-/** Średnia obciążenia na wybranych latach (pomija null). */
-export function averageLoad(values: (number | null)[]): number | null {
-  const nums = values.filter((v): v is number => v != null && Number.isFinite(v));
+/** Średnia obciążenia na wybranych latach (pomija null; opcjonalnie zera). */
+export function averageLoad(
+  values: (number | null)[],
+  opts?: { skipZeros?: boolean }
+): number | null {
+  const nums = values.filter((v): v is number => {
+    if (v == null || !Number.isFinite(v)) return false;
+    if (opts?.skipZeros && v === 0) return false;
+    return true;
+  });
   if (!nums.length) return null;
   return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
 }

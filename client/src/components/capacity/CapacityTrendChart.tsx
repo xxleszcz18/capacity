@@ -31,6 +31,8 @@ type Props = {
   captureKey?: string;
   /** Kontekst do rozwijanego podglądu klient → projekt → detal. */
   breakdownScope?: ChartBreakdownScope;
+  /** Przycisk „Pokaż dane wg lat” — wyłącz np. dla wykresu łączonego. */
+  allowDataTable?: boolean;
 };
 
 function fmtLoadPct(value: number | null | undefined): string {
@@ -47,6 +49,7 @@ export default function CapacityTrendChart({
   breakdownScope,
   loadAxisRange = DEFAULT_LOAD_AXIS_RANGE,
   metricMode = 'load',
+  allowDataTable = true,
 }: Props) {
   const { t } = useI18n();
   const vizColors = useDataVizColors();
@@ -54,6 +57,7 @@ export default function CapacityTrendChart({
   const [showDataTable, setShowDataTable] = useState(false);
   const activeSeries = series.filter((s) => rows.some((r) => r[s.key] != null));
   const hasData = activeSeries.length > 0 && rows.length > 0;
+  const canShowDataTable = allowDataTable && !captureKey;
   const displayRows = useMemo(() => transformTrendRows(rows, series, metricMode), [rows, series, metricMode]);
   const yDomain = resolveYAxisDomain(loadAxisRange);
   const yAxisLabel = metricMode === 'freeCapacity' ? t('dataViz.freeCapacityPct') : t('dataViz.loadPct');
@@ -97,7 +101,7 @@ export default function CapacityTrendChart({
       <div {...chartBlockProps} style={captureKey ? undefined : { background: 'white' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <h3 style={{ margin: 0, fontSize: '1rem' }}>{title}</h3>
-          {hasData && !captureKey && (
+          {hasData && canShowDataTable && (
             <button
               type="button"
               data-viz-export-hide=""
@@ -147,14 +151,14 @@ export default function CapacityTrendChart({
                   strokeWidth={2}
                   strokeDasharray={s.dash}
                   dot={{ r: 3 }}
-                  connectNulls
+                  connectNulls={false}
                 />
               ))}
             </LineChart>
           </ResponsiveContainer>
         )}
       </div>
-      {showDataTable && hasData && !captureKey && (
+      {showDataTable && hasData && canShowDataTable && (
         <div {...tableBlockProps} style={{ marginTop: 12, background: 'white' }}>
           <CapacityTrendChartDataTable rows={rows} activeSeries={activeSeries} breakdownScope={breakdownScope} metricMode={metricMode} />
         </div>

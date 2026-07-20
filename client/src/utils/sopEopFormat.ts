@@ -82,3 +82,7 @@ export function sopEopYearsRange(sop: unknown, eop: unknown): { years: number[];
   for (let y = sopP.year; y <= eopP.year; y++) years.push(y);
   return { years, startMonth: sopP.month, endMonth: eopP.month };
 }
+
+export function isYearInProjectSopEop(sop: unknown, eop: unknown, year: number): boolean {
+  return sopEopYearsRange(sop, eop).years.includes(year);
+}

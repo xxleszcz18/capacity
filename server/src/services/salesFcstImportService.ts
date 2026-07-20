@@ -73,6 +73,35 @@ function parseQty(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Min/max dat z wierszy z poprawną referencją SAP i ilością > 0. */
+export function detectSalesFcstDateRange(buffer: Buffer): { dateFrom: string; dateTo: string } {
+  const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+  const sheetName = wb.SheetNames[0];
+  if (!sheetName) throw new Error('Plik Excel nie zawiera arkuszy');
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetName], { header: 1, defval: '' });
+
+  let minKey: string | null = null;
+  let maxKey: string | null = null;
+
+  for (let i = 1; i < matrix.length; i++) {
+    const row = matrix[i];
+    if (!Array.isArray(row)) continue;
+    const sap_ref = normalizeSalesFcstSapRef(row[COL_SAP_REF]);
+    if (!sap_ref || sap_ref === '0') continue;
+    const d = parseExcelDate(row[COL_DATE]);
+    if (!d) continue;
+    if (parseQty(row[COL_QTY]) <= 0) continue;
+    const key = toDateKey(d);
+    if (!minKey || key < minKey) minKey = key;
+    if (!maxKey || key > maxKey) maxKey = key;
+  }
+
+  if (!minKey || !maxKey) {
+    throw new Error('Nie znaleziono w pliku żadnych wierszy z datą i ilością > 0');
+  }
+  return { dateFrom: minKey, dateTo: maxKey };
+}
+
 export function parseSalesFcstWorkbook(
   buffer: Buffer,
   dateFrom: string,

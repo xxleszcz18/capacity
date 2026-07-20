@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
 import type { TrendChartRow, TrendSeriesDef } from '../../utils/capacityTrends';
@@ -6,7 +6,12 @@ import type { BreakdownFetchParams } from '../../utils/capacityBreakdownExcel';
 import { breakdownFetchParamsToApi } from '../../utils/capacityBreakdownExcel';
 import { applyChartMetric, type ChartMetricMode } from '../../utils/chartMetricMode';
 
-export type CapacityBreakdownSeriesKey = 'production' | 'contract' | 'scenario_production' | 'scenario_contract';
+export type CapacityBreakdownSeriesKey =
+  | 'production'
+  | 'contract'
+  | 'scenario_production'
+  | 'scenario_contract'
+  | 'call_off';
 
 export type ChartBreakdownScope = {
   kind: 'line' | 'machine';
@@ -27,6 +32,7 @@ function fmtMetricPct(value: number | null | undefined, mode: ChartMetricMode): 
 }
 
 export function seriesBreakdownKey(seriesKey: string): CapacityBreakdownSeriesKey | null {
+  if (seriesKey.includes('_calloff') || seriesKey.endsWith('calloff')) return 'call_off';
   if (seriesKey.endsWith('_scen_contract')) return 'scenario_contract';
   if (seriesKey.endsWith('_scen_prod')) return 'scenario_production';
   if (seriesKey.endsWith('_contract') || seriesKey.endsWith('_kon')) return 'contract';
@@ -217,6 +223,14 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
       activeSeries.map((s) => seriesBreakdownKey(s.key)).filter((k): k is CapacityBreakdownSeriesKey => k != null)
     ),
   ];
+  const uniqueSeriesKey = uniqueSeriesKeys.slice().sort().join(',');
+  const fetchParamsKey = JSON.stringify(breakdownScope?.fetchParams ?? null);
+  const cacheScopeKey = `${uniqueSeriesKey}|${fetchParamsKey}`;
+
+  useEffect(() => {
+    setBreakdownCache(new Map());
+    setErrorYears(new Map());
+  }, [cacheScopeKey]);
 
   const loadBreakdown = useCallback(
     async (year: number) => {
@@ -441,9 +455,9 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
                   )}
                 </td>
                 {activeSeries.map((s) => {
-                  const bk = seriesBreakdownKey(s.key);
-                  const breakdownValue = bk && breakdown ? breakdown.series[bk]?.load_percent : undefined;
-                  const yearValue = breakdownValue ?? (row[s.key] as number | null | undefined);
+                  // Wartość roku zawsze z serii wykresu — breakdown tylko w wierszach rozwijanych.
+                  // Dzięki temu punkt na wykresie i komórka roku nie rozjeżdżają się (Call offs peak vs annual).
+                  const yearValue = row[s.key] as number | null | undefined;
                   return (
                     <td key={s.key} style={{ padding: '8px 10px', verticalAlign: 'middle' }}>
                       {fmtMetricPct(yearValue, metricMode)}

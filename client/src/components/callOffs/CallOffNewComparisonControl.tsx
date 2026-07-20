@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useI18n } from '../../context/I18nContext';
@@ -20,11 +20,12 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
   const { t } = useI18n();
   const navigate = useNavigate();
   const { setActiveCallOff } = useScenarioMode();
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [notes, setNotes] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [accent, setAccent] = useState(DEFAULT_WORKSPACE_THEMES.calloffs.accent);
@@ -53,9 +54,10 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
     if (saving) return;
     setOpen(false);
     setNewName('');
-    setDateFrom('');
-    setDateTo('');
+    setNotes('');
+    setFile(null);
     setError('');
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   const handleCreate = () => {
@@ -64,14 +66,14 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
       setError(t('callOffs.nameRequired'));
       return;
     }
-    if (!dateFrom || !dateTo) {
-      setError(t('callOffs.dateRangeRequired'));
+    if (!file) {
+      setError(t('callOffs.fileRequired'));
       return;
     }
     setSaving(true);
     setError('');
     api.callOffs
-      .create({ name, date_from: dateFrom, date_to: dateTo })
+      .create({ name, notes: notes.trim() || undefined, file })
       .then((row) => {
         setActiveCallOff(row.id, row.name);
         closeModal();
@@ -90,6 +92,8 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
     fontWeight: 600,
     cursor: 'pointer',
   };
+
+  const fieldStyle: CSSProperties = { display: 'block', width: '100%', marginTop: 4, padding: '0.5rem', boxSizing: 'border-box' };
 
   return (
     <>
@@ -117,6 +121,7 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
               borderRadius: 8,
               minWidth: 320,
               maxWidth: 480,
+              width: '100%',
               border: `1px solid ${importPanel.panel_border}`,
             }}
             onClick={(e) => e.stopPropagation()}
@@ -129,25 +134,33 @@ export default function CallOffNewComparisonControl({ buttonStyle, className }: 
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '0.5rem' }}
+                disabled={saving}
+                style={fieldStyle}
               />
             </label>
             <label style={{ display: 'block', marginBottom: 10 }}>
-              {t('callOffs.dateFrom')}
+              {t('callOffs.fileLabel')}
               <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '0.5rem' }}
+                ref={fileRef}
+                type="file"
+                accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                disabled={saving}
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                style={{ ...fieldStyle, padding: '0.35rem 0' }}
               />
+              <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#666' }}>
+                {t('callOffs.dateRangeFromFile')}
+              </span>
             </label>
             <label style={{ display: 'block', marginBottom: 16 }}>
-              {t('callOffs.dateTo')}
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '0.5rem' }}
+              {t('callOffs.notes')}
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                disabled={saving}
+                rows={3}
+                placeholder={t('callOffs.notesOptional')}
+                style={{ ...fieldStyle, resize: 'vertical' }}
               />
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

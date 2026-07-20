@@ -558,6 +558,8 @@ type VisualSettings = {
   colorize_avg_row: boolean;
   reference_display: ReferenceDisplayMode;
   machine_display: MachineDisplayMode;
+  /** Etykiety osi X wykresu słupkowego maszyn (wizualizacja danych). */
+  data_viz_machine_bar_label: MachineDisplayMode;
   ok_enabled: boolean;
   ok_from: number;
   ok_to: number;
@@ -581,6 +583,7 @@ type VisualSettings = {
   data_viz_color_contract: string;
   data_viz_color_scenario_production: string;
   data_viz_color_scenario_contract: string;
+  data_viz_color_call_off: string;
   data_viz_color_delta_negative: string;
   data_viz_color_delta_positive: string;
   data_viz_color_ref_line_overload: string;
@@ -639,6 +642,7 @@ const visualDefaults: VisualSettings = {
   colorize_avg_row: true,
   reference_display: 'both',
   machine_display: 'internal',
+  data_viz_machine_bar_label: 'internal',
   ok_enabled: true,
   ok_from: 0,
   ok_to: 79.99,
@@ -659,6 +663,7 @@ const visualDefaults: VisualSettings = {
   data_viz_color_contract: '#E86A10',
   data_viz_color_scenario_production: '#008BC1',
   data_viz_color_scenario_contract: '#F59B47',
+  data_viz_color_call_off: '#0091EA',
   data_viz_color_delta_negative: '#E86A10',
   data_viz_color_delta_positive: '#8A9300',
   data_viz_color_ref_line_overload: '#E86A10',
@@ -759,6 +764,7 @@ function loadVisualSettings(): VisualSettings {
     'visual_colorize_avg_row',
     'visual_reference_display',
     'visual_machine_display',
+    'visual_data_viz_machine_bar_label',
     'visual_ok_enabled',
     'visual_ok_from',
     'visual_ok_to',
@@ -779,6 +785,7 @@ function loadVisualSettings(): VisualSettings {
     'visual_data_viz_color_contract',
     'visual_data_viz_color_scenario_production',
     'visual_data_viz_color_scenario_contract',
+    'visual_data_viz_color_call_off',
     'visual_data_viz_color_delta_negative',
     'visual_data_viz_color_delta_positive',
     'visual_data_viz_color_ref_line_overload',
@@ -827,6 +834,9 @@ function loadVisualSettings(): VisualSettings {
     colorize_avg_row: toBool(map.get('visual_colorize_avg_row'), visualDefaults.colorize_avg_row),
     reference_display: normalizeReferenceDisplayMode(map.get('visual_reference_display') ?? visualDefaults.reference_display),
     machine_display: normalizeMachineDisplayMode(map.get('visual_machine_display') ?? visualDefaults.machine_display),
+    data_viz_machine_bar_label: normalizeMachineDisplayMode(
+      map.get('visual_data_viz_machine_bar_label') ?? visualDefaults.data_viz_machine_bar_label
+    ),
     ok_enabled: toBool(map.get('visual_ok_enabled'), visualDefaults.ok_enabled),
     ok_from: toNum(map.get('visual_ok_from'), visualDefaults.ok_from),
     ok_to: toNum(map.get('visual_ok_to'), visualDefaults.ok_to),
@@ -859,6 +869,7 @@ function loadVisualSettings(): VisualSettings {
       map.get('visual_data_viz_color_scenario_contract'),
       visualDefaults.data_viz_color_scenario_contract
     ),
+    data_viz_color_call_off: toColor(map.get('visual_data_viz_color_call_off'), visualDefaults.data_viz_color_call_off),
     data_viz_color_delta_negative: toColor(map.get('visual_data_viz_color_delta_negative'), visualDefaults.data_viz_color_delta_negative),
     data_viz_color_delta_positive: toColor(map.get('visual_data_viz_color_delta_positive'), visualDefaults.data_viz_color_delta_positive),
     data_viz_color_ref_line_overload: toColor(
@@ -919,6 +930,11 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     machine_display: normalizeMachineDisplayMode(
       payload.machine_display !== undefined ? payload.machine_display : current.machine_display
     ),
+    data_viz_machine_bar_label: normalizeMachineDisplayMode(
+      payload.data_viz_machine_bar_label !== undefined
+        ? payload.data_viz_machine_bar_label
+        : current.data_viz_machine_bar_label
+    ),
     load_expansion_direction: normalizeLoadExpansionDirection(
       payload.load_expansion_direction !== undefined ? payload.load_expansion_direction : current.load_expansion_direction,
       visualDefaults.load_expansion_direction
@@ -952,6 +968,10 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
         ? payload.data_viz_color_scenario_contract
         : current.data_viz_color_scenario_contract,
       visualDefaults.data_viz_color_scenario_contract
+    ),
+    data_viz_color_call_off: toColor(
+      payload.data_viz_color_call_off !== undefined ? payload.data_viz_color_call_off : current.data_viz_color_call_off,
+      visualDefaults.data_viz_color_call_off
     ),
     data_viz_color_delta_negative: toColor(
       payload.data_viz_color_delta_negative !== undefined ? payload.data_viz_color_delta_negative : current.data_viz_color_delta_negative,
@@ -1075,6 +1095,7 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     ['visual_colorize_avg_row', merged.colorize_avg_row ? '1' : '0'],
     ['visual_reference_display', merged.reference_display],
     ['visual_machine_display', merged.machine_display],
+    ['visual_data_viz_machine_bar_label', merged.data_viz_machine_bar_label],
     ['visual_load_expansion_direction', merged.load_expansion_direction],
     ['visual_show_sop_marker', merged.show_sop_marker ? '1' : '0'],
     ['visual_show_eop_marker', merged.show_eop_marker ? '1' : '0'],
@@ -1102,6 +1123,7 @@ function saveVisualSettings(payload: Partial<VisualSettings>): void {
     ['visual_data_viz_color_contract', merged.data_viz_color_contract],
     ['visual_data_viz_color_scenario_production', merged.data_viz_color_scenario_production],
     ['visual_data_viz_color_scenario_contract', merged.data_viz_color_scenario_contract],
+    ['visual_data_viz_color_call_off', merged.data_viz_color_call_off],
     ['visual_data_viz_color_delta_negative', merged.data_viz_color_delta_negative],
     ['visual_data_viz_color_delta_positive', merged.data_viz_color_delta_positive],
     ['visual_data_viz_color_ref_line_overload', merged.data_viz_color_ref_line_overload],

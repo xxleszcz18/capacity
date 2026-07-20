@@ -14,6 +14,8 @@ type ScenarioRow = {
   created_at: string;
   source_scenario_id?: number | null;
   source_scenario_name?: string | null;
+  source_call_off_comparison_id?: number | null;
+  source_call_off_name?: string | null;
   updated_at?: string | null;
   archived_at?: string | null;
 };
@@ -71,12 +73,21 @@ export default function Scenarios() {
   };
 
   const sourceLabel = (s: ScenarioRow) => {
+    let base: string;
     if (s.source_scenario_id != null && s.source_scenario_id > 0) {
-      return s.source_scenario_name
+      base = s.source_scenario_name
         ? t('scenarios.sourceScenarioNamed', { name: s.source_scenario_name })
         : t('scenarios.sourceScenarioId', { id: s.source_scenario_id });
+    } else {
+      base = t('scenarios.sourceCurrentDb');
     }
-    return t('scenarios.sourceCurrentDb');
+    if (s.source_call_off_comparison_id != null && s.source_call_off_comparison_id > 0) {
+      const suffix = s.source_call_off_name
+        ? t('scenarios.sourceCallOffNamed', { name: s.source_call_off_name })
+        : t('scenarios.sourceCallOffId', { id: s.source_call_off_comparison_id });
+      return base + suffix;
+    }
+    return base;
   };
 
   type ScenarioSortCol = 'name' | 'scope' | 'source' | 'created' | 'archived';

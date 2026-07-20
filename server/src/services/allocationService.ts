@@ -12,6 +12,18 @@ import {
   resolveOperationCycleForCalculator,
   operationHasAlternativeCycle,
 } from './capacityService.js';
+import { getProductionMonthsInYear } from '../utils/sopEopFormat.js';
+
+/** Alokacja „placeholder” — wolumen 0, ale rok w zakresie SOP–EOP (wolumeny mogą pojawić się później). */
+export function canAllocateZeroVolumePlaceholder(
+  sop: unknown,
+  eop: unknown,
+  year: number,
+  resolvedVolume: number
+): boolean {
+  if (resolvedVolume > 1e-9) return false;
+  return getProductionMonthsInYear(sop, eop, year) > 0;
+}
 
 export type TargetCycleOnAllocation = {
   cycleTimeSecondsOnTarget?: number | null;
@@ -467,6 +479,7 @@ export function executeAllocation(
       part_id: op.part_id,
       volume_value: op.volume_value,
       volume_unit: op.volume_unit,
+      split_from_operation_id: op.split_from_operation_id ?? null,
     },
     year,
     opYearRow ?? null,
@@ -474,30 +487,37 @@ export function executeAllocation(
     useContractualVolumes
   );
 
-  if (resolved.volume_value <= 0) {
+  const zeroPlaceholder = canAllocateZeroVolumePlaceholder(op.sop, op.eop, year, resolved.volume_value);
+
+  if (resolved.volume_value <= 0 && !zeroPlaceholder) {
     return { success: false, error: 'Dla wybranego roku wolumen tej operacji wynosi 0.' };
   }
 
-  const weeklyResolved = resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
-    sop: op.sop ?? '',
-    eop: op.eop ?? '',
-    year,
-    volume_origin: resolved.volume_origin,
-    count_after_eop: resolved.count_after_eop,
-    has_project: op.project_id != null,
-  });
+  const weeklyResolved = zeroPlaceholder
+    ? { weekly: 0, fraction: 1 }
+    : resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+        sop: op.sop ?? '',
+        eop: op.eop ?? '',
+        year,
+        volume_origin: resolved.volume_origin,
+        count_after_eop: resolved.count_after_eop,
+        has_project: op.project_id != null,
+      });
   const fraction = weeklyResolved.fraction;
   const currentWeekly = weeklyResolved.weekly;
-  const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = resolveAllocationMoveWeekly(
-    volumeToMove,
-    volumeUnit,
-    settings,
-    fraction
-  );
+  const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = zeroPlaceholder
+    ? { moveWeeklyEffective: 0, moveBaseWeekly: 0 }
+    : resolveAllocationMoveWeekly(volumeToMove, volumeUnit, settings, fraction);
 
-  if (volumeToMove <= 0) return { success: false, error: 'Wolumen musi być dodatni.' };
-  if (moveWeekly > currentWeekly + 1e-6) {
-    return { success: false, error: 'Wolumen do przeniesienia przekracza wolumen operacji dla wybranego roku.' };
+  if (zeroPlaceholder) {
+    if (volumeToMove > 1e-6) {
+      return { success: false, error: 'Dla roku bez wolumenu można przypisać detal tylko z przeniesieniem 0.' };
+    }
+  } else {
+    if (volumeToMove <= 0) return { success: false, error: 'Wolumen musi być dodatni.' };
+    if (moveWeekly > currentWeekly + 1e-6) {
+      return { success: false, error: 'Wolumen do przeniesienia przekracza wolumen operacji dla wybranego roku.' };
+    }
   }
 
   const targetCycle = resolveTargetCycleOnAllocation(op, {
@@ -649,6 +669,7 @@ export function executeAllocationInScenario(
       part_id: op.part_id,
       volume_value: op.volume_value,
       volume_unit: op.volume_unit,
+      split_from_operation_id: op.split_from_operation_id ?? null,
     },
     year,
     opYearRow ?? null,
@@ -656,30 +677,37 @@ export function executeAllocationInScenario(
     useContractualVolumes
   );
 
-  if (resolved.volume_value <= 0) {
+  const zeroPlaceholder = canAllocateZeroVolumePlaceholder(sop, eop, year, resolved.volume_value);
+
+  if (resolved.volume_value <= 0 && !zeroPlaceholder) {
     return { success: false, error: 'Dla wybranego roku wolumen tej operacji wynosi 0.' };
   }
 
-  const weeklyResolved = resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
-    sop: String(sop),
-    eop: String(eop),
-    year,
-    volume_origin: resolved.volume_origin,
-    count_after_eop: resolved.count_after_eop,
-    has_project: op.project_id != null,
-  });
+  const weeklyResolved = zeroPlaceholder
+    ? { weekly: 0, fraction: 1 }
+    : resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+        sop: String(sop),
+        eop: String(eop),
+        year,
+        volume_origin: resolved.volume_origin,
+        count_after_eop: resolved.count_after_eop,
+        has_project: op.project_id != null,
+      });
   const fraction = weeklyResolved.fraction;
   const currentWeekly = weeklyResolved.weekly;
-  const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = resolveAllocationMoveWeekly(
-    volumeToMove,
-    volumeUnit,
-    settings,
-    fraction
-  );
+  const { moveWeeklyEffective: moveWeekly, moveBaseWeekly } = zeroPlaceholder
+    ? { moveWeeklyEffective: 0, moveBaseWeekly: 0 }
+    : resolveAllocationMoveWeekly(volumeToMove, volumeUnit, settings, fraction);
 
-  if (volumeToMove <= 0) return { success: false, error: 'Wolumen musi być dodatni.' };
-  if (moveWeekly > currentWeekly + 1e-6) {
-    return { success: false, error: 'Wolumen do przeniesienia przekracza wolumen operacji dla wybranego roku.' };
+  if (zeroPlaceholder) {
+    if (volumeToMove > 1e-6) {
+      return { success: false, error: 'Dla roku bez wolumenu można przypisać detal tylko z przeniesieniem 0.' };
+    }
+  } else {
+    if (volumeToMove <= 0) return { success: false, error: 'Wolumen musi być dodatni.' };
+    if (moveWeekly > currentWeekly + 1e-6) {
+      return { success: false, error: 'Wolumen do przeniesienia przekracza wolumen operacji dla wybranego roku.' };
+    }
   }
 
   const targetCycle = resolveTargetCycleOnAllocation(op, {

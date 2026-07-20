@@ -17,6 +17,7 @@ export type DataVizColors = {
   contract: string;
   scenarioProduction: string;
   scenarioContract: string;
+  callOff: string;
   deltaNegative: string;
   deltaPositive: string;
   refLineOverload: string;
@@ -30,6 +31,7 @@ export const DEFAULT_DATA_VIZ_COLORS: DataVizColors = {
   contract: '#E86A10', // Dark Orange — kontrakt
   scenarioProduction: '#008BC1', // Dark Blue — scenariusz produkcja
   scenarioContract: '#F59B47', // Light Orange — scenariusz kontrakt (odróżnienie od kontraktu)
+  callOff: '#0091EA', // intensywny błękit — Call offs (SAP)
   deltaNegative: '#E86A10', // Dark Orange — brak czerwieni w palecie marki
   deltaPositive: '#8A9300', // Dark Green
   refLineOverload: '#E86A10', // linia 100% obciążenia
@@ -71,6 +73,7 @@ export type VisualSettingsColorFields = {
   data_viz_color_contract?: unknown;
   data_viz_color_scenario_production?: unknown;
   data_viz_color_scenario_contract?: unknown;
+  data_viz_color_call_off?: unknown;
   data_viz_color_delta_negative?: unknown;
   data_viz_color_delta_positive?: unknown;
   data_viz_color_ref_line_overload?: unknown;
@@ -85,6 +88,7 @@ export function dataVizColorsFromVisualSettings(v: VisualSettingsColorFields | n
     contract: normalizeHexColor(v?.data_viz_color_contract, d.contract),
     scenarioProduction: normalizeHexColor(v?.data_viz_color_scenario_production, d.scenarioProduction),
     scenarioContract: normalizeHexColor(v?.data_viz_color_scenario_contract, d.scenarioContract),
+    callOff: normalizeHexColor(v?.data_viz_color_call_off, d.callOff),
     deltaNegative: normalizeHexColor(v?.data_viz_color_delta_negative, d.deltaNegative),
     deltaPositive: normalizeHexColor(v?.data_viz_color_delta_positive, d.deltaPositive),
     refLineOverload: normalizeHexColor(v?.data_viz_color_ref_line_overload, d.refLineOverload),

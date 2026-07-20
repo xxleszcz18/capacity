@@ -174,3 +174,23 @@ export function monthAbbrev(month: number, locale: string): string {
     return fallback[month] ?? String(month);
   }
 }
+
+/** Numer tygodnia ISO (1–53) — jak w kalendarzu / SAP CW. */
+export function isoWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
+/**
+ * Tydzień kalendarzowy (ISO) dla wiadra T1…T5 w miesiącu (dni 1–7, 8–14, …).
+ * Bierze dzień środkowy wiadra, żeby etykieta trafiała w ten sam CW co dane SAP.
+ */
+export function calendarWeekForMonthWeek(year: number, month: number, weekOfMonth: number): number {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const w = Math.max(1, Math.floor(Number(weekOfMonth)) || 1);
+  const day = Math.min(daysInMonth, (w - 1) * 7 + 4);
+  return isoWeekNumber(new Date(year, month - 1, day));
+}

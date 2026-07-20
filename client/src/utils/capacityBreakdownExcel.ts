@@ -18,11 +18,17 @@ export type BreakdownFetchParams = {
   type?: string[];
   client?: string[];
   scenarioId?: number;
+  callOffComparisonId?: number;
   settingsProfile?: 'capacity' | 'ocu';
   dimFilters?: DimFiltersState;
 };
 
-export type BreakdownSeriesKey = 'production' | 'contract' | 'scenario_production' | 'scenario_contract';
+export type BreakdownSeriesKey =
+  | 'production'
+  | 'contract'
+  | 'scenario_production'
+  | 'scenario_contract'
+  | 'call_off';
 
 type BreakdownResponse = Awaited<ReturnType<typeof api.capacity.breakdown>>;
 
@@ -43,6 +49,7 @@ export function breakdownFetchParamsToApi(fetchParams: BreakdownFetchParams) {
     types: joinCsvFilter(fetchParams.type ?? []),
     clients: joinCsvFilter(fetchParams.client ?? []),
     scenarioId: fetchParams.scenarioId,
+    callOffComparisonId: fetchParams.callOffComparisonId,
     settingsProfile: fetchParams.settingsProfile,
     ...buildDimensionApiParams(fetchParams.dimFilters ?? EMPTY_DIM_FILTERS),
   };

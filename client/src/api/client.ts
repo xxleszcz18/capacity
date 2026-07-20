@@ -1,3 +1,5 @@
+import { API_UNREACHABLE_MESSAGE } from '../i18n/apiErrors';
+
 const ENV_API = (import.meta.env.VITE_API_BASE ?? '').toString().trim().replace(/\/+$/, '');
 const BASE = ENV_API || '/api';
 
@@ -8,11 +10,17 @@ export const MACHINES_IMPORT_CONFIRM = 'IMPORTUJ_MASZYNY';
 function mapFetchFailure(e: unknown): Error {
   const msg = e instanceof Error ? e.message : String(e);
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
-    return new Error(
-      'Brak połączenia z serwerem API (Failed to fetch). Uruchom backend (npm run dev w katalogu server, port 3001). Front Vite musi działać z proxy /api albo ustaw w pliku .env klienta VITE_API_BASE na pełny adres API, np. http://127.0.0.1:3001/api'
-    );
+    return new Error(API_UNREACHABLE_MESSAGE);
   }
   return e instanceof Error ? e : new Error(msg);
+}
+
+function isLikelyApiUnreachable(res: Response, data: unknown): boolean {
+  if (res.status >= 502 && res.status <= 504) return true;
+  if (res.status !== 500) return false;
+  const err = (data as { error?: string }).error;
+  if (err) return false;
+  return res.statusText === 'Internal Server Error' || res.statusText === '';
 }
 
 /** Build query string only from defined, non-empty params (no "undefined" in URL). */
@@ -44,7 +52,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (res.status === 401 && !path.startsWith('/auth/')) {
     window.dispatchEvent(new CustomEvent('capacity:unauthorized'));
   }
-  if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText);
+  if (!res.ok) {
+    const apiError = (data as { error?: string }).error;
+    if (isLikelyApiUnreachable(res, data)) {
+      throw new Error(API_UNREACHABLE_MESSAGE);
+    }
+    if (apiError) throw new Error(apiError);
+    throw new Error(res.statusText || `HTTP ${res.status}`);
+  }
   return data as T;
 }
 
@@ -537,6 +552,7 @@ export const api = {
           colorize_avg_row: boolean;
           reference_display: 'sap' | 'alias' | 'both';
           machine_display: 'sap' | 'internal' | 'both';
+          data_viz_machine_bar_label: 'sap' | 'internal' | 'both';
           ok_enabled: boolean;
           ok_from: number;
           ok_to: number;
@@ -569,6 +585,7 @@ export const api = {
         colorize_avg_row: boolean;
         reference_display: 'sap' | 'alias' | 'both';
         machine_display: 'sap' | 'internal' | 'both';
+        data_viz_machine_bar_label: 'sap' | 'internal' | 'both';
         ok_enabled: boolean;
         ok_from: number;
         ok_to: number;
@@ -1054,6 +1071,7 @@ export const api = {
       client?: string;
       clients?: string;
       scenarioId?: number;
+      callOffComparisonId?: number;
       machineStatus?: 'active' | 'inactive' | 'RFQ' | 'all';
       machineStatuses?: string;
       settingsProfile?: 'capacity' | 'ocu';
@@ -1078,6 +1096,7 @@ export const api = {
       if (params.clients) q.set('clients', params.clients);
       else if (params.client) q.set('client', params.client);
       if (params.scenarioId != null) q.set('scenarioId', String(params.scenarioId));
+      if (params.callOffComparisonId != null) q.set('callOffComparisonId', String(params.callOffComparisonId));
       if (params.machineStatuses) q.set('machineStatuses', params.machineStatuses);
       else if (params.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
       if (params.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
@@ -1097,7 +1116,7 @@ export const api = {
         year: number;
         series: Partial<
           Record<
-            'production' | 'contract' | 'scenario_production' | 'scenario_contract',
+            'production' | 'contract' | 'scenario_production' | 'scenario_contract' | 'call_off',
             {
               load_percent: number | null;
               clients: {
@@ -1190,6 +1209,8 @@ export const api = {
           scenario_scope?: string;
           source_scenario_id?: number | null;
           source_scenario_name?: string | null;
+          source_call_off_comparison_id?: number | null;
+          source_call_off_name?: string | null;
           updated_at?: string | null;
           archived_at?: string | null;
         }[]
@@ -1202,11 +1223,25 @@ export const api = {
         created_at: string;
         updated_at?: string | null;
         source_scenario_id?: number | null;
+        source_call_off_comparison_id?: number | null;
         archived_at?: string | null;
         snapshot: any;
       }>(`/scenarios/${id}`),
-    create: (body: { name: string; scenario_scope: string; sourceScenarioId?: number | null }) =>
-      request<{ id: number; name: string; scenario_scope?: string; created_at: string; source_scenario_id?: number | null; updated_at?: string | null }>(
+    create: (body: {
+      name: string;
+      scenario_scope: string;
+      sourceScenarioId?: number | null;
+      sourceCallOffComparisonId?: number | null;
+    }) =>
+      request<{
+        id: number;
+        name: string;
+        scenario_scope?: string;
+        created_at: string;
+        source_scenario_id?: number | null;
+        source_call_off_comparison_id?: number | null;
+        updated_at?: string | null;
+      }>(
         '/scenarios',
         {
           method: 'POST',
@@ -1308,6 +1343,7 @@ export const api = {
           name: string;
           date_from: string;
           date_to: string;
+          notes?: string | null;
           source_filename: string | null;
           created_at: string;
           updated_at: string;
@@ -1321,6 +1357,7 @@ export const api = {
         name: string;
         date_from: string;
         date_to: string;
+        notes?: string | null;
         source_filename: string | null;
         source_stored_filename?: string | null;
         created_at: string;
@@ -1346,11 +1383,37 @@ export const api = {
           max_date: string | null;
         };
       }>(`/call-offs/${id}`),
-    create: (body: { name: string; date_from: string; date_to: string }) =>
-      request<{ id: number; name: string; date_from: string; date_to: string }>('/call-offs', {
+    create: async (body: { name: string; notes?: string; file: File }) => {
+      const fd = new FormData();
+      fd.append('name', body.name);
+      if (body.notes?.trim()) fd.append('notes', body.notes.trim());
+      fd.append('file', body.file);
+      const res = await fetch(`${BASE}/call-offs`, {
         method: 'POST',
-        body: JSON.stringify(body),
-      }),
+        body: fd,
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || res.statusText);
+      return data as {
+        id: number;
+        name: string;
+        date_from: string;
+        date_to: string;
+        notes: string | null;
+        source_filename: string | null;
+        last_import?: {
+          imported: number;
+          skippedOutOfRange: number;
+          skippedInvalid: number;
+          unmatchedSap: number;
+          matchedExact: number;
+          matchedTruncated: number;
+          unmatchedReport: { sap_ref: string; row_count: number; total_quantity: number }[];
+        };
+      };
+    },
     delete: (id: number) => request<void>(`/call-offs/${id}`, { method: 'DELETE' }),
     archive: (id: number) => request<{ ok: boolean }>(`/call-offs/${id}/archive`, { method: 'POST' }),
     unarchive: (id: number) => request<{ ok: boolean }>(`/call-offs/${id}/unarchive`, { method: 'POST' }),
@@ -1423,6 +1486,7 @@ export const api = {
         yearTo: number;
         date_from: string;
         date_to: string;
+        volumeYears?: number[];
         machines: {
           machine_id: number;
           internal_number: string | number;
@@ -1435,6 +1499,11 @@ export const api = {
             {
               load_percent: number;
               call_off_load_percent: number;
+              call_off_annual_load_percent?: number;
+              call_off_annual_required_sec_per_week?: number;
+              call_off_annual_availability_sec_per_week?: number;
+              availability_sec_per_week?: number;
+              required_sec_per_week?: number;
               alternative_border?: string;
               has_rfq?: boolean;
               detail_breakdown?: unknown[];

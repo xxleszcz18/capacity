@@ -1,7 +1,17 @@
-import { getMachineCapacityByYears, getMachinePeriodBreakdown } from './capacityService.js';
+import {
+  getMachineCapacityByYears,
+  getMachineCapacitiesForYear,
+  getMachineMonthlyLoadsByMonth,
+  getMachinePeriodBreakdown,
+  type CapacityCalculationOptions,
+} from './capacityService.js';
 import { loadCallOffVolumeMaps } from './callOffService.js';
 import type { MachineDimensionFilter } from '../utils/machineDimensionFilter.js';
 import type { MachineStatusFilterInput, CalculationSettingsProfile } from './capacityService.js';
+
+const CALL_OFF_PROD_OPTIONS: CapacityCalculationOptions = {
+  includeAssignedZeroVolumeDetailsInBreakdown: true,
+};
 
 export type CallOffCalculatorMachine = {
   machine_id: number;
@@ -14,7 +24,14 @@ export type CallOffCalculatorMachine = {
     number,
     {
       load_percent: number;
+      /** Peak miesięczny SAP — dolny pasek w komórce roku w Kalkulatorze. */
       call_off_load_percent: number;
+      /**
+       * Data Viz: jak produkcja/kontrakt (suma req / suma avail), ale tylko miesiące z danymi SAP (bez zer).
+       */
+      call_off_annual_load_percent?: number;
+      call_off_annual_required_sec_per_week?: number;
+      call_off_annual_availability_sec_per_week?: number;
       capacity_pcs_per_week: number;
       required_sec_per_week: number;
       availability_sec_per_week?: number;
@@ -96,20 +113,108 @@ export type CallOffPeriodBreakdownMachine = {
 
 type DetailBreakdownRow = NonNullable<CallOffCalculatorMachine['years'][number]['call_off_detail_breakdown']>;
 
-/** Najwyższe miesięczne obciążenie SAP w roku (zamiast uśrednionego rocznego). */
-function peakCallOffMonthInYear(
-  months: Record<number, { load_percent: number; detail_breakdown?: DetailBreakdownRow }>
-): { load_percent: number; detail_breakdown: DetailBreakdownRow } {
-  let peakLoad = 0;
-  let peakBreakdown: DetailBreakdownRow = [];
-  for (let month = 1; month <= 12; month++) {
-    const load = months[month]?.load_percent ?? 0;
-    if (load > peakLoad) {
-      peakLoad = load;
-      peakBreakdown = months[month]?.detail_breakdown ?? [];
+/** Detale z Capacity bez wolumenu SAP w okresie — dopisz jako 0%, żeby prognoza pokazywała skład maszyny. */
+function mergeAssignedDetailsIntoCallOffBreakdown(
+  callOffDetails: DetailBreakdownRow | undefined,
+  baseDetails: DetailBreakdownRow | undefined
+): DetailBreakdownRow {
+  const co = [...(callOffDetails ?? [])];
+  const seen = new Set(co.map((d) => `${d.project_label}\0${d.detail_label}`));
+  for (const d of baseDetails ?? []) {
+    const key = `${d.project_label}\0${d.detail_label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    co.push({
+      project_label: d.project_label,
+      detail_label: d.detail_label,
+      contribution_percent: 0,
+      share_percent: 0,
+      volume_quantity: 0,
+      has_rfq: d.has_rfq,
+    });
+  }
+  return co.sort((a, b) => b.contribution_percent - a.contribution_percent);
+}
+
+type MonthLoad = { load_percent: number; detail_breakdown: DetailBreakdownRow };
+
+function findPeakSapMonth(months: Map<number, MonthLoad>): { month: number; sap: MonthLoad } {
+  let bestMonth = 1;
+  let best: MonthLoad = { load_percent: 0, detail_breakdown: [] };
+  for (let m = 1; m <= 12; m++) {
+    const row = months.get(m) ?? { load_percent: 0, detail_breakdown: [] };
+    if (row.load_percent > best.load_percent) {
+      best = row;
+      bestMonth = m;
     }
   }
-  return { load_percent: peakLoad, detail_breakdown: peakBreakdown };
+  return { month: bestMonth, sap: best };
+}
+
+type VizAgg = {
+  required_sec: number;
+  availability_sec: number;
+  load_percent: number;
+};
+
+/**
+ * Jak produkcja/kontrakt: obciążenie = suma wymaganego czasu / suma dostępności,
+ * ale tylko z miesięcy z danymi SAP (load/req > 0) — bez rozcieńczania zerami.
+ */
+function aggregateCallOffMonthsSkippingZeros(
+  year: number,
+  machineIds: number[] | undefined,
+  machineType: string | string[] | undefined,
+  useContractualVolumes: boolean | undefined,
+  machineStatusFilter: MachineStatusFilterInput | undefined,
+  dimensionFilters: MachineDimensionFilter[] | undefined,
+  settingsProfile: CalculationSettingsProfile | undefined,
+  callOffVolumes: NonNullable<ReturnType<typeof loadCallOffVolumeMaps>>
+): Map<number, VizAgg> {
+  const agg = new Map<number, { required_sec: number; availability_sec: number }>();
+
+  for (let month = 1; month <= 12; month++) {
+    const monthRows = getMachineCapacitiesForYear(
+      year,
+      machineIds,
+      machineType,
+      undefined,
+      null,
+      undefined,
+      useContractualVolumes,
+      machineStatusFilter,
+      dimensionFilters,
+      settingsProfile,
+      month,
+      undefined,
+      callOffVolumes,
+      'monthly',
+      CALL_OFF_PROD_OPTIONS
+    );
+    for (const row of monthRows) {
+      const req = Number(row.required_sec_per_week ?? 0);
+      const avail = Number(row.availability_sec_per_week ?? 0);
+      const load = Number(row.load_percent ?? 0);
+      if (load <= 1e-9 && req <= 1e-9) continue;
+      if (avail <= 0) continue;
+      const prev = agg.get(row.machine_id) ?? { required_sec: 0, availability_sec: 0 };
+      prev.required_sec += req;
+      prev.availability_sec += avail;
+      agg.set(row.machine_id, prev);
+    }
+  }
+
+  const out = new Map<number, VizAgg>();
+  for (const [machineId, v] of agg) {
+    const load_percent =
+      v.availability_sec > 0 ? Math.round((v.required_sec / v.availability_sec) * 100) : 0;
+    out.set(machineId, {
+      required_sec: Math.round(v.required_sec),
+      availability_sec: Math.round(v.availability_sec),
+      load_percent,
+    });
+  }
+  return out;
 }
 
 export function getCallOffComparisonCalculator(
@@ -137,12 +242,16 @@ export function getCallOffComparisonCalculator(
     machineStatusFilter,
     dimensionFilters,
     settingsProfile,
-    null
+    null,
+    CALL_OFF_PROD_OPTIONS
   );
 
-  const callOffYearPeak = new Map<number, Map<number, { load_percent: number; detail_breakdown: DetailBreakdownRow }>>();
+  /** Rok → maszyna → peak (Kalkulator) oraz agregacja bez zer (Data Viz). */
+  const sapPeakByYear = new Map<number, Map<number, MonthLoad>>();
+  const sapVizByYear = new Map<number, Map<number, VizAgg>>();
+
   for (let y = yearFrom; y <= yearTo; y++) {
-    const callOffPeriod = getMachinePeriodBreakdown(
+    const sapByMonth = getMachineMonthlyLoadsByMonth(
       y,
       machineIds,
       machineType,
@@ -153,24 +262,44 @@ export function getCallOffComparisonCalculator(
       machineStatusFilter,
       dimensionFilters,
       settingsProfile,
-      callOffVolumes
+      callOffVolumes,
+      CALL_OFF_PROD_OPTIONS
     );
-    for (const row of callOffPeriod) {
-      const peak = peakCallOffMonthInYear(row.months);
-      if (!callOffYearPeak.has(row.machine_id)) callOffYearPeak.set(row.machine_id, new Map());
-      callOffYearPeak.get(row.machine_id)!.set(y, peak);
+
+    const peakMap = new Map<number, MonthLoad>();
+    for (const [machineId, sapMonths] of sapByMonth) {
+      const { sap: peak } = findPeakSapMonth(sapMonths);
+      peakMap.set(machineId, peak);
     }
+    sapPeakByYear.set(y, peakMap);
+
+    sapVizByYear.set(
+      y,
+      aggregateCallOffMonthsSkippingZeros(
+        y,
+        machineIds,
+        machineType,
+        useContractualVolumes,
+        machineStatusFilter,
+        dimensionFilters,
+        settingsProfile,
+        callOffVolumes
+      )
+    );
   }
 
   return baseMachines.map((m) => {
-    const peaksByYear = callOffYearPeak.get(m.machine_id);
     const years: CallOffCalculatorMachine['years'] = {};
     for (const [yearKey, yData] of Object.entries(m.years)) {
       const year = Number(yearKey);
-      const peak = peaksByYear?.get(year);
+      const peak = sapPeakByYear.get(year)?.get(m.machine_id);
+      const viz = sapVizByYear.get(year)?.get(m.machine_id);
       years[year] = {
         ...yData,
         call_off_load_percent: peak?.load_percent ?? 0,
+        call_off_annual_load_percent: viz?.load_percent ?? 0,
+        call_off_annual_required_sec_per_week: viz?.required_sec ?? 0,
+        call_off_annual_availability_sec_per_week: viz?.availability_sec ?? 0,
         call_off_detail_breakdown: peak?.detail_breakdown ?? [],
       };
     }
@@ -201,7 +330,8 @@ export function getCallOffPeriodBreakdown(
     machineStatusFilter,
     dimensionFilters,
     settingsProfile,
-    null
+    null,
+    { includeAssignedZeroVolumeDetailsInBreakdown: true }
   );
 
   const callOff = getMachinePeriodBreakdown(
@@ -215,7 +345,8 @@ export function getCallOffPeriodBreakdown(
     machineStatusFilter,
     dimensionFilters,
     settingsProfile,
-    callOffVolumes
+    callOffVolumes,
+    { includeAssignedZeroVolumeDetailsInBreakdown: true }
   );
 
   const callOffByMachine = new Map(callOff.map((m) => [m.machine_id, m]));
@@ -234,7 +365,10 @@ export function getCallOffPeriodBreakdown(
           load_percent: wd.load_percent,
           call_off_load_percent: coWeek?.load_percent ?? 0,
           detail_breakdown: wd.detail_breakdown ?? [],
-          call_off_detail_breakdown: coWeek?.detail_breakdown ?? [],
+          call_off_detail_breakdown: mergeAssignedDetailsIntoCallOffBreakdown(
+            coWeek?.detail_breakdown,
+            wd.detail_breakdown
+          ),
         };
       }
       months[month] = {
@@ -244,7 +378,10 @@ export function getCallOffPeriodBreakdown(
         has_sop: md.has_sop,
         has_eop: md.has_eop,
         detail_breakdown: md.detail_breakdown ?? [],
-        call_off_detail_breakdown: coMd?.detail_breakdown ?? [],
+        call_off_detail_breakdown: mergeAssignedDetailsIntoCallOffBreakdown(
+          coMd?.detail_breakdown,
+          md.detail_breakdown
+        ),
       };
     }
     return {

@@ -29,6 +29,7 @@ type VisualSettings = {
   colorize_avg_row: boolean;
   reference_display: 'sap' | 'alias' | 'both';
   machine_display: 'sap' | 'internal' | 'both';
+  data_viz_machine_bar_label: 'sap' | 'internal' | 'both';
   ok_enabled: boolean;
   ok_from: number;
   ok_to: number;
@@ -92,6 +93,9 @@ function normalizeVisualResponse(v: Record<string, unknown>): VisualSettings {
   return {
     ...(v as VisualSettings),
     machine_display: normalizeMachineDisplayMode((v as { machine_display?: string }).machine_display),
+    data_viz_machine_bar_label: normalizeMachineDisplayMode(
+      (v as { data_viz_machine_bar_label?: string }).data_viz_machine_bar_label ?? 'internal'
+    ),
     contractual_calculator_frame_color:
       (v as { contractual_calculator_frame_color?: string }).contractual_calculator_frame_color ?? '#ff9800',
     calculator_page_size: (() => {
@@ -210,6 +214,10 @@ export default function SettingsVisual() {
   const setMachineDisplay = (value: 'sap' | 'internal' | 'both') => {
     setForm((prev) => (prev ? { ...prev, machine_display: value } : prev));
   };
+
+  const setMachineBarLabel = (value: 'sap' | 'internal' | 'both') => {
+    setForm((prev) => (prev ? { ...prev, data_viz_machine_bar_label: value } : prev));
+  };
   const setWorkspaceColor = (section: keyof WorkspaceThemeSettings, key: keyof WorkspaceThemeColors, value: string) => {
     const flatKey = `workspace_${section}_${key}` as keyof ReturnType<typeof flattenWorkspaceThemes>;
     setForm((prev) => (prev ? { ...prev, [flatKey]: value } : prev));
@@ -271,6 +279,37 @@ export default function SettingsVisual() {
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input type="radio" name="machdisp" checked={form.machine_display === 'both'} onChange={() => setMachineDisplay('both')} />
+            {t('visual.bothSapInternal')}
+          </label>
+        </div>
+        <h4 style={{ margin: '18px 0 8px', fontSize: 14 }}>{t('visual.machineBarChartLabels')}</h4>
+        <p style={{ fontSize: 13, color: '#666', marginTop: 0, marginBottom: 10 }}>{t('visual.machineBarChartLabelsHelp')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="machbarlabel"
+              checked={form.data_viz_machine_bar_label === 'sap'}
+              onChange={() => setMachineBarLabel('sap')}
+            />
+            {t('visual.sapOnly')}
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="machbarlabel"
+              checked={form.data_viz_machine_bar_label === 'internal'}
+              onChange={() => setMachineBarLabel('internal')}
+            />
+            {t('visual.internalOnly')}
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="radio"
+              name="machbarlabel"
+              checked={form.data_viz_machine_bar_label === 'both'}
+              onChange={() => setMachineBarLabel('both')}
+            />
             {t('visual.bothSapInternal')}
           </label>
         </div>

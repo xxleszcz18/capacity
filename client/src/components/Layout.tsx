@@ -310,7 +310,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     ]
   );
 
-  const capacityMainNav: { path: string; labelKey: string; end?: boolean; permission: string }[] = [
+  const capacityMainNav: { path: string; labelKey: string; end?: boolean; permission: string; isActivePath?: (pathname: string) => boolean }[] = [
     { path: '/kalkulator', labelKey: 'layout.calculator', end: true, permission: 'calculator.view' },
     { path: '/maszyny', labelKey: 'layout.machines', permission: 'machines.view' },
     { path: '/projekty', labelKey: 'layout.projects', permission: 'projects.view' },
@@ -318,7 +318,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     { path: '/wizualizacja-danych', labelKey: 'layout.dataVisualization', permission: 'admin_data_viz.view' },
   ];
 
-  const scenarioMainNav: { path: string; labelKey: string; end?: boolean; permission: string }[] = [
+  const scenarioMainNav: { path: string; labelKey: string; end?: boolean; permission: string; isActivePath?: (pathname: string) => boolean }[] = [
     { path: '/kalkulator', labelKey: 'layout.calculator', end: true, permission: 'calculator.view' },
   ];
 

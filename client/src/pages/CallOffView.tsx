@@ -12,17 +12,27 @@ import Calculator from './Calculator';
 
 type LastImport = NonNullable<Awaited<ReturnType<typeof api.callOffs.get>>['last_import']>;
 
-function formatImportSummary(
-  last: LastImport,
-  t: (key: string, params?: Record<string, string | number>) => string
-): string {
-  return t('callOffs.importDone', {
+function ImportSummaryMessage({
+  last,
+  t,
+}: {
+  last: LastImport;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const params = {
     imported: last.imported,
     skipped: last.skippedOutOfRange + last.skippedInvalid,
     exact: last.matchedExact,
     truncated: last.matchedTruncated,
-    unmatched: last.unmatchedSap,
-  });
+  };
+  return (
+    <p style={{ margin: '0.75rem 0 0', color: '#2e7d32' }}>
+      {t('callOffs.importDoneMain', params)}
+      <span style={{ color: '#e65100', fontWeight: 600 }}>
+        {t('callOffs.importDoneUnmatchedPart', { unmatched: last.unmatchedSap })}
+      </span>
+    </p>
+  );
 }
 
 function archiveButtonStyle(panel: CallOffImportPanelColors, disabled = false): CSSProperties {
@@ -50,7 +60,7 @@ export default function CallOffView() {
   const [downloadingSource, setDownloadingSource] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [error, setError] = useState('');
-  const [importMsg, setImportMsg] = useState('');
+  const [importSummary, setImportSummary] = useState<LastImport | null>(null);
   const [meta, setMeta] = useState<Awaited<ReturnType<typeof api.callOffs.get>> | null>(null);
   const [calcRefreshKey, setCalcRefreshKey] = useState(0);
   const [importPanel, setImportPanel] = useState<CallOffImportPanelColors>(DEFAULT_CALL_OFF_IMPORT_PANEL);
@@ -74,13 +84,13 @@ export default function CallOffView() {
         setMeta(row);
         const last = row.last_import;
         if (last) {
-          setImportMsg(formatImportSummary(last, t));
+          setImportSummary(last);
         } else {
-          setImportMsg('');
+          setImportSummary(null);
         }
       })
       .catch(() => setMeta(null));
-  }, [comparisonId, t]);
+  }, [comparisonId]);
 
   useEffect(() => {
     setError('');
@@ -90,11 +100,11 @@ export default function CallOffView() {
   const onImport = async (file: File | undefined) => {
     if (!file || !Number.isFinite(comparisonId)) return;
     setImporting(true);
-    setImportMsg('');
+    setImportSummary(null);
     setError('');
     try {
       const r = await api.callOffs.importSalesFcst(comparisonId, file);
-      setImportMsg(formatImportSummary(r, t));
+      setImportSummary(r);
       setCalcRefreshKey((k) => k + 1);
       await loadMeta();
     } catch (e: any) {
@@ -157,6 +167,16 @@ export default function CallOffView() {
         }}
       >
         <h2 style={{ margin: '0 0 0.75rem', fontSize: '1.05rem', color: importPanel.accent }}>{t('callOffs.importSection')}</h2>
+        {meta?.notes?.trim() && (
+          <p style={{ margin: '0 0 0.75rem', fontSize: 14, color: '#555', whiteSpace: 'pre-wrap' }}>
+            <strong style={{ color: importPanel.accent }}>{t('callOffs.notes')}:</strong> {meta.notes.trim()}
+          </p>
+        )}
+        {meta && (
+          <p style={{ margin: '0 0 0.75rem', fontSize: 14, color: '#555' }}>
+            {t('callOffs.dateRangeLabel', { from: meta.date_from, to: meta.date_to })}
+          </p>
+        )}
         {isArchived && (
           <p style={{ margin: '0 0 0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.55)', borderRadius: 6, color: '#6d4c41', fontSize: 14 }}>
             {t('callOffs.archivedReadOnly')}
@@ -220,7 +240,7 @@ export default function CallOffView() {
           onChange={(e) => void onImport(e.target.files?.[0])}
         />
         {importing && <span style={{ marginLeft: 12 }}>{t('common.loading')}</span>}
-        {importMsg && <p style={{ margin: '0.75rem 0 0', color: '#2e7d32' }}>{importMsg}</p>}
+        {importSummary && <ImportSummaryMessage last={importSummary} t={t} />}
         {error && <p style={{ margin: '0.75rem 0 0', color: '#c62828' }}>{error}</p>}
       </section>
 

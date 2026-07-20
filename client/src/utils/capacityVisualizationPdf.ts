@@ -512,9 +512,10 @@ export function trendSectionFromGetters(
 export function analyticsTableRows(
   locale: Locale,
   rows: AnalyticsRow[],
-  hasScenario: boolean
+  hasScenario: boolean,
+  hasCallOff = false
 ): { headers: string[]; body: string[][] } {
-  const headers = pdfAnalyticsHeaders(locale, hasScenario);
+  const headers = pdfAnalyticsHeaders(locale, hasScenario, hasCallOff);
   const body = rows.map((r) => {
     const line = [
       String(r.year),
@@ -524,6 +525,9 @@ export function analyticsTableRows(
     ];
     if (hasScenario) {
       line.push(r.scenarioProduction != null ? `${r.scenarioProduction}%` : '—', fmtDelta(r.deltaScenarioProdMinusProd));
+    }
+    if (hasCallOff) {
+      line.push(r.callOff != null ? `${r.callOff}%` : '—', fmtDelta(r.deltaCallOffMinusProd));
     }
     return line;
   });

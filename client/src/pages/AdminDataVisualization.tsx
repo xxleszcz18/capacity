@@ -8,6 +8,7 @@ import { AdminHubList } from '../components/AdminHubCards';
 import { joinCsvFilter, formatMultiFilterSummary } from '../utils/filterParams';
 import MachineDimensionFiltersPanel from '../components/MachineDimensionFiltersPanel';
 import CapacityTrendChart from '../components/capacity/CapacityTrendChart';
+import CapacityMachineLineBarChart from '../components/capacity/CapacityMachineLineBarChart';
 import ChartGridLayoutPicker, { chartGridStyle, type ChartGridCols } from '../components/capacity/ChartGridLayoutPicker';
 import ChartLoadAxisRangePicker from '../components/capacity/ChartLoadAxisRangePicker';
 import ChartMetricModePicker from '../components/capacity/ChartMetricModePicker';
@@ -23,6 +24,10 @@ import {
   averageLoad,
   buildAnalyticsRows,
   buildTrendRows,
+  buildMachineBarRows,
+  buildLineBarRows,
+  callOffCalculatorToTrendBundle,
+  callOffLoadPercent,
   calendarYear,
   lineKey,
   lineLoadPercent,
@@ -36,6 +41,7 @@ import {
   type TrendSeriesDef,
   type TrendTableBuildOptions,
 } from '../utils/capacityTrends';
+import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import {
   analyticsTableRows,
   downloadCapacityVisualizationPdf,
@@ -92,7 +98,6 @@ async function fetchCapacityBundle(params: {
   type?: string[];
   client?: string[];
   useContractualVolumes?: boolean;
-  scenarioId?: number;
   settingsProfile?: 'capacity' | 'ocu';
   dimFilters?: DimFiltersState;
 }): Promise<CapacityTrendBundle> {
@@ -103,8 +108,7 @@ async function fetchCapacityBundle(params: {
     types: joinCsvFilter(params.type ?? []),
     clients: joinCsvFilter(params.client ?? []),
     useContractualVolumes: params.useContractualVolumes,
-    scenarioId: params.scenarioId,
-    settingsProfile: params.scenarioId == null && params.settingsProfile === 'ocu' ? 'ocu' : undefined,
+    settingsProfile: params.settingsProfile === 'ocu' ? 'ocu' : undefined,
     ...buildDimensionApiParams(params.dimFilters ?? EMPTY_DIM_FILTERS),
   });
   return {
@@ -182,6 +186,7 @@ function ChipToggle({
 export default function AdminDataVisualization() {
   const { t, te, locale } = useI18n();
   const { hasPermission } = useAuth();
+  const { machineBarChartLabel } = useReferenceDisplay();
   const canDownloadReports = hasPermission('admin_data_viz.download');
   const vizColors = useDataVizColors();
   const settingsProfile = useEffectiveCalculationProfile(false);
@@ -199,10 +204,16 @@ export default function AdminDataVisualization() {
   const [clientFilter, setClientFilter] = useState<string[]>([]);
   const [machineTypes, setMachineTypes] = useState<string[]>([]);
   const [clients, setClients] = useState<string[]>([]);
-  const [scenarioId, setScenarioId] = useState<number | ''>('');
-  const [scenarios, setScenarios] = useState<{ id: number; name: string }[]>([]);
+  const [callOffComparisonId, setCallOffComparisonId] = useState<number | ''>('');
+  const [callOffComparisons, setCallOffComparisons] = useState<
+    { id: number; name: string; source_filename: string | null; date_from: string; date_to: string }[]
+  >([]);
   const [lineChartCombined, setLineChartCombined] = useState(false);
+  const [lineChartBars, setLineChartBars] = useState(false);
+  const [lineBarYear, setLineBarYear] = useState<number | null>(null);
   const [machineChartCombined, setMachineChartCombined] = useState(false);
+  const [machineChartLineBars, setMachineChartLineBars] = useState(false);
+  const [machineLineBarYear, setMachineLineBarYear] = useState<number | null>(null);
   const [chartGridCols, setChartGridCols] = useState<ChartGridCols>(1);
   const [loadAxisRange, setLoadAxisRange] = useState<ChartLoadAxisRange>(DEFAULT_LOAD_AXIS_RANGE);
   const [chartMetricMode, setChartMetricMode] = useState<ChartMetricMode>('load');
@@ -210,13 +221,11 @@ export default function AdminDataVisualization() {
 
   const [showProduction, setShowProduction] = useState(true);
   const [showContract, setShowContract] = useState(true);
-  const [showScenarioProduction, setShowScenarioProduction] = useState(true);
-  const [showScenarioContract, setShowScenarioContract] = useState(false);
+  const [showCallOff, setShowCallOff] = useState(true);
 
   const [prod, setProd] = useState<CapacityTrendBundle | null>(null);
   const [contract, setContract] = useState<CapacityTrendBundle | null>(null);
-  const [scenProd, setScenProd] = useState<CapacityTrendBundle | null>(null);
-  const [scenContract, setScenContract] = useState<CapacityTrendBundle | null>(null);
+  const [callOff, setCallOff] = useState<CapacityTrendBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -236,7 +245,15 @@ export default function AdminDataVisualization() {
   const effectiveYearFrom = Math.min(yearFrom ?? calendarYear() - 1, yearTo ?? calendarYear() + 10);
   const effectiveYearTo = Math.max(yearFrom ?? calendarYear() - 1, yearTo ?? calendarYear() + 10);
   const years = yearsRange(effectiveYearFrom, effectiveYearTo);
-  const hasScenario = scenarioId !== '' && Number(scenarioId) > 0;
+  const hasCallOff = callOffComparisonId !== '' && Number(callOffComparisonId) > 0;
+  const callOffSeriesLabel = useMemo(() => {
+    if (!hasCallOff) return t('reports.dataViz.seriesCallOff');
+    const cmp = callOffComparisons.find((c) => c.id === Number(callOffComparisonId));
+    if (!cmp) return t('reports.dataViz.seriesCallOff');
+    return cmp.source_filename
+      ? t('reports.dataViz.seriesCallOffNamed', { name: cmp.name, file: cmp.source_filename })
+      : t('reports.dataViz.seriesCallOffNamedShort', { name: cmp.name });
+  }, [hasCallOff, callOffComparisonId, callOffComparisons, t]);
 
   const breakdownFetchParams = useMemo(
     () => ({
@@ -245,15 +262,28 @@ export default function AdminDataVisualization() {
       machineStatus,
       type: typeFilter,
       client: clientFilter,
-      scenarioId: hasScenario ? Number(scenarioId) : undefined,
       settingsProfile,
+      callOffComparisonId: hasCallOff ? Number(callOffComparisonId) : undefined,
       ...buildDimensionApiParams(dimFilters),
     }),
-    [effectiveYearFrom, effectiveYearTo, machineStatus, typeFilter, clientFilter, hasScenario, scenarioId, settingsProfile, dimFilters]
+    [effectiveYearFrom, effectiveYearTo, machineStatus, typeFilter, clientFilter, settingsProfile, hasCallOff, callOffComparisonId, dimFilters]
   );
 
   useEffect(() => {
-    api.scenarios.list({ archived: false }).then((list) => setScenarios(list.map((s) => ({ id: s.id, name: s.name })))).catch(() => setScenarios([]));
+    api.callOffs
+      .list({ archived: false })
+      .then((list) =>
+        setCallOffComparisons(
+          list.map((c) => ({
+            id: c.id,
+            name: c.name,
+            source_filename: c.source_filename ?? null,
+            date_from: c.date_from,
+            date_to: c.date_to,
+          }))
+        )
+      )
+      .catch(() => setCallOffComparisons([]));
     api.machines.types().then(setMachineTypes).catch(() => setMachineTypes([]));
     api.projects.clients().then(setClients).catch(() => setClients([]));
   }, []);
@@ -262,11 +292,11 @@ export default function AdminDataVisualization() {
     () => ({
       showProduction,
       showContract,
-      hasScenario,
-      showScenarioProduction,
-      showScenarioContract,
+      hasScenario: false,
+      showScenarioProduction: false,
+      showScenarioContract: false,
     }),
-    [showProduction, showContract, hasScenario, showScenarioProduction, showScenarioContract]
+    [showProduction, showContract]
   );
 
   const loadData = useCallback(() => {
@@ -281,28 +311,50 @@ export default function AdminDataVisualization() {
       settingsProfile,
       dimFilters,
     };
-    const sid = hasScenario ? Number(scenarioId) : undefined;
+    const coid = hasCallOff ? Number(callOffComparisonId) : undefined;
     const tasks: Promise<void>[] = [
       fetchCapacityBundle(base).then(setProd),
       fetchCapacityBundle({ ...base, useContractualVolumes: true }).then(setContract),
     ];
-    if (sid) {
-      tasks.push(fetchCapacityBundle({ ...base, scenarioId: sid }).then(setScenProd));
-      tasks.push(fetchCapacityBundle({ ...base, scenarioId: sid, useContractualVolumes: true }).then(setScenContract));
+    if (coid) {
+      tasks.push(
+        api.callOffs
+          .calculator(coid, {
+            yearFrom: effectiveYearFrom,
+            yearTo: effectiveYearTo,
+            machineStatuses: joinCsvFilter(machineStatus),
+            types: joinCsvFilter(typeFilter),
+            clients: joinCsvFilter(clientFilter),
+            settingsProfile: settingsProfile === 'ocu' ? 'ocu' : undefined,
+            ...buildDimensionApiParams(dimFilters),
+          })
+          .then((res) => setCallOff(callOffCalculatorToTrendBundle(res)))
+      );
     } else {
-      setScenProd(null);
-      setScenContract(null);
+      setCallOff(null);
     }
     Promise.all(tasks)
       .catch((e: Error) => {
         setError(te(e?.message) || t('dataViz.loadFailed', { subsystem }));
         setProd(null);
         setContract(null);
-        setScenProd(null);
-        setScenContract(null);
+        setCallOff(null);
       })
       .finally(() => setLoading(false));
-  }, [effectiveYearFrom, effectiveYearTo, machineStatus, typeFilter, clientFilter, hasScenario, scenarioId, settingsProfile, dimFilters, subsystem, t, te]);
+  }, [
+    effectiveYearFrom,
+    effectiveYearTo,
+    machineStatus,
+    typeFilter,
+    clientFilter,
+    hasCallOff,
+    callOffComparisonId,
+    settingsProfile,
+    dimFilters,
+    subsystem,
+    t,
+    te,
+  ]);
 
   useEffect(() => {
     api.settings.visual
@@ -333,9 +385,8 @@ export default function AdminDataVisualization() {
       typeFilter.length > 0 ||
       machineStatus.length !== 1 ||
       machineStatus[0] !== 'active' ||
-      hasScenario ||
       hasActiveDimFilters(dimFilters),
-    [clientFilter, typeFilter, machineStatus, hasScenario, dimFilters]
+    [clientFilter, typeFilter, machineStatus, dimFilters]
   );
 
   useEffect(() => {
@@ -371,8 +422,7 @@ export default function AdminDataVisualization() {
     prefix: string,
     getProd: (year: number) => number | null,
     getContract: (year: number) => number | null,
-    getScenProd?: (year: number) => number | null,
-    getScenContract?: (year: number) => number | null
+    getCallOff?: (year: number) => number | null
   ): TrendSeriesDef[] => {
     const out: TrendSeriesDef[] = [];
     if (showProduction) {
@@ -381,22 +431,13 @@ export default function AdminDataVisualization() {
     if (showContract) {
       out.push({ key: `${prefix}_contract`, label: t('reports.dataViz.seriesContract'), color: vizColors.contract, getValue: getContract });
     }
-    if (hasScenario && showScenarioProduction && getScenProd) {
+    if (hasCallOff && showCallOff && getCallOff) {
       out.push({
-        key: `${prefix}_scen_prod`,
-        label: t('reports.dataViz.seriesScenProd'),
-        color: vizColors.scenarioProduction,
-        dash: '6 4',
-        getValue: getScenProd,
-      });
-    }
-    if (hasScenario && showScenarioContract && getScenContract) {
-      out.push({
-        key: `${prefix}_scen_contract`,
-        label: t('reports.dataViz.seriesScenContract'),
-        color: vizColors.scenarioContract,
-        dash: '4 4',
-        getValue: getScenContract,
+        key: `${prefix}_calloff`,
+        label: callOffSeriesLabel,
+        color: vizColors.callOff,
+        dash: '2 3',
+        getValue: getCallOff,
       });
     }
     return out;
@@ -424,13 +465,13 @@ export default function AdminDataVisualization() {
           getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
         });
       }
-      if (hasScenario && showScenarioProduction && scenProd) {
+      if (hasCallOff && showCallOff && callOff) {
         out.push({
-          key: `cmp_L${line}_scenp`,
-          label: t('reports.dataViz.lineSeriesScenProd', { line }),
+          key: `cmp_L${line}_calloff`,
+          label: t('reports.dataViz.lineSeriesCallOff', { line, name: callOffSeriesLabel }),
           color: nextColor(),
-          dash: '6 4',
-          getValue: (year) => lineLoadPercent(scenProd.machines, line, year),
+          dash: '2 3',
+          getValue: (year) => callOffLoadPercent(callOff, year, { kind: 'line', line }),
         });
       }
     }
@@ -442,7 +483,6 @@ export default function AdminDataVisualization() {
     let colorIdx = 0;
     for (const m of machinesProd.filter((x) => selectedMachineIds.has(x.machine_id))) {
       const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-      const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
       const label = machineLabel(m);
       const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
       if (showProduction) {
@@ -462,13 +502,14 @@ export default function AdminDataVisualization() {
           getValue: (year) => machineLoadPercent(cm, year),
         });
       }
-      if (hasScenario && showScenarioProduction && sm) {
+      const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
+      if (hasCallOff && showCallOff && com) {
         out.push({
-          key: `cmp_M${m.machine_id}_scen`,
-          label: t('reports.dataViz.machineSeriesScen', { label }),
+          key: `cmp_M${m.machine_id}_calloff`,
+          label: t('reports.dataViz.machineSeriesCallOff', { label, name: callOffSeriesLabel }),
           color: nextColor(),
-          dash: '6 4',
-          getValue: (year) => machineLoadPercent(sm, year),
+          dash: '2 3',
+          getValue: (year) => callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }),
         });
       }
     }
@@ -481,12 +522,15 @@ export default function AdminDataVisualization() {
       selectedLines,
       machinesProd,
       contract,
-      scenProd,
+      callOff,
       years,
       showProduction,
       showContract,
-      hasScenario,
-      showScenarioProduction,
+      hasCallOff,
+      showCallOff,
+      callOffSeriesLabel,
+      vizColors,
+      t,
     ]
   );
 
@@ -496,12 +540,15 @@ export default function AdminDataVisualization() {
       selectedMachineIds,
       machinesProd,
       contract,
-      scenProd,
+      callOff,
       years,
       showProduction,
       showContract,
-      hasScenario,
-      showScenarioProduction,
+      hasCallOff,
+      showCallOff,
+      callOffSeriesLabel,
+      vizColors,
+      t,
     ]
   );
 
@@ -518,6 +565,7 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyLines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        allowDataTable={false}
       />
     ) : null;
 
@@ -531,6 +579,99 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyMachines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        allowDataTable={false}
+      />
+    ) : null;
+
+  const effectiveMachineLineBarYear = useMemo(() => {
+    const y = machineLineBarYear ?? calendarYear();
+    if (y < effectiveYearFrom) return effectiveYearFrom;
+    if (y > effectiveYearTo) return effectiveYearTo;
+    return y;
+  }, [machineLineBarYear, effectiveYearFrom, effectiveYearTo]);
+
+  const effectiveLineBarYear = useMemo(() => {
+    const y = lineBarYear ?? calendarYear();
+    if (y < effectiveYearFrom) return effectiveYearFrom;
+    if (y > effectiveYearTo) return effectiveYearTo;
+    return y;
+  }, [lineBarYear, effectiveYearFrom, effectiveYearTo]);
+
+  const machineLineBarRows = useMemo(
+    () =>
+      buildMachineBarRows(
+        machinesProd,
+        contract?.machines ?? [],
+        selectedMachineIds,
+        effectiveMachineLineBarYear,
+        machineBarChartLabel,
+        hasCallOff && showCallOff ? callOff?.machines : null,
+        hasCallOff && showCallOff ? callOff?.dataYears : null
+      ),
+    [
+      machinesProd,
+      contract,
+      selectedMachineIds,
+      effectiveMachineLineBarYear,
+      machineBarChartLabel,
+      hasCallOff,
+      showCallOff,
+      callOff,
+    ]
+  );
+
+  const lineBarRows = useMemo(
+    () =>
+      buildLineBarRows(
+        machinesProd,
+        contract?.machines ?? [],
+        selectedLines,
+        effectiveLineBarYear,
+        hasCallOff && showCallOff ? callOff?.machines : null,
+        hasCallOff && showCallOff ? callOff?.dataYears : null
+      ),
+    [machinesProd, contract, selectedLines, effectiveLineBarYear, hasCallOff, showCallOff, callOff]
+  );
+
+  const combinedMachineLineBarChart =
+    machineChartLineBars && selectedMachineIds.size > 0 ? (
+      <CapacityMachineLineBarChart
+        title={t('dataViz.machineLineBarTitle', {
+          year: effectiveMachineLineBarYear,
+          count: selectedMachineIds.size,
+        })}
+        rows={machineLineBarRows}
+        xAxisKind="machine"
+        showProduction={showProduction}
+        showContract={showContract}
+        showCallOff={hasCallOff && showCallOff}
+        callOffSeriesLabel={callOffSeriesLabel}
+        year={effectiveMachineLineBarYear}
+        height={380}
+        emptyHint={t('dataViz.emptyMachines')}
+        loadAxisRange={loadAxisRange}
+        metricMode={chartMetricMode}
+      />
+    ) : null;
+
+  const combinedLineBarChart =
+    lineChartBars && selectedLines.size > 0 ? (
+      <CapacityMachineLineBarChart
+        title={t('dataViz.lineBarTitle', {
+          year: effectiveLineBarYear,
+          count: selectedLines.size,
+        })}
+        rows={lineBarRows}
+        xAxisKind="line"
+        showProduction={showProduction}
+        showContract={showContract}
+        showCallOff={hasCallOff && showCallOff}
+        callOffSeriesLabel={callOffSeriesLabel}
+        year={effectiveLineBarYear}
+        height={380}
+        emptyHint={t('dataViz.emptyLines')}
+        loadAxisRange={loadAxisRange}
+        metricMode={chartMetricMode}
       />
     ) : null;
 
@@ -540,8 +681,7 @@ export default function AdminDataVisualization() {
       `line_${line}`,
       (year) => lineLoadPercent(machinesProd, line, year),
       (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-      (year) => (scenProd ? lineLoadPercent(scenProd.machines, line, year) : null),
-      (year) => (scenContract ? lineLoadPercent(scenContract.machines, line, year) : null)
+      (year) => callOffLoadPercent(callOff, year, { kind: 'line', line })
     );
     return (
       <CapacityTrendChart
@@ -563,14 +703,12 @@ export default function AdminDataVisualization() {
     .filter((m) => selectedMachineIds.has(m.machine_id))
     .map((m) => {
       const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-      const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
-      const scm = scenContract?.machines.find((x) => x.machine_id === m.machine_id);
+      const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
       const series = baseSeriesForEntity(
         `m_${m.machine_id}`,
         (year) => machineLoadPercent(m, year),
         (year) => (cm ? machineLoadPercent(cm, year) : null),
-        (year) => (sm ? machineLoadPercent(sm, year) : null),
-        (year) => (scm ? machineLoadPercent(scm, year) : null)
+        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null)
       );
       return (
         <CapacityTrendChart
@@ -588,6 +726,7 @@ export default function AdminDataVisualization() {
 
   const plantLoad = (bundle: CapacityTrendBundle | null, year: number): number | null => {
     if (!bundle?.machines.length) return null;
+    if (bundle.dataYears?.length && !bundle.dataYears.includes(year)) return null;
     let req = 0;
     let avail = 0;
     for (const m of bundle.machines) {
@@ -603,8 +742,7 @@ export default function AdminDataVisualization() {
   const analyticsRows = useMemo(() => {
     let getProduction: (year: number) => number | null;
     let getContract: (year: number) => number | null;
-    let getScenarioProduction: ((year: number) => number | null) | undefined;
-    let getScenarioContract: ((year: number) => number | null) | undefined;
+    let getCallOffLoad: ((year: number) => number | null) | undefined;
     let label = '';
 
     if (analyticsScope === 'line' && analyticsLines.length > 0) {
@@ -612,8 +750,10 @@ export default function AdminDataVisualization() {
       label = t('reports.dataViz.analyticsLine', { line: lineSummary });
       getProduction = (y) => linesLoadPercent(machinesProd, analyticsLines, y);
       getContract = (y) => linesLoadPercent(contract?.machines ?? [], analyticsLines, y);
-      getScenarioProduction = scenProd ? (y) => linesLoadPercent(scenProd.machines, analyticsLines, y) : undefined;
-      getScenarioContract = scenContract ? (y) => linesLoadPercent(scenContract.machines, analyticsLines, y) : undefined;
+      getCallOffLoad =
+        hasCallOff && callOff
+          ? (y) => callOffLoadPercent(callOff, y, { kind: 'lines', lines: analyticsLines })
+          : undefined;
     } else if (analyticsScope === 'machine' && analyticsMachineIds.length > 0) {
       const machineSummary = analyticsMachineIds
         .map((id) => {
@@ -624,10 +764,10 @@ export default function AdminDataVisualization() {
       label = t('reports.dataViz.analyticsMachine', { label: machineSummary });
       getProduction = (y) => machinesLoadPercent(machinesProd, analyticsMachineIds, y);
       getContract = (y) => machinesLoadPercent(contract?.machines ?? [], analyticsMachineIds, y);
-      getScenarioProduction = scenProd ? (y) => machinesLoadPercent(scenProd.machines, analyticsMachineIds, y) : undefined;
-      getScenarioContract = scenContract
-        ? (y) => machinesLoadPercent(scenContract.machines, analyticsMachineIds, y)
-        : undefined;
+      getCallOffLoad =
+        hasCallOff && callOff
+          ? (y) => callOffLoadPercent(callOff, y, { kind: 'machines', machineIds: analyticsMachineIds })
+          : undefined;
     } else {
       const filterBits = [
         typeFilter.length > 0 ? `${t('reports.dataViz.filterType')}: ${formatMultiFilterSummary(typeFilter, t('common.all'))}` : '',
@@ -638,35 +778,59 @@ export default function AdminDataVisualization() {
         : t('dataViz.wholeAllMachines');
       getProduction = (y) => plantLoad(prod, y);
       getContract = (y) => plantLoad(contract, y);
-      getScenarioProduction = scenProd ? (y) => plantLoad(scenProd, y) : undefined;
-      getScenarioContract = scenContract ? (y) => plantLoad(scenContract, y) : undefined;
+      getCallOffLoad = hasCallOff && callOff ? (y) => callOffLoadPercent(callOff, y, { kind: 'plant' }) : undefined;
     }
 
     return {
       label,
-      rows: buildAnalyticsRows(years, getProduction, getContract, getScenarioProduction, getScenarioContract),
+      rows: buildAnalyticsRows(
+        years,
+        getProduction,
+        getContract,
+        undefined,
+        undefined,
+        showCallOff ? getCallOffLoad : undefined
+      ),
       avgProd: averageLoad(years.map(getProduction)),
       avgContract: averageLoad(years.map(getContract)),
+      // Call offs: ta sama średnia co prod/kontrakt, ale tylko lata z danymi (bez null/0 / „—”).
+      avgCallOff: averageLoad(
+        (callOff?.dataYears?.length ? years.filter((y) => callOff.dataYears!.includes(y)) : years).map((y) =>
+          showCallOff && getCallOffLoad ? getCallOffLoad(y) : null
+        ),
+        { skipZeros: true }
+      ),
     };
-  }, [analyticsScope, analyticsLines, analyticsMachineIds, machinesProd, contract, scenProd, scenContract, prod, years, hasScenario, typeFilter, clientFilter, t]);
+  }, [
+    analyticsScope,
+    analyticsLines,
+    analyticsMachineIds,
+    machinesProd,
+    contract,
+    callOff,
+    prod,
+    years,
+    hasCallOff,
+    showCallOff,
+    typeFilter,
+    clientFilter,
+    t,
+  ]);
 
   const seriesLabels = useMemo(() => {
     const out: string[] = [];
     if (showProduction) out.push(t('dataViz.prodCapacity', { subsystem }));
     if (showContract) out.push(t('dataViz.contractCapacity', { subsystem }));
-    if (hasScenario && showScenarioProduction) out.push(t('dataViz.scenarioProd'));
-    if (hasScenario && showScenarioContract) out.push(t('dataViz.scenarioContract'));
+    if (hasCallOff && showCallOff) out.push(callOffSeriesLabel);
     return out;
-  }, [showProduction, showContract, hasScenario, showScenarioProduction, showScenarioContract, t]);
+  }, [showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, subsystem, t]);
 
   const buildTrendSection = (
     title: string,
     getProd: (year: number) => number | null,
-    getContract: (year: number) => number | null,
-    getScenProd?: (year: number) => number | null,
-    getScenContract?: (year: number) => number | null
+    getContract: (year: number) => number | null
   ): VisualizationPdfSection => {
-    const table = trendSectionFromGetters(locale, years, getProd, getContract, getScenProd, getScenContract, tableOpts);
+    const table = trendSectionFromGetters(locale, years, getProd, getContract, undefined, undefined, tableOpts);
     return { title, ...table };
   };
 
@@ -709,8 +873,6 @@ export default function AdminDataVisualization() {
       );
       const machineTypePdfLabel = formatMultiFilterSummary(typeFilter, t('common.all'));
       const clientPdfLabel = formatMultiFilterSummary(clientFilter, t('common.allClients'));
-      const scenarioName = hasScenario ? scenarios.find((s) => s.id === Number(scenarioId))?.name ?? String(scenarioId) : null;
-
       const pdfBase = {
         locale,
         strings: pdfStrings,
@@ -719,7 +881,7 @@ export default function AdminDataVisualization() {
         machineStatusLabel: machineStatusPdfLabel,
         machineTypeLabel: machineTypePdfLabel,
         clientLabel: clientPdfLabel,
-        scenarioName,
+        scenarioName: null,
         seriesLabels,
       };
 
@@ -756,9 +918,7 @@ export default function AdminDataVisualization() {
             buildTrendSection(
               t('reports.dataViz.lineTitle', { line }),
               (year) => lineLoadPercent(machinesProd, line, year),
-              (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-              (year) => (scenProd ? lineLoadPercent(scenProd.machines, line, year) : null),
-              (year) => (scenContract ? lineLoadPercent(scenContract.machines, line, year) : null)
+              (year) => lineLoadPercent(contract?.machines ?? [], line, year)
             )
           )
         : [];
@@ -766,14 +926,10 @@ export default function AdminDataVisualization() {
       const machineSections: VisualizationPdfSection[] = opts.machineTables
         ? machinesForScope(opts.machineTablesScope).map((m) => {
             const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-            const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
-            const scm = scenContract?.machines.find((x) => x.machine_id === m.machine_id);
             return buildTrendSection(
               t('reports.dataViz.machineTitleWithLine', { label: machineLabel(m), line: lineKey(m.location) }),
               (year) => machineLoadPercent(m, year),
-              (year) => (cm ? machineLoadPercent(cm, year) : null),
-              (year) => (sm ? machineLoadPercent(sm, year) : null),
-              (year) => (scm ? machineLoadPercent(scm, year) : null)
+              (year) => (cm ? machineLoadPercent(cm, year) : null)
             );
           })
         : [];
@@ -786,16 +942,13 @@ export default function AdminDataVisualization() {
               years,
               getProduction: (line, year) => lineLoadPercent(machinesProd, line, year),
               getContract: (line, year) => lineLoadPercent(contract?.machines ?? [], line, year),
-              getScenarioProduction: scenProd
-                ? (line, year) => lineLoadPercent(scenProd.machines, line, year)
-                : undefined,
               showProduction,
               showContract,
-              showScenarioProduction: hasScenario && showScenarioProduction,
+              showScenarioProduction: false,
             })
           : null;
 
-      const anTable = analyticsTableRows(locale, analyticsRows.rows, hasScenario);
+      const anTable = analyticsTableRows(locale, analyticsRows.rows, false, hasCallOff && showCallOff);
 
       const needsCharts = opts.lineCharts || opts.machineCharts || opts.analyticsChart;
       let chartParts: PdfChartPart[] = [];
@@ -844,8 +997,6 @@ export default function AdminDataVisualization() {
               rows: anTable.body,
               avgProduction: opts.analyticsSummary ? analyticsRows.avgProd : null,
               avgContract: opts.analyticsSummary ? analyticsRows.avgContract : null,
-              avgScenarioProduction:
-                opts.analyticsSummary && hasScenario ? averageLoad(analyticsRows.rows.map((r) => r.scenarioProduction)) : undefined,
             }
           : undefined,
       });
@@ -879,7 +1030,6 @@ export default function AdminDataVisualization() {
       );
       const machineTypePdfLabel = formatMultiFilterSummary(typeFilter, t('common.all'));
       const clientPdfLabel = formatMultiFilterSummary(clientFilter, t('common.allClients'));
-      const scenarioName = hasScenario ? scenarios.find((s) => s.id === Number(scenarioId))?.name ?? String(scenarioId) : null;
       const detailLevel = opts.breakdownDetailLevel;
       const breakdownColLabels = {
         year: t('reports.trend.year'),
@@ -892,8 +1042,8 @@ export default function AdminDataVisualization() {
       const lineYearTotals = (line: string, year: number): SeriesValues => ({
         production: lineLoadPercent(machinesProd, line, year),
         contract: lineLoadPercent(contract?.machines ?? [], line, year),
-        scenarioProduction: scenProd ? lineLoadPercent(scenProd.machines, line, year) : null,
-        scenarioContract: scenContract ? lineLoadPercent(scenContract.machines, line, year) : null,
+        scenarioProduction: null,
+        scenarioContract: null,
       });
 
       const lineSections = opts.lineTables
@@ -931,8 +1081,6 @@ export default function AdminDataVisualization() {
         ? await Promise.all(
             machinesForScope(opts.machineTablesScope).map(async (m) => {
               const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-              const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
-              const scm = scenContract?.machines.find((x) => x.machine_id === m.machine_id);
               const sheetTitle = t('reports.dataViz.machineTitleWithLine', {
                 label: machineLabel(m),
                 line: lineKey(m.location),
@@ -940,8 +1088,8 @@ export default function AdminDataVisualization() {
               const machineYearTotals = (year: number): SeriesValues => ({
                 production: machineLoadPercent(m, year),
                 contract: cm ? machineLoadPercent(cm, year) : null,
-                scenarioProduction: sm ? machineLoadPercent(sm, year) : null,
-                scenarioContract: scm ? machineLoadPercent(scm, year) : null,
+                scenarioProduction: null,
+                scenarioContract: null,
               });
               if (detailLevel === 'year') {
                 const table = buildNumericTrendSection(
@@ -979,12 +1127,9 @@ export default function AdminDataVisualization() {
                 years,
                 getProduction: (line, year) => lineYearTotals(line, year).production,
                 getContract: (line, year) => lineYearTotals(line, year).contract,
-                getScenarioProduction: scenProd
-                  ? (line, year) => lineYearTotals(line, year).scenarioProduction
-                  : undefined,
                 showProduction,
                 showContract,
-                showScenarioProduction: hasScenario && showScenarioProduction,
+                showScenarioProduction: false,
               })
             : await buildBreakdownLinesOverviewSection({
                 locale,
@@ -1003,7 +1148,8 @@ export default function AdminDataVisualization() {
       const anTable = buildAnalyticsExcelSection({
         locale,
         yearRows: analyticsRows.rows,
-        hasScenario,
+        hasScenario: false,
+        hasCallOff: hasCallOff && showCallOff,
         detailLevel,
         context: {
           scope: analyticsScope,
@@ -1012,8 +1158,8 @@ export default function AdminDataVisualization() {
           lines,
           machinesProd,
           contractMachines: contract?.machines ?? [],
-          scenProdMachines: scenProd?.machines,
-          scenContractMachines: scenContract?.machines,
+          callOffMachines: hasCallOff && showCallOff ? callOff?.machines : undefined,
+          callOffDataYears: hasCallOff && showCallOff ? callOff?.dataYears : undefined,
         },
         colLabels: {
           year: t('dataViz.colYear'),
@@ -1033,7 +1179,7 @@ export default function AdminDataVisualization() {
           [pdfStrings.machineStatus, machineStatusPdfLabel],
           [pdfStrings.machineType, machineTypePdfLabel],
           [pdfStrings.client, clientPdfLabel],
-          [pdfStrings.scenario, scenarioName ?? pdfStrings.noScenario],
+          [pdfStrings.scenario, pdfStrings.noScenario],
           [pdfStrings.seriesOnCharts, seriesLabels.join(', ') || '-'],
           [t('modals.vizReport.detailLevelLabel'), t(`modals.vizReport.detailLevel_${detailLevel}` as 'modals.vizReport.detailLevel_year')],
         ],
@@ -1049,10 +1195,6 @@ export default function AdminDataVisualization() {
               rows: anTable.rows,
               avgProduction: opts.analyticsSummary ? analyticsRows.avgProd : null,
               avgContract: opts.analyticsSummary ? analyticsRows.avgContract : null,
-              avgScenarioProduction:
-                opts.analyticsSummary && hasScenario
-                  ? averageLoad(analyticsRows.rows.map((r) => r.scenarioProduction))
-                  : undefined,
               avgProductionLabel: pdfStrings.avgProduction,
               avgContractLabel: pdfStrings.avgContract,
               avgScenarioProdLabel: pdfStrings.avgScenarioProd,
@@ -1092,6 +1234,15 @@ export default function AdminDataVisualization() {
             getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
           });
         }
+        if (hasCallOff && showCallOff && callOff) {
+          series.push({
+            key: `pdf_L${line}_calloff`,
+            label: t('reports.dataViz.lineSeriesCallOff', { line, name: callOffSeriesLabel }),
+            color: nextColor(),
+            dash: '2 3',
+            getValue: (year) => callOffLoadPercent(callOff, year, { kind: 'line', line }),
+          });
+        }
       }
       return [
         {
@@ -1108,8 +1259,7 @@ export default function AdminDataVisualization() {
         prefix,
         (year) => lineLoadPercent(machinesProd, line, year),
         (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-        (year) => (scenProd ? lineLoadPercent(scenProd.machines, line, year) : null),
-        (year) => (scenContract ? lineLoadPercent(scenContract.machines, line, year) : null)
+        (year) => callOffLoadPercent(callOff, year, { kind: 'line', line })
       );
       return {
         captureKey: `line-${line}`,
@@ -1118,7 +1268,7 @@ export default function AdminDataVisualization() {
         series,
       };
     });
-  }, [pdfCaptureActive, reportOptions.lineCharts, reportOptions.lineChartsMode, reportOptions.lineChartsScope, machinesProd, contract, scenProd, scenContract, years, selectedLines, lines, showProduction, showContract, hasScenario, showScenarioProduction, showScenarioContract, vizColors, t]);
+  }, [pdfCaptureActive, reportOptions.lineCharts, reportOptions.lineChartsMode, reportOptions.lineChartsScope, machinesProd, contract, callOff, years, selectedLines, lines, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, t]);
 
   const pdfMachineChartItems = useMemo(() => {
     if (!pdfCaptureActive || !reportOptions.machineCharts) return [];
@@ -1128,7 +1278,6 @@ export default function AdminDataVisualization() {
       let colorIdx = 0;
       for (const m of targetMachines) {
         const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-        const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
         const label = machineLabel(m);
         const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
         if (showProduction) {
@@ -1148,13 +1297,14 @@ export default function AdminDataVisualization() {
             getValue: (year) => machineLoadPercent(cm, year),
           });
         }
-        if (hasScenario && showScenarioProduction && sm) {
+        const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
+        if (hasCallOff && showCallOff && com) {
           series.push({
-            key: `pdf_M${m.machine_id}_s`,
-            label: t('reports.dataViz.machineSeriesScen', { label }),
+            key: `pdf_M${m.machine_id}_co`,
+            label: t('reports.dataViz.machineSeriesCallOff', { label, name: callOffSeriesLabel }),
             color: nextColor(),
-            dash: '6 4',
-            getValue: (year) => machineLoadPercent(sm, year),
+            dash: '2 3',
+            getValue: (year) => callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }),
           });
         }
       }
@@ -1169,14 +1319,12 @@ export default function AdminDataVisualization() {
     }
     return targetMachines.map((m) => {
       const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
-      const sm = scenProd?.machines.find((x) => x.machine_id === m.machine_id);
-      const scm = scenContract?.machines.find((x) => x.machine_id === m.machine_id);
+      const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
       const series = baseSeriesForEntity(
         `pdf_m_${m.machine_id}`,
         (year) => machineLoadPercent(m, year),
         (year) => (cm ? machineLoadPercent(cm, year) : null),
-        (year) => (sm ? machineLoadPercent(sm, year) : null),
-        (year) => (scm ? machineLoadPercent(scm, year) : null)
+        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null)
       );
       return {
         captureKey: `machine-${m.machine_id}`,
@@ -1185,7 +1333,7 @@ export default function AdminDataVisualization() {
         series,
       };
     });
-  }, [pdfCaptureActive, reportOptions.machineCharts, reportOptions.machineChartsMode, reportOptions.machineChartsScope, machinesProd, contract, scenProd, scenContract, years, selectedMachineIds, showProduction, showContract, hasScenario, showScenarioProduction, showScenarioContract, t]);
+  }, [pdfCaptureActive, reportOptions.machineCharts, reportOptions.machineChartsMode, reportOptions.machineChartsScope, machinesProd, contract, callOff, years, selectedMachineIds, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, t]);
 
   const tabBtn = (id: TabId, label: string) => (
     <button
@@ -1290,21 +1438,6 @@ export default function AdminDataVisualization() {
               style={{ marginLeft: 4, minWidth: 160 }}
             />
           </label>
-          <label>
-            {t('dataViz.scenarioCompare')}{' '}
-            <SearchableSelect
-              value={scenarioId === '' ? '' : String(scenarioId)}
-              onChange={(e) => setScenarioId(e.target.value ? Number(e.target.value) : '')}
-              style={{ marginLeft: 4, padding: 4, minWidth: 200 }}
-            >
-              <option value="">{t('dataViz.noScenario')}</option>
-              {scenarios.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </SearchableSelect>
-          </label>
           <DataLoadingBadge active={loading && Boolean(prod)} />
           <button
             type="button"
@@ -1343,37 +1476,68 @@ export default function AdminDataVisualization() {
           </>
         )}
 
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid #eee' }}>
-          <span style={{ fontWeight: 600, fontSize: 14, marginRight: 10 }}>{t('dataViz.seriesOnCharts')}</span>
-          <label style={{ marginRight: 14, fontSize: 14, cursor: 'pointer' }}>
-            <input type="checkbox" checked={showProduction} onChange={(e) => setShowProduction(e.target.checked)} style={{ marginRight: 6 }} />
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: '1px solid #eee',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '10px 14px',
+          }}
+        >
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t('dataViz.seriesOnCharts')}</span>
+          <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={showProduction} onChange={(e) => setShowProduction(e.target.checked)} />
+            <span
+              aria-hidden
+              style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.production, flexShrink: 0 }}
+            />
             {t('dataViz.prodCapacity', { subsystem })}
           </label>
-          <label style={{ marginRight: 14, fontSize: 14, cursor: 'pointer' }}>
-            <input type="checkbox" checked={showContract} onChange={(e) => setShowContract(e.target.checked)} style={{ marginRight: 6 }} />
+          <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={showContract} onChange={(e) => setShowContract(e.target.checked)} />
+            <span
+              aria-hidden
+              style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.contract, flexShrink: 0 }}
+            />
             {t('dataViz.contractCapacity', { subsystem })}
           </label>
-          {hasScenario && (
-            <>
-              <label style={{ marginRight: 14, fontSize: 14, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={showScenarioProduction}
-                  onChange={(e) => setShowScenarioProduction(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                {t('dataViz.scenarioProd')}
-              </label>
-              <label style={{ fontSize: 14, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={showScenarioContract}
-                  onChange={(e) => setShowScenarioContract(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                {t('dataViz.scenarioContract')}
-              </label>
-            </>
+          <label style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {t('dataViz.callOffCompare')}
+            <SearchableSelect
+              value={callOffComparisonId === '' ? '' : String(callOffComparisonId)}
+              onChange={(e) => {
+                const next = e.target.value ? Number(e.target.value) : '';
+                setCallOffComparisonId(next);
+                if (next !== '') setShowCallOff(true);
+              }}
+              style={{ padding: 4, minWidth: 280 }}
+            >
+              <option value="">{t('dataViz.noCallOff')}</option>
+              {callOffComparisons.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.source_filename
+                    ? `${c.name} · ${c.date_from.slice(0, 10)}–${c.date_to.slice(0, 10)} · ${c.source_filename}`
+                    : `${c.name} · ${c.date_from.slice(0, 10)}–${c.date_to.slice(0, 10)}`}
+                </option>
+              ))}
+            </SearchableSelect>
+          </label>
+          {hasCallOff && (
+            <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={showCallOff}
+                onChange={(e) => setShowCallOff(e.target.checked)}
+              />
+              <span
+                aria-hidden
+                style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.callOff, flexShrink: 0 }}
+              />
+              {callOffSeriesLabel}
+            </label>
           )}
         </div>
       </div>
@@ -1411,6 +1575,33 @@ export default function AdminDataVisualization() {
               <input type="checkbox" checked={lineChartCombined} onChange={(e) => setLineChartCombined(e.target.checked)} />
               {t('dataViz.combinedLines')}
             </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: lineChartBars ? 8 : 10, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={lineChartBars}
+                onChange={(e) => setLineChartBars(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <span style={{ display: 'block' }}>{t('dataViz.combinedLinesBars')}</span>
+                <span style={{ display: 'block', fontSize: 12, color: '#666', marginTop: 2, lineHeight: 1.35 }}>
+                  {t('dataViz.combinedLinesBarsHint')}
+                </span>
+              </span>
+            </label>
+            {lineChartBars && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13 }}>
+                {t('dataViz.machineLineBarYear')}
+                <input
+                  type="number"
+                  min={effectiveYearFrom}
+                  max={effectiveYearTo}
+                  value={effectiveLineBarYear}
+                  onChange={(e) => setLineBarYear(Number(e.target.value) || calendarYear())}
+                  style={{ width: 88, padding: '4px 6px' }}
+                />
+              </label>
+            )}
             {lines.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
@@ -1459,8 +1650,12 @@ export default function AdminDataVisualization() {
                   onChartMetricModeChange={setChartMetricMode}
                   yAxisLabel={chartYAxisLabel}
                 />
-                <div style={lineChartCombined ? { display: 'flex', flexDirection: 'column', gap: '1rem' } : chartGridStyle(chartGridCols)}>
-                  {lineChartCombined ? combinedLineChart : lineCharts}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {combinedLineChart}
+                  {combinedLineBarChart}
+                  {!lineChartCombined && (
+                    <div style={chartGridStyle(chartGridCols)}>{lineCharts}</div>
+                  )}
                 </div>
               </>
             )}
@@ -1482,6 +1677,33 @@ export default function AdminDataVisualization() {
               <input type="checkbox" checked={machineChartCombined} onChange={(e) => setMachineChartCombined(e.target.checked)} />
               {t('dataViz.combinedMachines')}
             </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: machineChartLineBars ? 8 : 10, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={machineChartLineBars}
+                onChange={(e) => setMachineChartLineBars(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <span style={{ display: 'block' }}>{t('dataViz.combinedMachinesLineBars')}</span>
+                <span style={{ display: 'block', fontSize: 12, color: '#666', marginTop: 2, lineHeight: 1.35 }}>
+                  {t('dataViz.combinedMachinesLineBarsHint')}
+                </span>
+              </span>
+            </label>
+            {machineChartLineBars && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13 }}>
+                {t('dataViz.machineLineBarYear')}
+                <input
+                  type="number"
+                  min={effectiveYearFrom}
+                  max={effectiveYearTo}
+                  value={effectiveMachineLineBarYear}
+                  onChange={(e) => setMachineLineBarYear(Number(e.target.value) || calendarYear())}
+                  style={{ width: 88, padding: '4px 6px' }}
+                />
+              </label>
+            )}
             {machinesProd.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
@@ -1531,8 +1753,12 @@ export default function AdminDataVisualization() {
                   onChartMetricModeChange={setChartMetricMode}
                   yAxisLabel={chartYAxisLabel}
                 />
-                <div style={machineChartCombined ? { display: 'flex', flexDirection: 'column', gap: '1rem' } : chartGridStyle(chartGridCols)}>
-                  {machineChartCombined ? combinedMachineChart : machineCharts}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  {combinedMachineChart}
+                  {combinedMachineLineBarChart}
+                  {!machineChartCombined && (
+                    <div style={chartGridStyle(chartGridCols)}>{machineCharts}</div>
+                  )}
                 </div>
               </>
             )}
@@ -1607,7 +1833,8 @@ export default function AdminDataVisualization() {
               captureKey="analytics-delta"
               title={t('dataViz.annualDiffTitle', { label: analyticsRows.label })}
               rows={analyticsRows.rows}
-              hasScenario={hasScenario}
+              hasScenario={false}
+              hasCallOff={hasCallOff && showCallOff}
               height={280}
             />
           )}
@@ -1685,12 +1912,8 @@ export default function AdminDataVisualization() {
           <AdminHubList style={{ marginBottom: '1rem' }}>
             <SummaryCard label={t('dataViz.avgLoadProd')} value={analyticsRows.avgProd} color={vizColors.production} />
             <SummaryCard label={t('dataViz.avgLoadContract')} value={analyticsRows.avgContract} color={vizColors.contract} />
-            {hasScenario && analyticsRows.rows.some((r) => r.scenarioProduction != null) && (
-              <SummaryCard
-                label={t('dataViz.avgLoadScenario')}
-                value={averageLoad(analyticsRows.rows.map((r) => r.scenarioProduction))}
-                color={vizColors.scenarioProduction}
-              />
+            {hasCallOff && showCallOff && analyticsRows.avgCallOff != null && (
+              <SummaryCard label={callOffSeriesLabel} value={analyticsRows.avgCallOff} color={vizColors.callOff} />
             )}
           </AdminHubList>
           </div>
@@ -1698,7 +1921,8 @@ export default function AdminDataVisualization() {
           <CapacityAnalyticsPanel
             entityLabel={analyticsRows.label}
             rows={analyticsRows.rows}
-            hasScenario={hasScenario}
+            hasScenario={false}
+            hasCallOff={hasCallOff && showCallOff}
             expandContext={
               analyticsScope === 'machine'
                 ? undefined
@@ -1709,9 +1933,9 @@ export default function AdminDataVisualization() {
                     lines,
                     machinesProd,
                     contractMachines: contract?.machines ?? [],
-                    scenProdMachines: scenProd?.machines,
-                    scenContractMachines: scenContract?.machines,
-                    showScenarioProduction,
+                    callOffMachines: hasCallOff && showCallOff ? callOff?.machines : undefined,
+                    callOffDataYears: hasCallOff && showCallOff ? callOff?.dataYears : undefined,
+                    showScenarioProduction: false,
                   }
             }
           />

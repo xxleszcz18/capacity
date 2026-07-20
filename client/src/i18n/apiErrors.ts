@@ -1,8 +1,12 @@
 import type { Locale } from './types';
 import { translate } from './core';
 
+/** Stały komunikat — mapowany w UI na auth.apiUnreachable (brak backendu / błąd proxy Vite). */
+export const API_UNREACHABLE_MESSAGE = '__CAPACITY_API_UNREACHABLE__';
+
 /** Mapowanie komunikatów z API (głównie PL z serwera) na klucze i18n. */
 const ERROR_KEY_BY_MESSAGE: Record<string, string> = {
+  [API_UNREACHABLE_MESSAGE]: 'auth.apiUnreachable',
   'Operation not found': 'errors.operationNotFound',
   'Not found': 'errors.notFound',
   'Invalid id': 'errors.invalidId',

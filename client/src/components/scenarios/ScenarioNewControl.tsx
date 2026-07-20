@@ -11,6 +11,13 @@ type ScenarioRow = {
   name: string;
 };
 
+type CallOffRow = {
+  id: number;
+  name: string;
+  volume_row_count?: number;
+  source_filename?: string | null;
+};
+
 type Props = {
   buttonStyle?: CSSProperties;
   className?: string;
@@ -30,7 +37,10 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
   const [newScope, setNewScope] = useState('');
   const [baseMode, setBaseMode] = useState<'live' | 'scenario'>('live');
   const [sourceScenarioId, setSourceScenarioId] = useState<number | ''>('');
+  const [useCallOffVolumes, setUseCallOffVolumes] = useState(false);
+  const [sourceCallOffId, setSourceCallOffId] = useState<number | ''>('');
   const [activeForSourcePicker, setActiveForSourcePicker] = useState<ScenarioRow[]>([]);
+  const [callOffComparisons, setCallOffComparisons] = useState<CallOffRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [accent, setAccent] = useState(DEFAULT_WORKSPACE_THEMES.scenarios.accent);
@@ -48,6 +58,10 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
       .list({ archived: false })
       .then(setActiveForSourcePicker)
       .catch(() => setActiveForSourcePicker([]));
+    api.callOffs
+      .list({ archived: false })
+      .then((rows) => setCallOffComparisons(rows.filter((r) => (r.volume_row_count ?? 0) > 0)))
+      .catch(() => setCallOffComparisons([]));
   }, [open]);
 
   const openModal = () => {
@@ -56,6 +70,8 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
     setNewScope('');
     setBaseMode('live');
     setSourceScenarioId('');
+    setUseCallOffVolumes(false);
+    setSourceCallOffId('');
     setOpen(true);
   };
 
@@ -83,6 +99,13 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
         return;
       }
     }
+    if (useCallOffVolumes) {
+      const cid = Number(sourceCallOffId);
+      if (!Number.isFinite(cid) || cid <= 0) {
+        setError(t('scenarios.errPickCallOff'));
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     api.scenarios
@@ -90,6 +113,7 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
         name,
         scenario_scope,
         sourceScenarioId: baseMode === 'scenario' && sourceScenarioId !== '' ? Number(sourceScenarioId) : null,
+        sourceCallOffComparisonId: useCallOffVolumes && sourceCallOffId !== '' ? Number(sourceCallOffId) : null,
       })
       .then((row) => {
         closeModal();
@@ -139,7 +163,7 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
             style={{ background: 'white', padding: '1.5rem', borderRadius: 8, minWidth: 400, maxWidth: '96vw' }}
           >
             <h2 style={{ marginTop: 0, color: accent }}>{t('scenarios.new')}</h2>
-            <div style={{ marginBottom: 12 }}>
+            <section style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>{t('scenarios.startingPoint')}</label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <input type="radio" name="scenario-base" checked={baseMode === 'live'} onChange={() => setBaseMode('live')} />
@@ -165,7 +189,50 @@ export default function ScenarioNewControl({ buttonStyle, className, onCreated, 
                   </SearchableSelect>
                 </div>
               )}
-            </div>
+            </section>
+            <section
+              style={{
+                marginBottom: 16,
+                paddingTop: 14,
+                borderTop: '1px solid #e0e0e0',
+              }}
+            >
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>{t('scenarios.volumeSection')}</label>
+              <p style={{ margin: '0 0 10px', fontSize: 13, color: '#666', lineHeight: 1.4 }}>{t('scenarios.volumeSectionHint')}</p>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={useCallOffVolumes}
+                  onChange={(e) => {
+                    setUseCallOffVolumes(e.target.checked);
+                    if (!e.target.checked) setSourceCallOffId('');
+                  }}
+                  style={{ marginTop: 3 }}
+                />
+                <span>{t('scenarios.useCallOffVolumes')}</span>
+              </label>
+              {useCallOffVolumes && (
+                <div style={{ marginTop: 8, marginLeft: 24 }}>
+                  {callOffComparisons.length === 0 ? (
+                    <p style={{ margin: 0, color: '#666', fontSize: 13 }}>{t('callOffs.emptyActive')}</p>
+                  ) : (
+                    <SearchableSelect
+                      value={sourceCallOffId === '' ? '' : String(sourceCallOffId)}
+                      onChange={(e) => setSourceCallOffId(e.target.value === '' ? '' : Number(e.target.value))}
+                      style={{ width: '100%', maxWidth: 360, padding: 6 }}
+                    >
+                      <option value="">{t('scenarios.pickCallOff')}</option>
+                      {callOffComparisons.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                          {c.source_filename ? ` (${c.source_filename})` : ''}
+                        </option>
+                      ))}
+                    </SearchableSelect>
+                  )}
+                </div>
+              )}
+            </section>
             <label style={{ display: 'block', marginBottom: 8 }}>
               {t('scenarios.nameRequired')}{' '}
               <input

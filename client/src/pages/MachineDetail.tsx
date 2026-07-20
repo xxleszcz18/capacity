@@ -11,6 +11,23 @@ import { machineStatusFromDb, machineStatusReadonlyStyle, machineStatusSelectSty
 import SortableTh from '../components/SortableTh';
 import { useTableSort, sortRows } from '../utils/tableSort';
 import { useI18n } from '../context/I18nContext';
+import { loadColor, type LoadVisualSettings } from '../utils/loadCellColors';
+
+const defaultLoadVisual: LoadVisualSettings = {
+  colorize_load_cells: true,
+  ok_enabled: true,
+  ok_from: 0,
+  ok_to: 79.99,
+  ok_color: '#c8e6c9',
+  warn_enabled: true,
+  warn_from: 80,
+  warn_to: 99.99,
+  warn_color: '#fff9c4',
+  danger_enabled: true,
+  danger_from: 100,
+  danger_to: 1000000,
+  danger_color: '#ffcdd2',
+};
 
 type MachineEditStatus = 'active' | 'inactive' | 'RFQ';
 
@@ -36,6 +53,7 @@ export default function MachineDetail() {
   const [capacityData, setCapacityData] = useState<any>(null);
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const [capacityLoading, setCapacityLoading] = useState(false);
+  const [loadVisual, setLoadVisual] = useState<LoadVisualSettings>(defaultLoadVisual);
   const { useContractualVolumes } = useContractVolumes();
 
   type ProjSortCol = 'client' | 'name' | 'status';
@@ -78,6 +96,16 @@ export default function MachineDetail() {
     if (!id) return;
     api.machines.get(Number(id)).then(setMachine).finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    api.settings.visual
+      .get()
+      .then((v) => {
+        const raw = v as LoadVisualSettings;
+        setLoadVisual({ ...defaultLoadVisual, ...raw });
+      })
+      .catch(() => setLoadVisual(defaultLoadVisual));
+  }, []);
 
   useEffect(() => {
     if (!id || tab !== 'zajetosc') return;
@@ -223,9 +251,25 @@ export default function MachineDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedCapacityRows.map(([y, d]: [string, any]) => (
-                    <tr key={y}><td style={{ padding: '0.75rem' }}>{y}</td><td style={{ padding: '0.75rem' }}>{d.load_percent}%</td><td style={{ padding: '0.75rem' }}>{d.capacity_pcs_per_week}</td></tr>
-                  ))}
+                  {sortedCapacityRows.map(([y, d]: [string, any]) => {
+                    const pct = Number(d?.load_percent) || 0;
+                    return (
+                      <tr key={y}>
+                        <td style={{ padding: '0.75rem' }}>{y}</td>
+                        <td
+                          style={{
+                            padding: '0.75rem',
+                            textAlign: 'center',
+                            background: loadColor(pct, loadVisual),
+                            border: '1px solid #e0e0e0',
+                          }}
+                        >
+                          {pct}%
+                        </td>
+                        <td style={{ padding: '0.75rem' }}>{d.capacity_pcs_per_week}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

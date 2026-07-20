@@ -16,26 +16,37 @@ import { useDataVizColors } from '../../context/DataVizColorsContext';
 
 const CONTRACT_KEY = 'contractMinusProd';
 const SCENARIO_KEY = 'scenarioMinusProd';
+const CALL_OFF_KEY = 'callOffMinusProd';
 
 type Props = {
   title: string;
   rows: AnalyticsRow[];
   hasScenario: boolean;
+  hasCallOff?: boolean;
   height?: number;
   captureKey?: string;
 };
 
-export default function CapacityAnalyticsDeltaChart({ title, rows, hasScenario, height = 280, captureKey }: Props) {
+export default function CapacityAnalyticsDeltaChart({
+  title,
+  rows,
+  hasScenario,
+  hasCallOff = false,
+  height = 280,
+  captureKey,
+}: Props) {
   const { t } = useI18n();
   const vizColors = useDataVizColors();
   const exportId = useId();
   const contractLabel = t('dataViz.deltaContractMinusProd');
   const scenarioLabel = t('dataViz.deltaScenarioMinusProd');
+  const callOffLabel = t('dataViz.deltaCallOffMinusProd');
 
   const barData = rows.map((r) => ({
     year: r.year,
     [CONTRACT_KEY]: r.deltaContractMinusProd,
     ...(hasScenario ? { [SCENARIO_KEY]: r.deltaScenarioProdMinusProd } : {}),
+    ...(hasCallOff ? { [CALL_OFF_KEY]: r.deltaCallOffMinusProd } : {}),
   }));
 
   const wrapProps = captureKey
@@ -73,6 +84,7 @@ export default function CapacityAnalyticsDeltaChart({ title, rows, hasScenario, 
           <ReferenceLine y={0} stroke="#666" />
           <Bar dataKey={CONTRACT_KEY} name={contractLabel} fill={vizColors.contract} radius={[4, 4, 0, 0]} />
           {hasScenario && <Bar dataKey={SCENARIO_KEY} name={scenarioLabel} fill={vizColors.scenarioProduction} radius={[4, 4, 0, 0]} />}
+          {hasCallOff && <Bar dataKey={CALL_OFF_KEY} name={callOffLabel} fill={vizColors.callOff} radius={[4, 4, 0, 0]} />}
         </BarChart>
       </ResponsiveContainer>
     </div>
