@@ -387,6 +387,8 @@ callOffsRouter.get('/:id(\\d+)/calculator', (req, res) => {
 
     volumeYears: getCallOffVolumeYears(id),
 
+    dimensionFilters,
+
     machines,
 
   });

@@ -117,8 +117,33 @@ export function getProductionMonthNumbersInYear(sop: unknown, eop: unknown, year
   return months;
 }
 
-/** Liczba tygodni kalendarzowych w miesiącu (1. tydzień = dni 1–7 itd.). */
+/** Poniedziałek tygodnia ISO (pn–nd) zawierającego podaną datę (czas lokalny). */
+export function mondayOfIsoWeek(year: number, month: number, day: number): Date {
+  const d = new Date(year, month - 1, day);
+  const dow = d.getDay(); // 0=nd … 6=sb
+  const offset = dow === 0 ? -6 : 1 - dow;
+  d.setDate(d.getDate() + offset);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Liczba tygodni pn–nd w miesiącu.
+ * Częściowe tygodnie na początku/końcu miesiąca też się liczą (jak w ISO / SAP CW).
+ */
 export function getWeekCountInMonth(year: number, month: number): number {
   const daysInMonth = new Date(year, month, 0).getDate();
-  return Math.max(1, Math.ceil(daysInMonth / 7));
+  if (daysInMonth < 1) return 1;
+  const firstMon = mondayOfIsoWeek(year, month, 1);
+  const lastMon = mondayOfIsoWeek(year, month, daysInMonth);
+  return Math.max(1, Math.round((lastMon.getTime() - firstMon.getTime()) / 86400000 / 7) + 1);
+}
+
+/** Numer tygodnia w miesiącu (1 = pierwszy tydzień pn–nd mający co najmniej jeden dzień w miesiącu). */
+export function weekOfMonthFromDate(year: number, month: number, day: number): number {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const d = Math.min(Math.max(1, Math.floor(Number(day)) || 1), Math.max(1, daysInMonth));
+  const firstMon = mondayOfIsoWeek(year, month, 1);
+  const thisMon = mondayOfIsoWeek(year, month, d);
+  return Math.max(1, Math.round((thisMon.getTime() - firstMon.getTime()) / 86400000 / 7) + 1);
 }

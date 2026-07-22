@@ -203,6 +203,7 @@ function ensureDatabaseSchemaAndRepairs(): void {
   ensureMachinesMachineUsage();
   ensureOperationsSplitFrom();
   ensureOperationVolumeSource();
+  ensureOperationVolumeEffectiveFrom();
   markHistoricalAllocationOverrides();
   cleanupDanglingAllocationOverrides();
 }
@@ -247,6 +248,23 @@ function ensureOperationVolumeSource(): void {
     console.log('Ensured column operation_volume_by_year.source');
   } catch (e: any) {
     if (!e?.message?.includes('duplicate column name')) throw e;
+  }
+}
+
+function ensureOperationVolumeEffectiveFrom(): void {
+  const cols: { sql: string; label: string }[] = [
+    { sql: 'ALTER TABLE operation_volume_by_year ADD COLUMN volume_value_before REAL', label: 'volume_value_before' },
+    { sql: 'ALTER TABLE operation_volume_by_year ADD COLUMN effective_from_month INTEGER', label: 'effective_from_month' },
+    { sql: 'ALTER TABLE operation_volume_by_year ADD COLUMN effective_from_week INTEGER', label: 'effective_from_week' },
+  ];
+  for (const c of cols) {
+    try {
+      _db.exec(c.sql);
+      markDbDirty();
+      console.log(`Ensured column operation_volume_by_year.${c.label}`);
+    } catch (e: any) {
+      if (!e?.message?.includes('duplicate column name')) throw e;
+    }
   }
 }
 

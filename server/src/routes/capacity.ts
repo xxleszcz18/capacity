@@ -9,6 +9,7 @@ import {
   getNestCapacitiesForYear,
   getCapacityScopeBreakdown,
   resolveSettingsForYear,
+  resolveMachineIdsForRfqOperations,
   type CalculatorMachineStatusFilter,
   type CapacityBreakdownSeriesKey,
 } from '../services/capacityService.js';
@@ -99,6 +100,7 @@ function resolveCalculatorContext(req: import('express').Request) {
   let scenarioBundle: ReturnType<typeof parseScenarioSnapshotJson> | null = null;
   let scenarioIncludeRfq = true;
   let scenarioCallOffComparisonId: number | null = null;
+  const includeRfqOperationIds = parseIdList(req.query.includeRfqOperationIds, req.query.includeRfqOperationId);
 
   if (scenarioId != null) {
     const meta = getScenarioForCalculator(scenarioId);
@@ -137,18 +139,51 @@ function resolveCalculatorContext(req: import('express').Request) {
     ).map((r) => r.id);
   }
 
+  const rfqHostMachineIds = resolveMachineIdsForRfqOperations(includeRfqOperationIds);
+
   if (byClient) {
     if (!clientMachineIds || clientMachineIds.length === 0) {
-      return { empty: true as const, yearFrom, yearTo, scenarioId, settingsProfile, machineStatus, dimensionFilters, types, machineIds: [] as number[] };
+      if (rfqHostMachineIds.length === 0) {
+        return {
+          empty: true as const,
+          yearFrom,
+          yearTo,
+          scenarioId,
+          settingsProfile,
+          machineStatus,
+          dimensionFilters,
+          types,
+          machineIds: [] as number[],
+          includeRfqOperationIds,
+        };
+      }
+      clientMachineIds = [];
     }
     if (machineIds?.length) {
-      const set = new Set(clientMachineIds);
+      const set = new Set([...clientMachineIds, ...rfqHostMachineIds]);
       machineIds = machineIds.filter((id) => set.has(id));
-      if (machineIds.length === 0) {
-        return { empty: true as const, yearFrom, yearTo, scenarioId, settingsProfile, machineStatus, dimensionFilters, types, machineIds: [] as number[] };
+      if (machineIds.length === 0 && rfqHostMachineIds.length === 0) {
+        return {
+          empty: true as const,
+          yearFrom,
+          yearTo,
+          scenarioId,
+          settingsProfile,
+          machineStatus,
+          dimensionFilters,
+          types,
+          machineIds: [] as number[],
+          includeRfqOperationIds,
+        };
       }
+      if (machineIds.length === 0) machineIds = [...rfqHostMachineIds];
+      else machineIds = [...new Set([...machineIds, ...rfqHostMachineIds])];
     } else {
-      machineIds = clientMachineIds;
+      machineIds = [...new Set([...clientMachineIds, ...rfqHostMachineIds])];
+    }
+  } else if (rfqHostMachineIds.length) {
+    if (machineIds?.length) {
+      machineIds = [...new Set([...machineIds, ...rfqHostMachineIds])];
     }
   }
 
@@ -166,6 +201,7 @@ function resolveCalculatorContext(req: import('express').Request) {
     scenarioIncludeRfq,
     scenarioCallOffComparisonId,
     settingsProfile,
+    includeRfqOperationIds,
   };
 }
 
@@ -219,6 +255,7 @@ capacityRouter.get('/breakdown', (req, res) => {
       dimensionFilters: ctx.dimensionFilters,
       settingsProfile: ctx.settingsProfile,
       callOffVolumes,
+      includeRfqOperationIds: ctx.includeRfqOperationIds,
     },
     seriesKeys
   );
@@ -269,6 +306,8 @@ capacityRouter.get('/calculator', (req, res) => {
       dimensionFilters: ctx.dimensionFilters,
       settingsProfile: ctx.settingsProfile,
       groupIds: groupIdsParam ?? '',
+      includeRfqOperationIds: ctx.includeRfqOperationIds ?? [],
+      v: 2,
     });
     const cached = getCalculatorCache<ReturnType<typeof getMachineCapacityByYears>>(cacheKey);
     if (cached) {
@@ -279,10 +318,16 @@ capacityRouter.get('/calculator', (req, res) => {
         yearTo: ctx.yearTo,
         scenarioId: ctx.scenarioId ?? null,
         scenarioCallOffComparisonId: ctx.scenarioCallOffComparisonId,
+        dimensionFilters: ctx.dimensionFilters,
         machines: cached,
       });
     }
   }
+
+  const calculationOptions =
+    ctx.includeRfqOperationIds?.length > 0
+      ? { includeRfqOperationIds: ctx.includeRfqOperationIds }
+      : undefined;
 
   const data = useScenarioCallOffVolumes
     ? getScenarioCallOffCalculator(
@@ -310,7 +355,9 @@ capacityRouter.get('/calculator', (req, res) => {
         useContractualVolumes,
         ctx.machineStatus,
         ctx.dimensionFilters,
-        ctx.settingsProfile
+        ctx.settingsProfile,
+        undefined,
+        calculationOptions
       );
   if (!useScenarioCallOffVolumes) {
     const cacheKey = calculatorCacheKey({
@@ -324,6 +371,8 @@ capacityRouter.get('/calculator', (req, res) => {
       dimensionFilters: ctx.dimensionFilters,
       settingsProfile: ctx.settingsProfile,
       groupIds: groupIdsParam ?? '',
+      includeRfqOperationIds: ctx.includeRfqOperationIds ?? [],
+      v: 2,
     });
     setCalculatorCache(cacheKey, data);
   }
@@ -334,6 +383,7 @@ capacityRouter.get('/calculator', (req, res) => {
     yearTo: ctx.yearTo,
     scenarioId: ctx.scenarioId ?? null,
     scenarioCallOffComparisonId: ctx.scenarioCallOffComparisonId,
+    dimensionFilters: ctx.dimensionFilters,
     machines: data,
   });
 });
@@ -411,7 +461,12 @@ capacityRouter.get('/calculator/period-breakdown', (req, res) => {
         ctx.dimensionFilters,
         ctx.settingsProfile,
         undefined,
-        { includeAssignedZeroVolumeDetailsInBreakdown: true }
+        {
+          includeAssignedZeroVolumeDetailsInBreakdown: true,
+          ...(ctx.includeRfqOperationIds?.length
+            ? { includeRfqOperationIds: ctx.includeRfqOperationIds }
+            : {}),
+        }
       );
   res.set('Cache-Control', 'no-store');
   res.json({ year, machines: data });

@@ -29,10 +29,14 @@ export function parseMachineStatusList(single: unknown, multi: unknown): string[
     .filter((s) => s === 'active' || s === 'inactive' || s === 'RFQ');
 }
 
+/**
+ * Lista ID z query: oba argumenty mogą być CSV (`1800,1801`).
+ * Nie używamy parseCsvQueryParamSingleOrMulti — tam „single” nie jest dzielone po przecinku,
+ * więc includeRfqOperationIds=1800,1801 dawało [] i RFQ nie wchodził do kalkulacji.
+ */
 export function parseIdList(single: unknown, multi: unknown): number[] {
-  return parseCsvQueryParamSingleOrMulti(single, multi)
-    .map((s) => Number(s))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  const tokens = [...parseCsvQueryParam(single), ...parseCsvQueryParam(multi)];
+  return [...new Set(tokens.map((s) => Number(s)).filter((n) => Number.isFinite(n) && n > 0))];
 }
 
 export function sqlInClause(values: (string | number)[], column: string): { clause: string; params: (string | number)[] } {

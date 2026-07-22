@@ -537,6 +537,15 @@ export const pl: TranslationTree = {
     dimOpGte: '≥',
     dimOpLte: '≤',
     dimValuePlaceholder: 'mm',
+    dimFilterHint:
+      'Porównanie dotyczy wymiarów maszyny (mm). Maszyny bez uzupełnionego wymiaru są pomijane. Np. szerokość ≥ 1600 = maszyny o szerokości co najmniej 1600 mm.',
+    applyingDimensionFilters: 'Stosowanie filtra wymiarów…',
+    dimensionFilterResult: 'Filtr wymiarów: {{summary}} — {{count}} maszyn',
+    showZeroLoadMachines: 'Pokaż aktywne maszyny bez obciążenia (0% we wszystkich latach)',
+    showZeroLoadMachinesShort: 'z maszynami bez obciążenia',
+    dimensionFilterServerMismatch:
+      'Uwaga: serwer nie zastosował filtra wymiarów. Zrestartuj serwer aplikacji (npm run build w server + restart), potem odśwież stronę (Ctrl+F5).',
+    zeroLoadMachinesResult: 'Widok obejmuje maszyny bez obciążenia — {{count}} maszyn na liście',
     pageSizeShown: 'Wyświetlono {{from}}–{{to}} z {{total}} maszyn',
     pagePrev: 'Poprzednia',
     pageNext: 'Następna',
@@ -565,6 +574,7 @@ export const pl: TranslationTree = {
     expandRow: 'Rozwiń wiersz na miesiące',
     collapseRow: 'Zwiń miesiące wiersza',
     loadingPeriodBreakdown: 'Ładowanie rozbicia na miesiące i tygodnie…',
+    reloadingAfterAllocation: 'Przeliczanie obciążenia po alokacji…',
     sopMarker: 'Start produkcji (SOP) w tym okresie',
     eopMarker: 'Koniec produkcji (EOP) w tym okresie',
     periodMonthLabel: '{{year}} · {{month}}',
@@ -603,12 +613,28 @@ export const pl: TranslationTree = {
       transferModeTitle: 'Sposób przeniesienia wolumenu',
       modeFull: 'Przenieś całość wolumenu detalu',
       modeFullHelp: 'Przenosi 100% wolumenu wybranego detalu (wszystkie operacje w grupie) w każdym zaznaczonym roku.',
+      modeFullHelpPartial:
+        'Przenosi ułamek wolumenu roku odpowiadający okresowi od wybranego miesiąca/tygodnia do końca roku (kolejne zaznaczone lata — w całości).',
       modeManual: 'Wolumen wpisany ręcznie',
       modeManualHelp: 'Podaj wolumen do przeniesienia. Jeśli przekracza dostępny wolumen detalu w którymkolwiek roku, pojawi się ostrzeżenie — przy wykonaniu zostanie przeniesiona maksymalna możliwa ilość (nie więcej niż wpisana).',
       modeTargetPercent: 'Docelowe obciążenie zwalnianej maszyny (%)',
       modeTargetPercentHelp:
         'Oblicza wolumen potrzebny, aby po przeniesieniu na maszynie źródłowej zostało wpisane obciążenie. Gdy wolumen detalu jest za mały — przenosi całość z komunikatem.',
       executionYearsNotice: 'Alokacja zostanie wykonana dla lat: {{years}}',
+      executionPeriodFromMonth:
+        'Alokacja od {{month}} {{year}} (w roku kotwicy — ułamek roku; zaznaczone lata: {{years}}).',
+      executionPeriodFromWeek:
+        'Alokacja od CW{{week}} {{month}} {{year}} (~{{pct}}% wolumenu roku kotwicy; zaznaczone lata: {{years}}).',
+      periodScopeLabel: 'Okres w roku',
+      periodScopeYear: 'Cały rok',
+      periodScopeFromMonth: 'Od miesiąca',
+      periodScopeFromWeek: 'Od tygodnia',
+      startMonth: 'Miesiąc od',
+      startWeek: 'Tydzień od',
+      periodFractionHint: 'Od punktu startu: ~{{pct}}% tygodni roku na maszynie docelowej (stawka tygodniowa bez zmian)',
+      periodScopeYearHelp: 'Przenosi wolumen jak dotychczas — dla pełnego roku (lub lat).',
+      periodScopePartialHelp:
+        'Od wybranego miesiąca/tygodnia: wcześniej pełna stawka zostaje na maszynie źródłowej; od tego tygodnia ta sama stawka przechodzi na maszynę docelową (bez uśredniania na cały rok). Kolejne zaznaczone lata — w całości.',
       targetLoad: 'Pozostałe obciążenie maszyny źródłowej:',
       targetLoadInputTitle:
         'Procent obciążenia kalkulatora, jaki ma pozostać na maszynie zwalnianej po przeniesieniu wolumenu detalu (np. 73 = zostaje 73%).',

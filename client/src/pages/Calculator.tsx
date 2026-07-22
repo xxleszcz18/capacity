@@ -20,12 +20,14 @@ import { compareInternalMachineNumbers } from '../utils/internalMachineNumber';
 import SortableTh from '../components/SortableTh';
 import { sortIndicator, sortRows, type SortDirection } from '../utils/tableSort';
 import {
-  buildDimensionApiParams,
   EMPTY_DIM_FILTERS,
   formatDimFilterSummary,
   hasActiveDimFilters,
+  filterMachinesByDimensionFilters,
+  buildMachineDimLookup,
   type DimFilterOp,
   type DimFiltersState,
+  type MachineDimLookup,
 } from '../utils/machineDimensionFilters';
 import {
   buildHorizontalTimelineColumns,
@@ -40,6 +42,7 @@ import {
   calendarWeekForMonthWeek,
   periodMachineMonthKey,
   periodMonthKey,
+  getWeekCountInMonth,
   type PeriodBreakdownMachine,
   type PeriodMonthData,
   type TimelineColumn,
@@ -49,6 +52,10 @@ import {
 import DualLoadCell from '../components/capacity/DualLoadCell';
 import { loadColor } from '../utils/loadCellColors';
 import { isYearInProjectSopEop, sopEopYearsRange } from '../utils/sopEopFormat';
+import {
+  allocationFractionForExecutionYear,
+  type AllocationPeriodScope,
+} from '../utils/allocationPeriodFraction';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -480,7 +487,8 @@ function periodCellTitle(
   detailBreakdown: DetailBreakdownItem[] | undefined,
   locale: string,
   t: (key: string, params?: Record<string, string | number>) => string,
-  volumePeriod: 'annual' | 'monthly' | 'weekly'
+  volumePeriod: 'annual' | 'monthly' | 'weekly',
+  canAllocate = false
 ): string {
   const details = formatDetailBreakdownSection(
     t('calculator.tooltip.detailsHeader'),
@@ -490,7 +498,8 @@ function periodCellTitle(
     volumePeriod,
     true
   );
-  return `${periodLabel(year, month, week, locale)}\n\n${details}`;
+  const base = `${periodLabel(year, month, week, locale)}\n\n${details}`;
+  return canAllocate ? `${t('calculator.tooltip.openAllocPeriod')}\n\n${base}` : base;
 }
 
 function mergeCallOffBreakdownWithBase(
@@ -833,7 +842,12 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     return true;
   });
   const callOffPeriodStyleMode = callOffMode;
-  const [data, setData] = useState<{ yearFrom: number; yearTo: number; machines: any[] } | null>(null);
+  const [data, setData] = useState<{
+    yearFrom: number;
+    yearTo: number;
+    machines: any[];
+    dimensionFilters?: { field: string; op: string; value: number }[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
   const [clientFilter, setClientFilter] = useState<string[]>([]);
@@ -841,6 +855,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   const [machinesFilter, setMachinesFilter] = useState('');
   const [lineFilter, setLineFilter] = useState<string[]>([]);
   const [dimFilters, setDimFilters] = useState<DimFiltersState>(EMPTY_DIM_FILTERS);
+  /** Gdy true — w wyniku są też aktywne maszyny z 0% we wszystkich latach zakresu. */
+  const [showZeroLoadMachines, setShowZeroLoadMachines] = useState(false);
+  const [machineDimLookup, setMachineDimLookup] = useState<MachineDimLookup | null>(null);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [machinesPage, setMachinesPage] = useState(1);
   type CalcSortCol = 'sap' | 'internal' | 'type' | 'year';
@@ -862,6 +879,14 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     }, 400);
     return () => window.clearTimeout(timer);
   }, [yearFrom, yearTo]);
+
+  useEffect(() => {
+    api.machines
+      .list({ statuses: 'active,inactive,RFQ' })
+      .then((rows) => setMachineDimLookup(buildMachineDimLookup(Array.isArray(rows) ? rows : [])))
+      .catch(() => setMachineDimLookup(null));
+  }, []);
+
   const [types, setTypes] = useState<string[]>([]);
   const [overloaded, setOverloaded] = useState<any[]>([]);
   const [overloadedBarHidden, setOverloadedBarHidden] = useState(() => {
@@ -875,6 +900,8 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     machineId: number;
     internal_number: string | number;
     preselectedYear?: number;
+    preselectedMonth?: number;
+    preselectedWeek?: number;
     /** Obciążenia % z tabeli kalkulatora — źródło prawdy dla wybranego roku. */
     calculatorYears?: Record<
       number,
@@ -904,10 +931,13 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   periodCacheRef.current = periodCache;
   const [sopEopMarkerIndex, setSopEopMarkerIndex] = useState<Map<number, Record<number, YearSopEopMarkers>>>(() => new Map());
   const [periodLoading, setPeriodLoading] = useState(false);
+  /** Po alokacji: trzymaj overlay aż przeliczy się rok i (gdy rozwinięte) miesiące/tygodnie. */
+  const [postAllocationRefresh, setPostAllocationRefresh] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const headScrollRef = useRef<HTMLDivElement>(null);
   const bodyScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollSyncLock = useRef(false);
+  const calculatorFetchGenRef = useRef(0);
 
   useEffect(() => {
     const loadGroups = () => {
@@ -1046,7 +1076,8 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       if (statuses) params.machineStatuses = statuses;
       if (settingsProfile === 'ocu') params.settingsProfile = 'ocu';
       if (groupFilter.length > 0) params.groupIds = groupFilter.join(',');
-      Object.assign(params, buildDimensionApiParams(dimFilters));
+      // Wymiary filtrujemy po stronie klienta (natychmiastowo) — nie wysyłamy ich do API,
+      // żeby zmiana progu nie wymagała ponownego przeliczenia obciążenia.
       return params;
     },
     [
@@ -1058,31 +1089,58 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       groupFilter,
       scenarioId,
       useContractualVolumes,
-      dimFilters,
       settingsProfile,
     ]
   );
 
-  const fetchCalculator = useCallback(() => {
+  const fetchCalculator = useCallback(async () => {
     const params = buildCalcApiParams() as Record<string, string | number | boolean | undefined | null>;
     if (callOffMode && callOffComparisonId) {
-      return api.callOffs.calculator(callOffComparisonId, params).then((res) => {
-        setData({ yearFrom: res.yearFrom, yearTo: res.yearTo, machines: res.machines });
-      });
+      const res = await api.callOffs.calculator(callOffComparisonId, params);
+      return { yearFrom: res.yearFrom, yearTo: res.yearTo, machines: res.machines };
     }
-    return api.capacity.calculator(buildCalcApiParams() as Parameters<typeof api.capacity.calculator>[0]).then(setData);
+    return api.capacity.calculator(buildCalcApiParams() as Parameters<typeof api.capacity.calculator>[0]);
   }, [buildCalcApiParams, callOffMode, callOffComparisonId]);
 
   useEffect(() => {
     if (!timelineYearsReady) return;
+    let cancelled = false;
+    const gen = calculatorFetchGenRef.current;
     setLoading(true);
-    fetchCalculator().finally(() => setLoading(false));
+    fetchCalculator()
+      .then((res) => {
+        if (!cancelled && gen === calculatorFetchGenRef.current) setData(res);
+      })
+      .catch(() => {
+        /* przy odświeżeniu zostaw poprzednią tabelę; przy pierwszym ładowaniu data zostaje null */
+      })
+      .finally(() => {
+        if (!cancelled && gen === calculatorFetchGenRef.current) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [fetchCalculator, timelineYearsReady]);
 
   useEffect(() => {
     setPeriodCache({});
     setSopEopMarkerIndex(new Map());
   }, [buildCalcApiParams, callOffMode, callOffComparisonId]);
+
+  useEffect(() => {
+    if (!postAllocationRefresh) return;
+    if (!loading && !periodLoading) setPostAllocationRefresh(false);
+  }, [postAllocationRefresh, loading, periodLoading]);
+
+  const calculatorBusy =
+    loading || periodLoading || postAllocationRefresh;
+  const calculatorBusyLabel = postAllocationRefresh
+    ? t('calculator.reloadingAfterAllocation')
+    : loading
+      ? t('common.recalculating')
+      : periodLoading
+        ? t('calculator.loadingPeriodBreakdown')
+        : undefined;
 
   const expansionDirection = visualSettings.load_expansion_direction ?? 'horizontal';
   const isHorizontalExpansion = expansionDirection === 'horizontal';
@@ -1163,7 +1221,11 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      fetchCalculator();
+      fetchCalculator()
+        .then((res) => setData(res))
+        .catch(() => {
+          /* keep previous */
+        });
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -1208,7 +1270,15 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
 
   const filteredMachines = useMemo(() => {
     const q = machinesFilter.trim();
-    return allMachines.filter((m) => {
+    const dimActive = hasActiveDimFilters(dimFilters);
+    const dimFiltered = filterMachinesByDimensionFilters(allMachines, dimFilters, machineDimLookup);
+    return dimFiltered.filter((m) => {
+      // Przy filtrze wymiarów domyślnie ukrywaj 0% we wszystkich latach; checkbox to włącza.
+      if (dimActive && !showZeroLoadMachines) {
+        const years = m.years ?? {};
+        const hasLoad = Object.values(years).some((y: any) => Number(y?.load_percent ?? 0) > 0);
+        if (!hasLoad) return false;
+      }
       if (q && !machineMatchesCalculatorFilter(m, q)) return false;
       if (lineFilter.length > 0) {
         const loc = m.location != null ? String(m.location).trim() : '';
@@ -1216,7 +1286,11 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       }
       return true;
     });
-  }, [allMachines, machinesFilter, lineFilter]);
+  }, [allMachines, machinesFilter, lineFilter, showZeroLoadMachines, dimFilters, machineDimLookup]);
+
+  useEffect(() => {
+    setMachinesPage(1);
+  }, [dimFilters, showZeroLoadMachines, machinesFilter, lineFilter, typeFilter, clientFilter, groupFilter]);
 
   const handleCalcSort = (col: CalcSortCol, year?: number) => {
     if (col === 'year' && year != null) {
@@ -1318,18 +1392,28 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   }, [displayedMachines, buildCalcApiParams, callOffMode, callOffComparisonId]);
 
   useEffect(() => {
-    const missing = yearsNeedingPeriodData.filter((y) => !periodCache[y]);
-    if (missing.length === 0) return;
-    const machineIds = displayedMachines
+    const machineIdList = displayedMachines
       .map((m: { machine_id?: number }) => Number(m.machine_id))
-      .filter((id) => Number.isFinite(id))
-      .join(',');
-    if (!machineIds) return;
+      .filter((id) => Number.isFinite(id));
+    const machineIds = machineIdList.join(',');
+    if (yearsNeedingPeriodData.length === 0) return;
+    if (!machineIds) {
+      setPeriodLoading(false);
+      return;
+    }
+    // Rok w cache ≠ komplet: po filtrze maszyn trzeba dociągnąć brakujące ID (inaczej 0% bez spinnera).
+    const yearsToFetch = yearsNeedingPeriodData.filter((y) => {
+      const cached = periodCache[y];
+      if (!cached) return true;
+      const have = new Set(cached.map((row) => Number(row.machine_id)));
+      return machineIdList.some((id) => !have.has(id));
+    });
+    if (yearsToFetch.length === 0) return;
     let cancelled = false;
     setPeriodLoading(true);
     const params = buildCalcApiParams() as Record<string, unknown>;
     Promise.all(
-      missing.map((year) => {
+      yearsToFetch.map((year) => {
         if (callOffMode && callOffComparisonId) {
           return api.callOffs
             .periodBreakdown(callOffComparisonId, { ...params, year, machineIds })
@@ -1344,7 +1428,29 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         if (cancelled) return;
         setPeriodCache((prev) => {
           const next = { ...prev };
-          for (const r of results) next[r.year] = r.machines;
+          for (const r of results) {
+            const byId = new Map((next[r.year] ?? []).map((row) => [Number(row.machine_id), row]));
+            for (const row of r.machines) byId.set(Number(row.machine_id), row);
+            for (const id of machineIdList) {
+              if (!byId.has(id)) byId.set(id, { machine_id: id, months: {} });
+            }
+            next[r.year] = [...byId.values()];
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Po błędzie API nie zostawiaj „dziur” — stuby kończą spinner (0% zamiast wiecznego ładowania).
+        setPeriodCache((prev) => {
+          const next = { ...prev };
+          for (const year of yearsToFetch) {
+            const byId = new Map((next[year] ?? []).map((row) => [Number(row.machine_id), row]));
+            for (const id of machineIdList) {
+              if (!byId.has(id)) byId.set(id, { machine_id: id, months: {} });
+            }
+            next[year] = [...byId.values()];
+          }
           return next;
         });
       })
@@ -1424,8 +1530,6 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     </div>
   ) : null;
 
-  if (loading && !data) return <p>{t('common.loading')}</p>;
-
   const scenarioTitleSuffix =
     scenarioId != null &&
     !isNaN(scenarioId) &&
@@ -1440,11 +1544,28 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     ? buildHorizontalTimelineColumns(years, expandedYears, expandedMonths)
     : years.map((year) => ({ kind: 'year' as const, year }));
   const getMachineMonthsData = (machineId: number, year: number) =>
-    periodCache[year]?.find((row) => row.machine_id === machineId)?.months;
-  const isYearPeriodDataPending = (year: number) =>
-    yearsNeedingPeriodData.includes(year) && !periodCache[year];
-  const isPeriodColumnPending = (col: TimelineColumn) =>
-    col.kind !== 'year' && (periodLoading || isYearPeriodDataPending(col.year));
+    periodCache[year]?.find((row) => Number(row.machine_id) === Number(machineId))?.months;
+  const displayedMachineIdList = displayedMachines
+    .map((m: { machine_id?: number }) => Number(m.machine_id))
+    .filter((id: number) => Number.isFinite(id));
+  const isYearPeriodDataPending = (year: number) => {
+    if (!yearsNeedingPeriodData.includes(year)) return false;
+    const cached = periodCache[year];
+    if (!cached) return true;
+    const have = new Set(cached.map((row) => Number(row.machine_id)));
+    return displayedMachineIdList.some((id) => !have.has(id));
+  };
+  const isMachinePeriodPending = (machineId: number, year: number) => {
+    if (!yearsNeedingPeriodData.includes(year)) return false;
+    if (!periodCache[year]) return true;
+    if (getMachineMonthsData(machineId, year) != null) return false;
+    return periodLoading || isYearPeriodDataPending(year);
+  };
+  const isPeriodColumnPending = (col: TimelineColumn, machineId?: number) => {
+    if (col.kind === 'year') return false;
+    if (machineId != null) return isMachinePeriodPending(machineId, col.year);
+    return periodLoading || isYearPeriodDataPending(col.year);
+  };
   const renderPeriodExpandBtn = (title: string, expanded: boolean, onClick: () => void) => (
     <button
       type="button"
@@ -1642,6 +1763,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     setMachinesFilter('');
     setLineFilter([]);
     setDimFilters(EMPTY_DIM_FILTERS);
+    setShowZeroLoadMachines(false);
     setAdvancedFiltersOpen(false);
     setMachineStatusFilter(['active']);
     setGroupFilter([]);
@@ -2369,8 +2491,8 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         </label>
         <div className="filter-actions">
           <DataLoadingBadge
-            active={(loading && Boolean(data)) || periodLoading}
-            label={periodLoading ? t('calculator.loadingPeriodBreakdown') : undefined}
+            active={calculatorBusy}
+            label={calculatorBusyLabel}
           />
           <button type="button" className="calculator-primary-btn" onClick={clearAllFilters}>{t('common.clearFilters')}</button>
         </div>
@@ -2406,12 +2528,16 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                 <select
                   className="calculator-dim-filter-op"
                   value={dimFilters[key].op}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const op = e.target.value as DimFilterOp;
                     setDimFilters((prev) => ({
                       ...prev,
-                      [key]: { ...prev[key], op: e.target.value as DimFilterOp },
-                    }))
-                  }
+                      [key]: {
+                        op,
+                        value: op ? prev[key].value : '',
+                      },
+                    }));
+                  }}
                 >
                   <option value="">{t('calculator.dimOpNone')}</option>
                   <option value="gte">{t('calculator.dimOpGte')}</option>
@@ -2434,9 +2560,30 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                 />
               </label>
             ))}
+            <label className="calculator-dim-filter-checkbox">
+              <input
+                type="checkbox"
+                checked={showZeroLoadMachines}
+                onChange={(e) => setShowZeroLoadMachines(e.target.checked)}
+                disabled={!hasActiveDimFilters(dimFilters)}
+              />
+              <span>{t('calculator.showZeroLoadMachines')}</span>
+            </label>
+            <p className="calculator-dim-filter-hint">
+              {t('calculator.dimFilterHint')}
+            </p>
           </div>
         )}
       </div>
+      {hasActiveDimFilters(dimFilters) && data && (
+        <p className="calculator-dim-filter-result" role="status">
+          {t('calculator.dimensionFilterResult', {
+            summary: formatDimFilterSummary(dimFilters, t),
+            count: filteredMachines.length,
+          })}
+          {showZeroLoadMachines ? ` · ${t('calculator.showZeroLoadMachinesShort')}` : ''}
+        </p>
+      )}
       {reportMessage && <p style={{ margin: '0 0 1rem', fontSize: 13, color: reportMessage.includes('nie') ? '#c62828' : '#2e7d32' }}>{reportMessage}</p>}
       {reportModalOpen && (
         <div onMouseDown={(e) => { if (e.target === e.currentTarget) setReportModalOpen(false); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2490,10 +2637,27 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         </div>
       )}
       <DataLoadingOverlay
-        active={(loading && Boolean(data)) || periodLoading}
-        label={periodLoading ? t('calculator.loadingPeriodBreakdown') : undefined}
+        active={calculatorBusy}
+        label={calculatorBusyLabel}
         className="calculator-data-panel"
       >
+      {calculatorBusy && (
+        <div className="calculator-loading-banner" role="status" aria-live="polite">
+          <span className="data-loading-spinner" aria-hidden="true" />
+          <span>{calculatorBusyLabel ?? t('common.recalculating')}</span>
+        </div>
+      )}
+      {calculatorBusy && (!data || displayedMachines.length === 0) && (
+        <div className="calculator-loading-panel" role="status" aria-live="polite">
+          <span className="data-loading-spinner" aria-hidden="true" />
+          <span>{calculatorBusyLabel ?? t('common.recalculating')}</span>
+        </div>
+      )}
+      {!calculatorBusy && !data && (
+        <p style={{ margin: '1rem 0', padding: '0.75rem 1rem', background: '#ffebee', borderRadius: 8, color: '#b71c1c' }}>
+          {t('common.error')}
+        </p>
+      )}
       {!scenarioId && !callOffMode && overloaded.length > 0 && overloadedBarHidden && (
         <div style={{ marginBottom: '0.75rem' }}>
           <button
@@ -2666,7 +2830,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                             has_eop: monthsData?.[col.month]?.has_eop ?? getMonthMarkers(yearMarkers, col.month).has_eop,
                           }
                         : getMonthMarkers(yearMarkers, col.month);
-                  const periodCellPending = isPeriodColumnPending(col);
+                  const periodCellPending = isPeriodColumnPending(col, m.machine_id);
                   const monthNum = col.kind === 'month' || col.kind === 'week' ? col.month : undefined;
                   const weekNum = col.kind === 'week' ? col.week : undefined;
                   const baseBreakdown = getTimelineBaseBreakdown(col, cell, monthsData);
@@ -2677,6 +2841,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                   /** SAP: miesiąc/rok = peak tygodnia → ilości w breakdown są tygodniowe. */
                   const callOffVolumePeriod =
                     callOffMode && (isYearCell || col.kind === 'month') ? 'weekly' : volumePeriod;
+                  const canAllocPeriod = tableCanAllocate && !callOffMode;
                   const cellTitle = callOffMode
                     ? callOffCellTitle(
                         yearForCell,
@@ -2692,7 +2857,27 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                       )
                     : isYearCell
                       ? percentCellTitle(yearForCell, altB, baseBreakdown, locale, t, tableCanAllocate)
-                      : periodCellTitle(yearForCell, monthNum, weekNum, baseBreakdown, locale, t, volumePeriod);
+                      : periodCellTitle(
+                          yearForCell,
+                          monthNum,
+                          weekNum,
+                          baseBreakdown,
+                          locale,
+                          t,
+                          volumePeriod,
+                          canAllocPeriod
+                        );
+                  const openAllocation = () => {
+                    if (!canAllocPeriod && !(tableCanAllocate && isYearCell)) return;
+                    setAllocationModal({
+                      machineId: m.machine_id,
+                      internal_number: m.internal_number,
+                      preselectedYear: yearForCell,
+                      preselectedMonth: col.kind === 'month' || col.kind === 'week' ? col.month : undefined,
+                      preselectedWeek: col.kind === 'week' ? col.week : undefined,
+                      calculatorYears: m.years,
+                    });
+                  };
                   return (
                     <td
                       key={
@@ -2702,8 +2887,8 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                             ? `cell-m-${m.machine_id}-${yearForCell}-${col.month}`
                             : `cell-w-${m.machine_id}-${yearForCell}-${col.month}-${col.week}`
                       }
-                      role={tableCanAllocate && isYearCell ? 'button' : undefined}
-                      tabIndex={tableCanAllocate && isYearCell ? 0 : undefined}
+                      role={canAllocPeriod || (tableCanAllocate && isYearCell) ? 'button' : undefined}
+                      tabIndex={canAllocPeriod || (tableCanAllocate && isYearCell) ? 0 : undefined}
                       className={
                         isYearCell
                           ? 'calc-year-col'
@@ -2716,31 +2901,24 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                           ? isYearCell
                             ? callOffYearCellStyle(altB, visualSettings, tableCanAllocate && isYearCell)
                             : callOffPeriodCellStyle(periodKind, visualSettings)
-                          : periodCellStyle(pct, altB, visualSettings, periodKind, tableCanAllocate && isYearCell)
+                          : periodCellStyle(
+                              pct,
+                              altB,
+                              visualSettings,
+                              periodKind,
+                              canAllocPeriod || (tableCanAllocate && isYearCell)
+                            )
                       }
                       title={cellTitle}
                       onClick={
-                        tableCanAllocate && isYearCell
-                          ? () =>
-                              setAllocationModal({
-                                machineId: m.machine_id,
-                                internal_number: m.internal_number,
-                                preselectedYear: yearForCell,
-                                calculatorYears: m.years,
-                              })
-                          : undefined
+                        canAllocPeriod || (tableCanAllocate && isYearCell) ? openAllocation : undefined
                       }
                       onKeyDown={
-                        tableCanAllocate && isYearCell
+                        canAllocPeriod || (tableCanAllocate && isYearCell)
                           ? (e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                setAllocationModal({
-                                  machineId: m.machine_id,
-                                  internal_number: m.internal_number,
-                                  preselectedYear: yearForCell,
-                                  calculatorYears: m.years,
-                                });
+                                openAllocation();
                               }
                             }
                           : undefined
@@ -2846,7 +3024,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                               }
                             : getMonthMarkers(yearMarkers, row.month);
                         const periodKind: PeriodCellKind = row.kind === 'month' ? 'month' : 'week';
-                        const periodCellPending = periodLoading || isYearPeriodDataPending(y);
+                        const periodCellPending = isMachinePeriodPending(m.machine_id, y);
                         const volumePeriod = verticalRowVolumePeriod(row);
                         const baseBreakdown =
                           row.kind === 'week'
@@ -2876,11 +3054,23 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                               baseBreakdown,
                               locale,
                               t,
-                              volumePeriod
+                              volumePeriod,
+                              tableCanAllocate
                             );
+                        const openVerticalAllocation = () => {
+                          if (!tableCanAllocate) return;
+                          setAllocationModal({
+                            machineId: m.machine_id,
+                            internal_number: m.internal_number,
+                            preselectedYear: y,
+                            preselectedMonth: row.month,
+                            preselectedWeek: row.kind === 'week' ? row.week : undefined,
+                            calculatorYears: m.years,
+                          });
+                        };
                         const cellStyle = callOffPeriodStyleMode
                           ? callOffPeriodCellStyle(periodKind, visualSettings)
-                          : periodCellStyle(pct, 'none', visualSettings, periodKind, false);
+                          : periodCellStyle(pct, 'none', visualSettings, periodKind, tableCanAllocate);
                         return (
                           <td
                             key={`sub-val-${m.machine_id}-${y}-${row.kind}-${row.month}`}
@@ -2889,8 +3079,21 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                                 ? 'calc-period-col calc-period-col--month'
                                 : 'calc-period-col calc-period-col--week'
                             }
+                            role={tableCanAllocate ? 'button' : undefined}
+                            tabIndex={tableCanAllocate ? 0 : undefined}
                             style={cellStyle}
                             title={cellTitle}
+                            onClick={tableCanAllocate ? openVerticalAllocation : undefined}
+                            onKeyDown={
+                              tableCanAllocate
+                                ? (e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      openVerticalAllocation();
+                                    }
+                                  }
+                                : undefined
+                            }
                           >
                             {renderCapacityCellContent(callOffMode, periodCellPending, pct, coPct, monthMarkers, visualSettings, t)}
                           </td>
@@ -3023,12 +3226,17 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         </div>
       </div>
       {machinesPaginationBar}
-      {!loading && data && allMachines.length === 0 && (
-        <p style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#fff3e0', borderRadius: 8, maxWidth: 720 }}>
-          {t('calculator.emptyNoActiveMachines')}
+      {!calculatorBusy && data && allMachines.length === 0 && (
+        <p style={{ margin: '1rem 0', padding: '0.75rem 1rem', background: '#fff3e0', borderRadius: 8, maxWidth: 720 }}>
+          {hasActiveDimFilters(dimFilters) ||
+          typeFilter.length > 0 ||
+          clientFilter.length > 0 ||
+          groupFilter.length > 0
+            ? t('calculator.noMachinesFilter')
+            : t('calculator.emptyNoActiveMachines')}
         </p>
       )}
-      {!loading && data && allMachines.length > 0 && filteredMachines.length === 0 && (
+      {!calculatorBusy && data && allMachines.length > 0 && filteredMachines.length === 0 && (
         <p style={{ marginTop: '1rem', color: '#666' }}>{t('calculator.noMachinesFilter')}</p>
       )}
       <CalculatorLegend visual={visualSettings} t={t} />
@@ -3040,12 +3248,31 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           yearFrom={data.yearFrom}
           yearTo={data.yearTo}
           preselectedYear={allocationModal.preselectedYear}
+          preselectedMonth={allocationModal.preselectedMonth}
+          preselectedWeek={allocationModal.preselectedWeek}
           calculatorYears={allocationModal.calculatorYears}
           scenarioId={scenarioId != null && !isNaN(scenarioId) ? scenarioId : undefined}
           onClose={() => setAllocationModal(null)}
-          onSuccess={() => {
+          onSuccess={(meta) => {
+            setAllocationModal(null);
+            const years = meta?.years?.filter((y) => Number.isFinite(y)) ?? [];
+            if (years.length > 0) {
+              setPeriodCache((prev) => {
+                const next = { ...prev };
+                for (const y of years) delete next[y];
+                return next;
+              });
+            } else {
+              setPeriodCache({});
+            }
+            setPostAllocationRefresh(true);
             setLoading(true);
-            fetchCalculator().finally(() => setLoading(false));
+            fetchCalculator()
+              .then((res) => setData(res))
+              .catch(() => {
+                /* keep previous table if refresh fails */
+              })
+              .finally(() => setLoading(false));
           }}
         />
       )}
@@ -3417,6 +3644,8 @@ function AllocationModal({
   yearFrom,
   yearTo,
   preselectedYear,
+  preselectedMonth,
+  preselectedWeek,
   calculatorYears,
   scenarioId,
   onClose,
@@ -3427,6 +3656,8 @@ function AllocationModal({
   yearFrom: number;
   yearTo: number;
   preselectedYear?: number;
+  preselectedMonth?: number;
+  preselectedWeek?: number;
   calculatorYears?: Record<
     number,
     {
@@ -3437,9 +3668,10 @@ function AllocationModal({
   /** Gdy ustawiony — alokacja zapisuje się w snapshotcie scenariusza, nie w produkcji. */
   scenarioId?: number;
   onClose: () => void;
-  onSuccess?: () => void;
+  /** years — lata zmienione alokacją (do selektywnego odświeżenia rozbicia miesiąc/tydzień). */
+  onSuccess?: (meta?: { years: number[] }) => void;
 }) {
-  const { t, te } = useI18n();
+  const { t, te, locale } = useI18n();
   const { useContractualVolumes } = useContractVolumes();
   const volumeUnitLabel = (unit: VolumeUnit) =>
     unit === 'annual' ? t('common.unitAnnualShort') : unit === 'monthly' ? t('common.unitMonthlyShort') : t('common.unitWeeklyShort');
@@ -3454,9 +3686,18 @@ function AllocationModal({
   };
   const yearRange = Array.from({ length: yearTo - yearFrom + 1 }, (_, i) => yearFrom + i);
   const defaultYear = preselectedYear ?? yearFrom;
+  const initialPeriodScope: AllocationPeriodScope =
+    preselectedWeek != null ? 'fromWeek' : preselectedMonth != null ? 'fromMonth' : 'year';
   const [year, setYear] = useState(defaultYear);
   const [yearMode, setYearMode] = useState<AllocationYearMode>('single');
   const [selectedYears, setSelectedYears] = useState<number[]>([defaultYear]);
+  const [periodScope, setPeriodScope] = useState<AllocationPeriodScope>(initialPeriodScope);
+  const [startMonth, setStartMonth] = useState(() =>
+    Math.min(12, Math.max(1, Math.floor(Number(preselectedMonth)) || 1))
+  );
+  const [startWeek, setStartWeek] = useState(() =>
+    Math.min(5, Math.max(1, Math.floor(Number(preselectedWeek)) || 1))
+  );
   const [valueMode, setValueMode] = useState<AllocationValueMode>('global');
   const [candidates, setCandidates] = useState<any[]>([]);
   const [operations, setOperations] = useState<any[]>([]);
@@ -3528,7 +3769,18 @@ function AllocationModal({
       setSelectedYears([preselectedYear]);
       setYearMode('single');
     }
-  }, [preselectedYear]);
+    if (preselectedWeek != null) {
+      setPeriodScope('fromWeek');
+      setStartMonth(Math.min(12, Math.max(1, Math.floor(Number(preselectedMonth)) || 1)));
+      setStartWeek(Math.min(5, Math.max(1, Math.floor(Number(preselectedWeek)) || 1)));
+    } else if (preselectedMonth != null) {
+      setPeriodScope('fromMonth');
+      setStartMonth(Math.min(12, Math.max(1, Math.floor(Number(preselectedMonth)) || 1)));
+      setStartWeek(1);
+    } else {
+      setPeriodScope('year');
+    }
+  }, [preselectedYear, preselectedMonth, preselectedWeek]);
 
   useEffect(() => {
     setPerYearValues((prev) => {
@@ -3727,6 +3979,27 @@ function AllocationModal({
   const zeroVolumePreallocForYear =
     selectedOp != null && isZeroVolumePreallocEligible(selectedOp, year, operationWeekly);
   const yearsForAllocation = yearMode === 'single' ? [year] : [...selectedYears].sort((a, b) => a - b);
+  const periodAnchorYear = yearsForAllocation[0] ?? year;
+  const weeksInStartMonth = getWeekCountInMonth(periodAnchorYear, startMonth);
+  const clampedStartWeek = Math.min(weeksInStartMonth, Math.max(1, startWeek));
+
+  useEffect(() => {
+    if (startWeek > weeksInStartMonth) setStartWeek(weeksInStartMonth);
+  }, [weeksInStartMonth, startWeek]);
+
+  const periodFractionForYear = useCallback(
+    (yearItem: number) =>
+      allocationFractionForExecutionYear(
+        yearItem,
+        periodAnchorYear,
+        periodScope,
+        startMonth,
+        clampedStartWeek
+      ),
+    [periodAnchorYear, periodScope, startMonth, clampedStartWeek]
+  );
+
+  const activePeriodFraction = periodFractionForYear(year);
 
   useEffect(() => {
     if (zeroVolumePreallocForYear && selectedGroupWeekly <= 1e-9) {
@@ -3815,7 +4088,7 @@ function AllocationModal({
       if (reqW > maxW + 1e-9) exceeded.push(y);
     }
     return exceeded;
-  }, [transferMode, valueMode, volumeToMove, volumeUnit, perYearValues, yearsForAllocation, yearMaxWeekly, workWeeksHint]);
+  }, [transferMode, valueMode, volumeToMove, volumeUnit, perYearValues, yearsForAllocation, yearMaxWeekly, workWeeksHint, periodFractionForYear]);
 
   const targetPercentPreview = useMemo(() => {
     if (!targetPercentCalc) return null;
@@ -3829,6 +4102,36 @@ function AllocationModal({
     const yrs = yearMode === 'single' ? [year] : [...selectedYears].sort((a, b) => a - b);
     return yrs.join(', ');
   }, [yearMode, year, selectedYears]);
+
+  const executionPeriodNotice = useMemo(() => {
+    if (periodScope === 'year') {
+      return t('calculator.allocation.executionYearsNotice', { years: executionYearsLabel });
+    }
+    const monthName = monthAbbrev(startMonth, locale);
+    if (periodScope === 'fromMonth') {
+      return t('calculator.allocation.executionPeriodFromMonth', {
+        month: monthName,
+        year: periodAnchorYear,
+        years: executionYearsLabel,
+      });
+    }
+    return t('calculator.allocation.executionPeriodFromWeek', {
+      week: calendarWeekForMonthWeek(periodAnchorYear, startMonth, clampedStartWeek),
+      month: monthName,
+      year: periodAnchorYear,
+      years: executionYearsLabel,
+      pct: Math.round(activePeriodFraction * 1000) / 10,
+    });
+  }, [
+    periodScope,
+    executionYearsLabel,
+    startMonth,
+    clampedStartWeek,
+    periodAnchorYear,
+    activePeriodFraction,
+    locale,
+    t,
+  ]);
 
   const normType = (t: unknown) => String(t ?? '').trim();
   const sameGroup = (m: { type?: string }) => {
@@ -3872,6 +4175,7 @@ function AllocationModal({
   const execute = () => {
     const yearsToExecute = (yearMode === 'single' ? [year] : selectedYears)
       .filter((y, idx, arr) => arr.indexOf(y) === idx)
+      .filter((y) => periodFractionForYear(y) > 0)
       .sort((a, b) => a - b);
     if (!opId || !targetId || yearsToExecute.length === 0) {
       setMessage({ type: 'err', text: t('calculator.allocation.selectOpMachineYear') });
@@ -3943,12 +4247,21 @@ function AllocationModal({
     (async () => {
       const workWeeksBase = effectiveLoadHint?.working_weeks_per_year ?? loadHint?.working_weeks_per_year ?? 48;
       const multiYearBatch = yearsToExecute.length > 1;
+      const withEffectiveFrom = <T extends Record<string, unknown>>(body: T, yearItem: number): T => {
+        if (periodScope === 'year' || yearItem !== periodAnchorYear) return body;
+        return {
+          ...body,
+          effectiveFromMonth: startMonth,
+          effectiveFromWeek: periodScope === 'fromWeek' ? clampedStartWeek : 1,
+        };
+      };
 
       const yearData = await Promise.all(
         yearsToExecute.map(async (yearItem) => {
           const opsForYear = await api.machines.operations(machineId, { year: yearItem, ...allocScenarioParams });
           const groupOps = (opsForYear || []).filter((o: any) => operationGroupKey(o) === selectedGroupKey);
-          const totalWeeklyForYear = groupOps.reduce((sum: number, o: any) => sum + Math.max(0, operationWeekly(o)), 0);
+          const totalWeeklyRaw = groupOps.reduce((sum: number, o: any) => sum + Math.max(0, operationWeekly(o)), 0);
+          const totalWeeklyForYear = totalWeeklyRaw;
           const py = perYearValues[yearItem];
           const moveVolume = valueMode === 'perYear' ? Number(py?.value ?? 0) : Number(volumeToMove);
           const moveUnit = valueMode === 'perYear' ? (py?.unit ?? volumeUnit) : volumeUnit;
@@ -4085,7 +4398,7 @@ function AllocationModal({
             };
             if (scenarioId != null && scenarioId > 0) body.scenarioId = scenarioId;
             if (useContractualVolumes) body.useContractualVolumes = true;
-            await api.allocation.execute(body);
+            await api.allocation.execute(withEffectiveFrom(body, plan.yearItem));
             continue;
           }
           let remainingWeekly = plan.effectiveWeekly;
@@ -4112,7 +4425,7 @@ function AllocationModal({
             };
             if (scenarioId != null && scenarioId > 0) body.scenarioId = scenarioId;
             if (useContractualVolumes) body.useContractualVolumes = true;
-            await api.allocation.execute(body);
+            await api.allocation.execute(withEffectiveFrom(body, plan.yearItem));
             remainingWeekly -= partWeekly;
           }
           if (remainingWeekly > 1e-6) {
@@ -4138,7 +4451,7 @@ function AllocationModal({
         setMessage({ type: 'ok', text });
         lastAppliedHintKey.current = '';
         loadAllocationData();
-        onSuccess?.();
+        onSuccess?.({ years: yearsDone });
         return { handled: true as const };
       } else if (transferMode === 'manual') {
         const invalidReq = yearData.find((d) => !Number.isFinite(d.requestedWeekly) || d.requestedWeekly <= 0);
@@ -4235,7 +4548,7 @@ function AllocationModal({
           };
           if (scenarioId != null && scenarioId > 0) body.scenarioId = scenarioId;
           if (useContractualVolumes) body.useContractualVolumes = true;
-          await api.allocation.execute(body);
+          await api.allocation.execute(withEffectiveFrom(body, plan.yearItem));
           continue;
         }
         let remainingWeekly = plan.effectiveWeekly;
@@ -4262,7 +4575,7 @@ function AllocationModal({
           };
           if (scenarioId != null && scenarioId > 0) body.scenarioId = scenarioId;
           if (useContractualVolumes) body.useContractualVolumes = true;
-          await api.allocation.execute(body);
+          await api.allocation.execute(withEffectiveFrom(body, plan.yearItem));
           remainingWeekly -= partWeekly;
         }
         if (remainingWeekly > 1e-6) {
@@ -4301,7 +4614,7 @@ function AllocationModal({
         });
         lastAppliedHintKey.current = '';
         loadAllocationData();
-        onSuccess?.();
+        onSuccess?.({ years: yearsDone });
       })
       .catch((e) => {
         const msg = String(e?.message || '');
@@ -4417,8 +4730,84 @@ function AllocationModal({
               </div>
             </div>
           )}
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #eee' }}>
+            <strong style={{ display: 'block', marginBottom: 6 }}>{t('calculator.allocation.periodScopeLabel')}:</strong>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
+              <label>
+                <input
+                  type="radio"
+                  name="allocationPeriodScope"
+                  checked={periodScope === 'year'}
+                  onChange={() => setPeriodScope('year')}
+                />{' '}
+                {t('calculator.allocation.periodScopeYear')}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="allocationPeriodScope"
+                  checked={periodScope === 'fromMonth'}
+                  onChange={() => setPeriodScope('fromMonth')}
+                />{' '}
+                {t('calculator.allocation.periodScopeFromMonth')}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="allocationPeriodScope"
+                  checked={periodScope === 'fromWeek'}
+                  onChange={() => setPeriodScope('fromWeek')}
+                />{' '}
+                {t('calculator.allocation.periodScopeFromWeek')}
+              </label>
+            </div>
+            {periodScope !== 'year' && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                <label>
+                  {t('calculator.allocation.startMonth')}:{' '}
+                  <select
+                    value={startMonth}
+                    onChange={(e) => setStartMonth(Number(e.target.value))}
+                    style={{ padding: 4 }}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                      <option key={m} value={m}>
+                        {monthAbbrev(m, locale)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {periodScope === 'fromWeek' && (
+                  <label>
+                    {t('calculator.allocation.startWeek')}:{' '}
+                    <select
+                      value={clampedStartWeek}
+                      onChange={(e) => setStartWeek(Number(e.target.value))}
+                      style={{ padding: 4 }}
+                    >
+                      {Array.from({ length: weeksInStartMonth }, (_, i) => i + 1).map((w) => (
+                        <option key={w} value={w}>
+                          CW{calendarWeekForMonthWeek(periodAnchorYear, startMonth, w)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <span style={{ fontSize: 12, color: '#666' }}>
+                  {t('calculator.allocation.periodFractionHint', {
+                    pct: Math.round(activePeriodFraction * 1000) / 10,
+                  })}
+                </span>
+              </div>
+            )}
+            <p style={{ margin: '8px 0 0', fontSize: 12, color: '#666' }}>
+              {periodScope === 'year'
+                ? t('calculator.allocation.periodScopeYearHelp')
+                : t('calculator.allocation.periodScopePartialHelp')}
+            </p>
+          </div>
           <p style={{ margin: '8px 0 0', fontSize: 13, fontWeight: 600, color: '#1565c0' }}>
-            {t('calculator.allocation.executionYearsNotice', { years: executionYearsLabel })}
+            {executionPeriodNotice}
           </p>
         </div>
         <p style={{ color: '#666' }}>{t('calculator.allocation.freeMachines', { year })}</p>
@@ -4555,7 +4944,11 @@ function AllocationModal({
                         />
                         <span>
                           {t('calculator.allocation.modeFull')}
-                          <span className="allocation-mode-help">{t('calculator.allocation.modeFullHelp')}</span>
+                          <span className="allocation-mode-help">
+                            {periodScope === 'year'
+                              ? t('calculator.allocation.modeFullHelp')
+                              : t('calculator.allocation.modeFullHelpPartial')}
+                          </span>
                         </span>
                       </span>
                     </label>

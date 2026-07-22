@@ -536,6 +536,15 @@ export const de: TranslationTree = {
     dimOpGte: '≥',
     dimOpLte: '≤',
     dimValuePlaceholder: 'mm',
+    applyingDimensionFilters: 'Abmessungsfilter werden angewendet…',
+    dimensionFilterResult: 'Abmessungsfilter: {{summary}} — {{count}} Maschinen',
+    showZeroLoadMachines: 'Aktive Maschinen ohne Auslastung anzeigen (0% in allen Jahren)',
+    showZeroLoadMachinesShort: 'inkl. Maschinen ohne Auslastung',
+    dimensionFilterServerMismatch:
+      'Hinweis: Der Server hat Abmessungsfilter nicht angewendet. Server neu bauen/starten, dann Seite hart neu laden (Ctrl+F5).',
+    zeroLoadMachinesResult: 'Ansicht enthält Maschinen ohne Auslastung — {{count}} Maschinen in der Liste',
+    dimFilterHint:
+      'Vergleicht Maschinenabmessungen (mm). Maschinen ohne hinterlegte Abmessung werden ausgeschlossen. Z. B. Breite ≥ 1600 = Maschinen mit mindestens 1600 mm Breite.',
     pageSizeShown: '{{from}}–{{to}} von {{total}} Maschinen angezeigt',
     pagePrev: 'Zurück',
     pageNext: 'Weiter',
@@ -564,6 +573,7 @@ export const de: TranslationTree = {
     expandRow: 'Zeile nach Monaten aufklappen',
     collapseRow: 'Monate der Zeile einklappen',
     loadingPeriodBreakdown: 'Monats- und Wochenaufschlüsselung wird geladen…',
+    reloadingAfterAllocation: 'Auslastung nach Allokation wird neu berechnet…',
     sopMarker: 'Produktionsstart (SOP) in diesem Zeitraum',
     eopMarker: 'Produktionsende (EOP) in diesem Zeitraum',
     periodMonthOnly: '{{month}}',
@@ -602,6 +612,8 @@ export const de: TranslationTree = {
       transferModeTitle: 'Art der Volumenverschiebung',
       modeFull: 'Gesamtes Detailvolumen verschieben',
       modeFullHelp: 'Verschiebt 100 % des gewählten Detailvolumens (alle Operationen der Gruppe) für jedes gewählte Jahr.',
+      modeFullHelpPartial:
+        'Verschiebt den Jahresanteil ab dem gewählten Monat/Woche bis Jahresende (weitere gewählte Jahre vollständig).',
       modeManual: 'Manuell eingegebenes Volumen',
       modeManualHelp:
         'Volumen eingeben. Überschreitet es das verfügbare Detailvolumen in einem gewählten Jahr, erscheint eine Warnung — bei Ausführung wird maximal mögliches Volumen verschoben (nicht mehr als eingegeben).',
@@ -609,6 +621,20 @@ export const de: TranslationTree = {
       modeTargetPercentHelp:
         'Berechnet das Volumen, damit die Quellmaschine nach der Verschiebung die eingegebene Auslastung erreicht. Reicht das Detailvolumen nicht — es wird das gesamte verfügbare Volumen mit Hinweis verschoben.',
       executionYearsNotice: 'Allokation wird ausgeführt für Jahre: {{years}}',
+      executionPeriodFromMonth:
+        'Allokation ab {{month}} {{year}} (Anteil des Ankerjahres; gewählte Jahre: {{years}}).',
+      executionPeriodFromWeek:
+        'Allokation ab CW{{week}} {{month}} {{year}} (~{{pct}}% des Ankerjahres; gewählte Jahre: {{years}}).',
+      periodScopeLabel: 'Zeitraum im Jahr',
+      periodScopeYear: 'Ganzes Jahr',
+      periodScopeFromMonth: 'Ab Monat',
+      periodScopeFromWeek: 'Ab Woche',
+      startMonth: 'Monat ab',
+      startWeek: 'Woche ab',
+      periodFractionHint: 'Ab Startpunkt: ca. {{pct}}% der Jahreswochen auf Zielmaschine (Wochenrate unverändert)',
+      periodScopeYearHelp: 'Verschiebt Volumen wie bisher — für das volle Jahr (oder Jahre).',
+      periodScopePartialHelp:
+        'Ab Monat/Woche: früher bleibt die volle Wochenrate auf der Quellmaschine; ab diesem Zeitpunkt dieselbe Rate auf der Zielmaschine (kein Jahresdurchschnitt). Weitere Jahre — vollständig.',
       targetLoad: 'Verbleibende Auslastung Quellmaschine:',
       targetLoadInputTitle:
         'Auslastung [%], die auf der freigebenden Maschine nach Verschieben des Detailvolumens verbleiben soll (z. B. 73 = 73 % bleiben).',

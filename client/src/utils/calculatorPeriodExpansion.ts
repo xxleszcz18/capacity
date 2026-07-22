@@ -62,7 +62,29 @@ export function periodMachineMonthKey(machineId: number, month: number): string 
 
 export function getWeekCountInMonth(year: number, month: number): number {
   const daysInMonth = new Date(year, month, 0).getDate();
-  return Math.max(1, Math.ceil(daysInMonth / 7));
+  if (daysInMonth < 1) return 1;
+  const firstMon = mondayOfIsoWeek(year, month, 1);
+  const lastMon = mondayOfIsoWeek(year, month, daysInMonth);
+  return Math.max(1, Math.round((lastMon.getTime() - firstMon.getTime()) / 86400000 / 7) + 1);
+}
+
+/** Poniedziałek tygodnia ISO (pn–nd) zawierającego podaną datę (czas lokalny). */
+export function mondayOfIsoWeek(year: number, month: number, day: number): Date {
+  const d = new Date(year, month - 1, day);
+  const dow = d.getDay(); // 0=nd … 6=sb
+  const offset = dow === 0 ? -6 : 1 - dow;
+  d.setDate(d.getDate() + offset);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Numer tygodnia w miesiącu (1 = pierwszy tydzień pn–nd mający co najmniej jeden dzień w miesiącu). */
+export function weekOfMonthFromDate(year: number, month: number, day: number): number {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const d = Math.min(Math.max(1, Math.floor(Number(day)) || 1), Math.max(1, daysInMonth));
+  const firstMon = mondayOfIsoWeek(year, month, 1);
+  const thisMon = mondayOfIsoWeek(year, month, d);
+  return Math.max(1, Math.round((thisMon.getTime() - firstMon.getTime()) / 86400000 / 7) + 1);
 }
 
 export function buildHorizontalTimelineColumns(
@@ -175,7 +197,7 @@ export function monthAbbrev(month: number, locale: string): string {
   }
 }
 
-/** Numer tygodnia ISO (1–53) — jak w kalendarzu / SAP CW. */
+/** Numer tygodnia ISO (1–53) — jak w kalendarzu / SAP CW (tydzień pn–nd). */
 export function isoWeekNumber(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const day = d.getUTCDay() || 7;
@@ -185,12 +207,14 @@ export function isoWeekNumber(date: Date): number {
 }
 
 /**
- * Tydzień kalendarzowy (ISO) dla wiadra T1…T5 w miesiącu (dni 1–7, 8–14, …).
- * Bierze dzień środkowy wiadra, żeby etykieta trafiała w ten sam CW co dane SAP.
+ * Tydzień kalendarzowy (ISO / CW) dla T1…Tn w miesiącu (wiadra pn–nd).
+ * Etykieta = numer ISO tygodnia (czwartek tygodnia — reguła ISO).
  */
 export function calendarWeekForMonthWeek(year: number, month: number, weekOfMonth: number): number {
-  const daysInMonth = new Date(year, month, 0).getDate();
   const w = Math.max(1, Math.floor(Number(weekOfMonth)) || 1);
-  const day = Math.min(daysInMonth, (w - 1) * 7 + 4);
-  return isoWeekNumber(new Date(year, month - 1, day));
+  const monday = mondayOfIsoWeek(year, month, 1);
+  monday.setDate(monday.getDate() + (w - 1) * 7);
+  const thursday = new Date(monday);
+  thursday.setDate(monday.getDate() + 3);
+  return isoWeekNumber(thursday);
 }

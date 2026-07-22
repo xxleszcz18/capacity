@@ -38,45 +38,29 @@ function indexOperationsByMachine(operations: any[]): Map<number, any[]> {
   return map;
 }
 
+export type OperationYearVolumeRow = {
+  volume_value: number;
+  volume_unit: string;
+  volume_value_before?: number | null;
+  effective_from_month?: number | null;
+  effective_from_week?: number | null;
+};
+
 export type CapacityComputeShared = {
   operations: any[];
   operationsByMachine: Map<number, any[]>;
   refMode: ReturnType<typeof loadReferenceDisplayMode>;
   volumePrefetchByYear: Map<number, VolumePrefetchMaps>;
-  opVolumeMapByYear: Map<number, Map<number, { volume_value: number; volume_unit: string }>>;
+  opVolumeMapByYear: Map<number, Map<number, OperationYearVolumeRow>>;
   settingsByYear: Map<number, WorkingDaysRow>;
   scenarioSnapshot: ScenarioBundle | null;
   effectiveProfile: CalculationSettingsProfile;
   scenarioRfqMachineIds: number[];
+  /** Maszyny hostujące wybrane operacje RFQ (mogą mieć status RFQ — trzeba je dociągnąć do zapytania). */
+  includeRfqMachineIds: number[];
 };
 
-function loadOpVolumeMapsForYearRange(yearFrom: number, yearTo: number): Map<number, Map<number, { volume_value: number; volume_unit: string }>> {
-  const byYear = new Map<number, Map<number, { volume_value: number; volume_unit: string }>>();
-  for (let y = yearFrom; y <= yearTo; y++) byYear.set(y, new Map());
-  try {
-    const rows = db
-      .prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year >= ? AND year <= ?')
-      .all(yearFrom, yearTo) as { operation_id: number; year: number; volume_value: number; volume_unit: string }[];
-    for (const r of rows) {
-      const yMap = byYear.get(r.year);
-      if (yMap) yMap.set(r.operation_id, r);
-    }
-  } catch (_) {}
-  return byYear;
-}
-
-function buildCapacityComputeShared(
-  yearFrom: number,
-  yearTo: number,
-  operationsOverride: any[] | undefined,
-  scenarioSnapshot: ScenarioBundle | null | undefined,
-  settingsProfile: CalculationSettingsProfile | undefined
-): CapacityComputeShared {
-  const scenario = scenarioSnapshot ?? null;
-  const effectiveProfile: CalculationSettingsProfile = scenario != null ? 'capacity' : (settingsProfile ?? 'capacity');
-  const operations =
-    operationsOverride ??
-    (db.prepare(`
+const CAPACITY_OPS_SELECT = `
     SELECT o.id AS operation_id, o.project_id, o.part_id, o.machine_id, o.cycle_time_seconds, o.volume_value, o.volume_unit, o.nests_count, o.oee_override, o.capacity_percent,
            o.alt_cycle_time_seconds, o.alt_nests_count, o.alt_oee_override, o.use_alternative_in_calculator, o.split_from_operation_id,
            p.sop, p.eop, p.status AS project_status, p.client AS project_client, p.name AS project_name,
@@ -88,8 +72,119 @@ function buildCapacityComputeShared(
     JOIN projects p ON p.id = o.project_id
     JOIN parts pt ON pt.id = o.part_id
     LEFT JOIN part_designations pd ON pd.id = pt.designation_id
-    WHERE p.status = 'active'
-  `).all() as any[]);
+`;
+
+function normalizeIncludeRfqOperationIds(ids?: number[] | null): number[] {
+  if (!ids?.length) return [];
+  return [...new Set(ids.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0))];
+}
+
+function loadRfqOperationsByIds(operationIds: number[]): any[] {
+  const ids = normalizeIncludeRfqOperationIds(operationIds);
+  if (!ids.length) return [];
+  return db
+    .prepare(`${CAPACITY_OPS_SELECT} WHERE p.status = 'RFQ' AND o.id IN (${ids.map(() => '?').join(',')})`)
+    .all(...ids) as any[];
+}
+
+function mergeOperationsById(base: any[], extra: any[]): any[] {
+  if (!extra.length) return base;
+  const byId = new Map<number, any>();
+  for (const o of base) {
+    const id = Number(o.operation_id ?? o.id);
+    if (Number.isFinite(id)) byId.set(id, o);
+  }
+  for (const o of extra) {
+    const id = Number(o.operation_id ?? o.id);
+    if (Number.isFinite(id)) byId.set(id, o);
+  }
+  return [...byId.values()];
+}
+
+export function resolveMachineIdsForRfqOperations(operationIds: number[]): number[] {
+  const ops = loadRfqOperationsByIds(operationIds);
+  return [
+    ...new Set(
+      ops
+        .map((o) => Number(o.machine_id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+}
+
+function loadOpVolumeMapsForYearRange(yearFrom: number, yearTo: number): Map<number, Map<number, OperationYearVolumeRow>> {
+  const byYear = new Map<number, Map<number, OperationYearVolumeRow>>();
+  for (let y = yearFrom; y <= yearTo; y++) byYear.set(y, new Map());
+  try {
+    const rows = db
+      .prepare(
+        `SELECT operation_id, year, volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week
+         FROM operation_volume_by_year WHERE year >= ? AND year <= ?`
+      )
+      .all(yearFrom, yearTo) as {
+      operation_id: number;
+      year: number;
+      volume_value: number;
+      volume_unit: string;
+      volume_value_before: number | null;
+      effective_from_month: number | null;
+      effective_from_week: number | null;
+    }[];
+    for (const r of rows) {
+      const yMap = byYear.get(r.year);
+      if (yMap) {
+        yMap.set(r.operation_id, {
+          volume_value: r.volume_value,
+          volume_unit: r.volume_unit,
+          volume_value_before: r.volume_value_before,
+          effective_from_month: r.effective_from_month,
+          effective_from_week: r.effective_from_week,
+        });
+      }
+    }
+  } catch (_) {
+    try {
+      const rows = db
+        .prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year >= ? AND year <= ?')
+        .all(yearFrom, yearTo) as { operation_id: number; year: number; volume_value: number; volume_unit: string }[];
+      for (const r of rows) {
+        const yMap = byYear.get(r.year);
+        if (yMap) yMap.set(r.operation_id, r);
+      }
+    } catch (__) {}
+  }
+  return byYear;
+}
+
+function buildCapacityComputeShared(
+  yearFrom: number,
+  yearTo: number,
+  operationsOverride: any[] | undefined,
+  scenarioSnapshot: ScenarioBundle | null | undefined,
+  settingsProfile: CalculationSettingsProfile | undefined,
+  includeRfqOperationIds?: number[]
+): CapacityComputeShared {
+  const scenario = scenarioSnapshot ?? null;
+  const effectiveProfile: CalculationSettingsProfile = scenario != null ? 'capacity' : (settingsProfile ?? 'capacity');
+  let operations =
+    operationsOverride ??
+    (db.prepare(`${CAPACITY_OPS_SELECT} WHERE p.status = 'active'`).all() as any[]);
+  let includeRfqMachineIds: number[] = [];
+
+  /** Filtr RFQ z wizualizacji — tylko poza ścieżką scenariusza (operationsOverride). */
+  if (!operationsOverride) {
+    const rfqOps = loadRfqOperationsByIds(includeRfqOperationIds ?? []);
+    if (rfqOps.length) {
+      operations = mergeOperationsById(operations, rfqOps);
+      includeRfqMachineIds = [
+        ...new Set(
+          rfqOps
+            .map((o) => Number(o.machine_id))
+            .filter((id) => Number.isFinite(id) && id > 0)
+        ),
+      ];
+    }
+  }
 
   const { projectIds, partIds } = collectProjectPartIdsFromOperations(operations);
   const settingsByYear = new Map<number, WorkingDaysRow>();
@@ -111,14 +206,31 @@ function buildCapacityComputeShared(
     opVolumeMapByYear:
       scenario != null
         ? (() => {
-            const byYear = new Map<number, Map<number, { volume_value: number; volume_unit: string }>>();
+            const byYear = new Map<number, Map<number, OperationYearVolumeRow>>();
             for (let y = yearFrom; y <= yearTo; y++) {
               const rows = (scenario.operation_volume_by_year || []).filter((v: any) => Number(v.year) === y) as {
                 operation_id: number;
                 volume_value: number;
                 volume_unit: string;
+                volume_value_before?: number | null;
+                effective_from_month?: number | null;
+                effective_from_week?: number | null;
               }[];
-              byYear.set(y, new Map(rows.map((v) => [Number(v.operation_id), v])));
+              byYear.set(
+                y,
+                new Map(
+                  rows.map((v) => [
+                    Number(v.operation_id),
+                    {
+                      volume_value: v.volume_value,
+                      volume_unit: v.volume_unit,
+                      volume_value_before: v.volume_value_before,
+                      effective_from_month: v.effective_from_month,
+                      effective_from_week: v.effective_from_week,
+                    },
+                  ])
+                )
+              );
             }
             return byYear;
           })()
@@ -127,6 +239,7 @@ function buildCapacityComputeShared(
     scenarioSnapshot: scenario,
     effectiveProfile,
     scenarioRfqMachineIds: [],
+    includeRfqMachineIds,
   };
 }
 
@@ -562,6 +675,73 @@ export function getEffectiveVolumeForPartPreferContract(
   return getEffectiveVolumeForPartContract(projectId, partId, year) ?? getEffectiveVolumeForPart(projectId, partId, year);
 }
 
+function totalCalculatorWeeksInYear(year: number): number {
+  let n = 0;
+  for (let m = 1; m <= 12; m++) n += getWeekCountInMonth(year, m);
+  return Math.max(1, n);
+}
+
+/** Liczba tygodni (T1…Tn) ściśle przed wskazanym miesiącem/tygodniem. */
+function weeksBeforeEffectiveFrom(year: number, fromMonth: number, fromWeek: number): number {
+  const month = Math.min(12, Math.max(1, Math.floor(fromMonth) || 1));
+  const weekCount = getWeekCountInMonth(year, month);
+  const week = Math.min(weekCount, Math.max(1, Math.floor(fromWeek) || 1));
+  let n = 0;
+  for (let m = 1; m < month; m++) n += getWeekCountInMonth(year, m);
+  n += week - 1;
+  return Math.max(0, n);
+}
+
+/**
+ * Wybiera wolumen operacji dla okresu (rok / miesiąc / tydzień) przy alokacji od miesiąca/tygodnia.
+ * effective_from_* = NULL → volume_value obowiązuje cały rok.
+ */
+export function pickOperationYearVolumeForPeriod(
+  row: OperationYearVolumeRow,
+  year: number,
+  activeMonth?: number,
+  activeWeek?: number
+): { volume_value: number; volume_unit: string } {
+  const fromMRaw = row.effective_from_month;
+  if (fromMRaw == null || !Number.isFinite(Number(fromMRaw))) {
+    return { volume_value: Number(row.volume_value) || 0, volume_unit: row.volume_unit };
+  }
+  const fromM = Math.min(12, Math.max(1, Math.floor(Number(fromMRaw)) || 1));
+  const fromWCount = getWeekCountInMonth(year, fromM);
+  const fromW = Math.min(fromWCount, Math.max(1, Math.floor(Number(row.effective_from_week) || 1)));
+  const after = Number(row.volume_value) || 0;
+  const before =
+    row.volume_value_before != null && Number.isFinite(Number(row.volume_value_before))
+      ? Number(row.volume_value_before)
+      : 0;
+  const unit = row.volume_unit;
+
+  if (activeMonth == null || !Number.isFinite(activeMonth)) {
+    const total = totalCalculatorWeeksInYear(year);
+    const beforeWeeks = weeksBeforeEffectiveFrom(year, fromM, fromW);
+    const afterWeeks = Math.max(0, total - beforeWeeks);
+    const weighted = (before * beforeWeeks + after * afterWeeks) / total;
+    return { volume_value: weighted, volume_unit: unit };
+  }
+
+  const month = Math.min(12, Math.max(1, Math.floor(activeMonth)));
+  if (activeWeek == null || !Number.isFinite(activeWeek)) {
+    if (month < fromM) return { volume_value: before, volume_unit: unit };
+    if (month > fromM) return { volume_value: after, volume_unit: unit };
+    const wc = getWeekCountInMonth(year, month);
+    const beforeInMonth = Math.max(0, fromW - 1);
+    const afterInMonth = Math.max(0, wc - beforeInMonth);
+    const weighted = (before * beforeInMonth + after * afterInMonth) / Math.max(1, wc);
+    return { volume_value: weighted, volume_unit: unit };
+  }
+
+  const week = Math.max(1, Math.floor(activeWeek));
+  if (month < fromM || (month === fromM && week < fromW)) {
+    return { volume_value: before, volume_unit: unit };
+  }
+  return { volume_value: after, volume_unit: unit };
+}
+
 export type OperationVolumeSource = 'operation_year' | 'part' | 'operation_base';
 
 /** Ten sam wolumen co w kalkulatorze obciążenia dla operacji w danym roku: nadpisanie per rok > projekt/detal > pole operacji. */
@@ -576,10 +756,12 @@ export function resolveOperationVolumeForYear(
     split_from_operation_id?: number | null;
   },
   year: number,
-  opYearOverride?: { volume_value: number; volume_unit: string } | null,
+  opYearOverride?: OperationYearVolumeRow | null,
   scenarioSnapshot?: ScenarioBundle | null,
   useContractualVolumes: boolean = false,
-  volumePrefetch?: VolumePrefetchMaps | null
+  volumePrefetch?: VolumePrefetchMaps | null,
+  activeMonth?: number,
+  activeWeek?: number
 ): {
   volume_value: number;
   volume_unit: 'annual' | 'monthly' | 'weekly';
@@ -590,11 +772,16 @@ export function resolveOperationVolumeForYear(
   const asUnit = (u: string): 'annual' | 'monthly' | 'weekly' =>
     u === 'monthly' || u === 'weekly' ? u : 'annual';
 
+  const periodOverride =
+    opYearOverride != null
+      ? pickOperationYearVolumeForPeriod(opYearOverride, year, activeMonth, activeWeek)
+      : null;
+
   if (op.split_from_operation_id != null) {
-    if (opYearOverride) {
+    if (periodOverride) {
       return {
-        volume_value: opYearOverride.volume_value,
-        volume_unit: asUnit(opYearOverride.volume_unit),
+        volume_value: periodOverride.volume_value,
+        volume_unit: asUnit(periodOverride.volume_unit),
         source: 'operation_year',
         volume_origin: 'manual_year',
       };
@@ -602,10 +789,10 @@ export function resolveOperationVolumeForYear(
     return { volume_value: 0, volume_unit: 'weekly', source: 'operation_year', volume_origin: 'manual_year' };
   }
 
-  if (opYearOverride) {
+  if (periodOverride) {
     return {
-      volume_value: opYearOverride.volume_value,
-      volume_unit: asUnit(opYearOverride.volume_unit),
+      volume_value: periodOverride.volume_value,
+      volume_unit: asUnit(periodOverride.volume_unit),
       source: 'operation_year',
       volume_origin: 'manual_year',
     };
@@ -671,6 +858,10 @@ export interface MachineCapacityRow {
   machine_status?: string | null;
   /** Nr linii (kolumna location). */
   location?: string | null;
+  width_mm?: number | null;
+  depth_mm?: number | null;
+  height_mm?: number | null;
+  stroke_mm?: number | null;
 }
 
 /** Optional operations override for scenario: array of { machine_id, cycle_time_seconds, volume_value, volume_unit, nests_count, oee_override, capacity_percent } */
@@ -854,7 +1045,9 @@ function buildCallOffOperationShares(
         volumeMap.get(opKey),
         scenarioSnapshotEff,
         useContractForShare,
-        volumePrefetch
+        volumePrefetch,
+        activeMonth,
+        activeWeek
       );
       if (
         !shouldIncludeOperationInCapacity(
@@ -983,7 +1176,14 @@ export function getMachineCapacitiesForYear(
   const useContract = useContractualVolumes === true;
   const computeShared =
     shared ??
-    buildCapacityComputeShared(year, year, operationsOverride, scenarioSnapshot ?? null, settingsProfile);
+    buildCapacityComputeShared(
+      year,
+      year,
+      operationsOverride,
+      scenarioSnapshot ?? null,
+      settingsProfile,
+      calculationOptions?.includeRfqOperationIds
+    );
   const scenarioSnapshotEff = computeShared.scenarioSnapshot;
   const effectiveProfile = computeShared.effectiveProfile;
   const settings = computeShared.settingsByYear.get(year) ?? resolveSettingsForYear(year, effectiveProfile);
@@ -1003,13 +1203,21 @@ export function getMachineCapacitiesForYear(
   const effectiveStatuses: CalculatorMachineStatusFilter[] =
     msList.length > 0 ? msList : machineStatusFilter === undefined ? ['active'] : [];
   const statusWhere = buildMachineStatusWhere(effectiveStatuses, scenarioRfqs);
+  const rfqMachineIds = computeShared.includeRfqMachineIds ?? [];
+  let machineStatusClause = statusWhere.clause;
+  const machineStatusParams: (number | string)[] = [...statusWhere.params];
+  if (rfqMachineIds.length) {
+    machineStatusClause = `(${statusWhere.clause}) OR m.id IN (${rfqMachineIds.map(() => '?').join(',')})`;
+    machineStatusParams.push(...rfqMachineIds);
+  }
 
   let machinesSql = `
-    SELECT m.id AS machine_id, m.internal_number, m.type, m.sap_number, m.oee_override, m.status AS machine_status, m.location, COALESCE(m.machine_usage, 1) AS machine_usage
+    SELECT m.id AS machine_id, m.internal_number, m.type, m.sap_number, m.oee_override, m.status AS machine_status, m.location, COALESCE(m.machine_usage, 1) AS machine_usage,
+           m.width_mm, m.depth_mm, m.height_mm, m.stroke_mm
     FROM machines m
-    WHERE ${statusWhere.clause}
+    WHERE ${machineStatusClause}
   `;
-  const params: (number | string)[] = [...statusWhere.params];
+  const params: (number | string)[] = [...machineStatusParams];
   if (machineIds?.length) {
     machinesSql += ` AND m.id IN (${machineIds.map(() => '?').join(',')})`;
     params.push(...machineIds);
@@ -1102,7 +1310,9 @@ export function getMachineCapacitiesForYear(
         opVolumeOverride,
         scenarioSnapshotEff,
         useContract,
-        volumePrefetch
+        volumePrefetch,
+        activeMonth,
+        activeWeek
       );
       if (
         !shouldIncludeOperationInCapacity(
@@ -1214,6 +1424,10 @@ export function getMachineCapacitiesForYear(
       oee_override: m.oee_override,
       machine_status: m.machine_status ?? null,
       location: m.location != null ? String(m.location).trim() || null : null,
+      width_mm: m.width_mm != null && Number.isFinite(Number(m.width_mm)) ? Number(m.width_mm) : null,
+      depth_mm: m.depth_mm != null && Number.isFinite(Number(m.depth_mm)) ? Number(m.depth_mm) : null,
+      height_mm: m.height_mm != null && Number.isFinite(Number(m.height_mm)) ? Number(m.height_mm) : null,
+      stroke_mm: m.stroke_mm != null && Number.isFinite(Number(m.stroke_mm)) ? Number(m.stroke_mm) : null,
       year,
       availability_sec_per_week: availabilitySec,
       required_sec_per_week: Math.round(totalRequiredSec),
@@ -1426,6 +1640,10 @@ export function getMachineCapacityByYears(
   type: string;
   machine_status: string | null;
   location: string | null;
+  width_mm: number | null;
+  depth_mm: number | null;
+  height_mm: number | null;
+  stroke_mm: number | null;
   years: Record<
     number,
     {
@@ -1454,6 +1672,10 @@ export function getMachineCapacityByYears(
       type: string;
       machine_status: string | null;
       location: string | null;
+      width_mm: number | null;
+      depth_mm: number | null;
+      height_mm: number | null;
+      stroke_mm: number | null;
       years: Record<number, any>;
     }
   >();
@@ -1463,7 +1685,8 @@ export function getMachineCapacityByYears(
     yearTo,
     operationsOverride,
     scenarioSnapshot ?? null,
-    settingsProfile
+    settingsProfile,
+    calculationOptions?.includeRfqOperationIds
   );
 
   for (let y = yearFrom; y <= yearTo; y++) {
@@ -1492,6 +1715,10 @@ export function getMachineCapacityByYears(
           type: r.type,
           machine_status: r.machine_status != null ? String(r.machine_status) : null,
           location: r.location != null ? String(r.location).trim() || null : null,
+          width_mm: r.width_mm != null && Number.isFinite(Number(r.width_mm)) ? Number(r.width_mm) : null,
+          depth_mm: r.depth_mm != null && Number.isFinite(Number(r.depth_mm)) ? Number(r.depth_mm) : null,
+          height_mm: r.height_mm != null && Number.isFinite(Number(r.height_mm)) ? Number(r.height_mm) : null,
+          stroke_mm: r.stroke_mm != null && Number.isFinite(Number(r.stroke_mm)) ? Number(r.stroke_mm) : null,
           years: {},
         });
       }
@@ -1515,6 +1742,10 @@ export function getMachineCapacityByYears(
     type: v.type,
     machine_status: v.machine_status,
     location: v.location,
+    width_mm: v.width_mm,
+    depth_mm: v.depth_mm,
+    height_mm: v.height_mm,
+    stroke_mm: v.stroke_mm,
     years: v.years,
   }));
 }
@@ -1660,10 +1891,13 @@ export type MachinePeriodBreakdownOptions = {
   includeWeeks?: boolean;
   /** Call offs: pokaż przypisane detale z 0% (bez placeholderów alokacji na inny rok). */
   includeAssignedZeroVolumeDetailsInBreakdown?: boolean;
+  includeRfqOperationIds?: number[];
 };
 
 export type CapacityCalculationOptions = {
   includeAssignedZeroVolumeDetailsInBreakdown?: boolean;
+  /** Operacje projektów RFQ do doliczenia do capacity produkcyjnego/kontraktowego (wizualizacja). */
+  includeRfqOperationIds?: number[];
 };
 
 type MonthPeakDetail = {
@@ -1694,7 +1928,14 @@ export function getMachineMonthlyLoadsByMonth(
   callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null,
   calculationOptions?: CapacityCalculationOptions
 ): Map<number, Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }>> {
-  const shared = buildCapacityComputeShared(year, year, operationsOverride, scenarioSnapshot ?? null, settingsProfile);
+  const shared = buildCapacityComputeShared(
+    year,
+    year,
+    operationsOverride,
+    scenarioSnapshot ?? null,
+    settingsProfile,
+    calculationOptions?.includeRfqOperationIds
+  );
   const byMachine = new Map<number, Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }>>();
   const useWeeklyPeak = callOffVolumes != null;
 
@@ -1821,10 +2062,25 @@ export function getMachinePeriodBreakdown(
   options?: MachinePeriodBreakdownOptions
 ): MachinePeriodBreakdownRow[] {
   const includeWeeks = options?.includeWeeks !== false;
-  const calculationOptions: CapacityCalculationOptions | undefined = options?.includeAssignedZeroVolumeDetailsInBreakdown
-    ? { includeAssignedZeroVolumeDetailsInBreakdown: true }
-    : undefined;
-  const shared = buildCapacityComputeShared(year, year, operationsOverride, scenarioSnapshot ?? null, settingsProfile);
+  const calculationOptions: CapacityCalculationOptions | undefined =
+    options?.includeAssignedZeroVolumeDetailsInBreakdown || options?.includeRfqOperationIds?.length
+      ? {
+          ...(options?.includeAssignedZeroVolumeDetailsInBreakdown
+            ? { includeAssignedZeroVolumeDetailsInBreakdown: true }
+            : {}),
+          ...(options?.includeRfqOperationIds?.length
+            ? { includeRfqOperationIds: options.includeRfqOperationIds }
+            : {}),
+        }
+      : undefined;
+  const shared = buildCapacityComputeShared(
+    year,
+    year,
+    operationsOverride,
+    scenarioSnapshot ?? null,
+    settingsProfile,
+    calculationOptions?.includeRfqOperationIds
+  );
   const operationsByMachine = shared.operationsByMachine;
 
   const machines = getMachineCapacitiesForYear(
@@ -1887,6 +2143,10 @@ export function getMachinePeriodBreakdown(
     if (includeWeeks) {
       const weekCount = getWeekCountInMonth(year, month);
       const useTrueWeeklyCallOff = callOffVolumes != null;
+      const yearHasPartialAllocation = [...(shared.opVolumeMapByYear.get(year)?.values() ?? [])].some(
+        (v) => v.effective_from_month != null && Number.isFinite(Number(v.effective_from_month))
+      );
+      const computeEachWeek = useTrueWeeklyCallOff || yearHasPartialAllocation;
       for (let w = 1; w <= weekCount; w++) {
         const weekRows = getMachineCapacitiesForYear(
           year,
@@ -1904,7 +2164,7 @@ export function getMachinePeriodBreakdown(
           callOffVolumes,
           'weekly',
           calculationOptions,
-          useTrueWeeklyCallOff ? w : undefined
+          computeEachWeek ? w : undefined
         );
         for (const row of weekRows) {
           weekByMachineMonthWeek.set(`${row.machine_id}-${month}-${w}`, {
@@ -1912,8 +2172,8 @@ export function getMachinePeriodBreakdown(
             detail_breakdown: (row.detail_breakdown ?? []) as MonthPeakDetail,
           });
         }
-        // Bez Call offs: jeden przebieg wystarczy (wolumen miesięczny) — skopiuj do pozostałych tygodni.
-        if (!useTrueWeeklyCallOff) {
+        // Bez Call offs i bez alokacji od tygodnia: jeden przebieg wystarczy — skopiuj do pozostałych tygodni.
+        if (!computeEachWeek) {
           for (const row of weekRows) {
             for (let w2 = 2; w2 <= weekCount; w2++) {
               weekByMachineMonthWeek.set(`${row.machine_id}-${month}-${w2}`, {
@@ -2047,6 +2307,7 @@ type BreakdownOpts = {
   dimensionFilters?: MachineDimensionFilter[];
   settingsProfile?: CalculationSettingsProfile;
   callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null;
+  includeRfqOperationIds?: number[];
 };
 
 function scenarioProjectLookup(snapshot: ScenarioBundle | null | undefined): Map<number, { client: string; name: string }> {
@@ -2058,28 +2319,25 @@ function scenarioProjectLookup(snapshot: ScenarioBundle | null | undefined): Map
   return map;
 }
 
-function loadOperationsForBreakdown(operationsOverride?: any[]): any[] {
+function loadOperationsForBreakdown(operationsOverride?: any[], includeRfqOperationIds?: number[]): any[] {
   if (operationsOverride) return operationsOverride;
-  return db.prepare(`
-    SELECT o.id AS operation_id, o.project_id, o.part_id, o.machine_id, o.cycle_time_seconds, o.volume_value, o.volume_unit, o.nests_count, o.oee_override, o.capacity_percent,
-           o.alt_cycle_time_seconds, o.alt_nests_count, o.alt_oee_override, o.use_alternative_in_calculator, o.split_from_operation_id,
-           p.client AS project_client, p.name AS project_name,
-           p.sop, p.eop, p.status AS project_status,
-           pd.sap_number AS detail_sap_number,
-           pd.alias AS detail_alias,
-           pd.free_text AS detail_free_text,
-           pt.designation AS detail_designation
-    FROM operations o
-    JOIN projects p ON p.id = o.project_id
-    JOIN parts pt ON pt.id = o.part_id
-    LEFT JOIN part_designations pd ON pd.id = pt.designation_id
-    WHERE p.status = 'active'
-  `).all() as any[];
+  const active = db.prepare(`${CAPACITY_OPS_SELECT} WHERE p.status = 'active'`).all() as any[];
+  const rfqOps = loadRfqOperationsByIds(includeRfqOperationIds ?? []);
+  return mergeOperationsById(active, rfqOps);
 }
 
 function resolveScopeMachineIds(
   scope: BreakdownScope,
-  opts: Pick<BreakdownOpts, 'machineIds' | 'machineType' | 'machineStatusFilter' | 'dimensionFilters' | 'scenarioSnapshot' | 'scenarioIncludeRfqProjects'>
+  opts: Pick<
+    BreakdownOpts,
+    | 'machineIds'
+    | 'machineType'
+    | 'machineStatusFilter'
+    | 'dimensionFilters'
+    | 'scenarioSnapshot'
+    | 'scenarioIncludeRfqProjects'
+    | 'includeRfqOperationIds'
+  >
 ): number[] {
   const msList = normalizeMachineStatusFilters(opts.machineStatusFilter);
   const effectiveStatuses: CalculatorMachineStatusFilter[] =
@@ -2089,13 +2347,20 @@ function resolveScopeMachineIds(
       ? scenarioLinkedRfqProductionMachineIds(opts.scenarioSnapshot, opts.scenarioIncludeRfqProjects !== false)
       : [];
   const statusWhere = buildMachineStatusWhere(effectiveStatuses, scenarioRfqs);
+  const rfqMachineIds = resolveMachineIdsForRfqOperations(opts.includeRfqOperationIds ?? []);
+  let machineStatusClause = statusWhere.clause;
+  const machineStatusParams: (number | string)[] = [...statusWhere.params];
+  if (rfqMachineIds.length) {
+    machineStatusClause = `(${statusWhere.clause}) OR m.id IN (${rfqMachineIds.map(() => '?').join(',')})`;
+    machineStatusParams.push(...rfqMachineIds);
+  }
 
   let machinesSql = `
     SELECT m.id AS machine_id, m.location
     FROM machines m
-    WHERE ${statusWhere.clause}
+    WHERE ${machineStatusClause}
   `;
-  const params: (number | string)[] = [...statusWhere.params];
+  const params: (number | string)[] = [...machineStatusParams];
   if (opts.machineIds?.length) {
     machinesSql += ` AND m.id IN (${opts.machineIds.map(() => '?').join(',')})`;
     params.push(...opts.machineIds);
@@ -2181,7 +2446,7 @@ function accumulateScopeBreakdown(
       : resolveSettingsForYear(year, effectiveProfile);
   const refMode = loadReferenceDisplayMode();
   const projectLookup = scenarioProjectLookup(opts.scenarioSnapshot);
-  const operations = loadOperationsForBreakdown(opts.operationsOverride);
+  const operations = loadOperationsForBreakdown(opts.operationsOverride, opts.includeRfqOperationIds);
   const volumeMap = (() => {
     if (opts.scenarioSnapshot != null) {
       const rows = (opts.scenarioSnapshot.operation_volume_by_year || []).filter((v: any) => Number(v.year) === year) as {
@@ -2384,7 +2649,11 @@ function buildScopeBreakdownSeries(
     opts.settingsProfile,
     undefined,
     undefined,
-    opts.callOffVolumes
+    opts.callOffVolumes,
+    undefined,
+    opts.includeRfqOperationIds?.length
+      ? { includeRfqOperationIds: opts.includeRfqOperationIds }
+      : undefined
   );
   const scopeTotals = scopeTotalsFromRows(capacityRows);
   const accum = accumulateScopeBreakdown(year, new Set(scopeMachineIds), opts);
@@ -2407,6 +2676,7 @@ export function getCapacityScopeBreakdown(
     dimensionFilters: opts.dimensionFilters,
     settingsProfile: opts.settingsProfile,
     scenarioIncludeRfqProjects: opts.scenarioIncludeRfqProjects,
+    includeRfqOperationIds: opts.includeRfqOperationIds,
   };
 
   for (const key of seriesKeys) {

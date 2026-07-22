@@ -757,6 +757,26 @@ export const api = {
       return request<any[]>(`/projects${q}`);
     },
     clients: () => request<string[]>('/projects/clients'),
+    rfqFilterTree: () =>
+      request<{
+        clients: {
+          client: string;
+          projects: {
+            id: number;
+            name: string;
+            parts: {
+              id: number;
+              label: string;
+              operations: {
+                id: number;
+                label: string;
+                machine_id: number;
+                location: string | null;
+              }[];
+            }[];
+          }[];
+        }[];
+      }>('/projects/rfq-filter-tree'),
     get: (id: number) => request<any>(`/projects/${id}`),
     getVolumes: (id: number) => request<{ year: number; volume_value: number; volume_unit: string }[]>(`/projects/${id}/volumes`),
     setVolumes: (id: number, volumes: { year: number; volume_value: number; volume_unit: string; include_in_calculator_after_eop?: number | boolean }[]) => request<any[]>(`/projects/${id}/volumes`, { method: 'PUT', body: JSON.stringify({ volumes }) }),
@@ -917,6 +937,7 @@ export const api = {
       strokeOp?: 'gte' | 'lte';
       strokeValue?: number;
       settingsProfile?: 'capacity' | 'ocu';
+      includeRfqOperationIds?: string;
     }) => {
       const q = new URLSearchParams();
       if (params?.yearFrom != null) q.set('yearFrom', String(params.yearFrom));
@@ -932,6 +953,7 @@ export const api = {
       else if (params?.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
       if (params?.groupIds) q.set('groupIds', params.groupIds);
       if (params?.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
+      if (params?.includeRfqOperationIds) q.set('includeRfqOperationIds', params.includeRfqOperationIds);
       const dimPairs = [
         ['width', params?.widthOp, params?.widthValue],
         ['depth', params?.depthOp, params?.depthValue],
@@ -939,13 +961,20 @@ export const api = {
         ['stroke', params?.strokeOp, params?.strokeValue],
       ] as const;
       for (const [prefix, op, val] of dimPairs) {
-        if (op && val != null && Number.isFinite(val)) {
+        const n = val == null ? NaN : Number(val);
+        if (op && Number.isFinite(n)) {
           q.set(`${prefix}Op`, op);
-          q.set(`${prefix}Value`, String(val));
+          q.set(`${prefix}Value`, String(n));
         }
       }
       const qs = q.toString();
-      return request<{ yearFrom: number; yearTo: number; scenarioId: number | null; machines: any[] }>(`/capacity/calculator${qs ? `?${qs}` : ''}`);
+      return request<{
+        yearFrom: number;
+        yearTo: number;
+        scenarioId: number | null;
+        dimensionFilters?: { field: string; op: string; value: number }[];
+        machines: any[];
+      }>(`/capacity/calculator${qs ? `?${qs}` : ''}`);
     },
     periodBreakdown: (params: {
       year: number;
@@ -995,9 +1024,10 @@ export const api = {
         ['stroke', params.strokeOp, params.strokeValue],
       ] as const;
       for (const [prefix, op, val] of dimPairs) {
-        if (op && val != null && Number.isFinite(val)) {
+        const n = val == null ? NaN : Number(val);
+        if (op && Number.isFinite(n)) {
           q.set(`${prefix}Op`, op);
-          q.set(`${prefix}Value`, String(val));
+          q.set(`${prefix}Value`, String(n));
         }
       }
       return request<{ year: number; machines: { machine_id: number; has_sop?: boolean; has_eop?: boolean; months: Record<number, { load_percent: number; weeks: Record<number, { load_percent: number }>; has_sop?: boolean; has_eop?: boolean }> }[] }>(
@@ -1048,9 +1078,10 @@ export const api = {
         ['stroke', params.strokeOp, params.strokeValue],
       ] as const;
       for (const [prefix, op, val] of dimPairs) {
-        if (op && val != null && Number.isFinite(val)) {
+        const n = val == null ? NaN : Number(val);
+        if (op && Number.isFinite(n)) {
           q.set(`${prefix}Op`, op);
-          q.set(`${prefix}Value`, String(val));
+          q.set(`${prefix}Value`, String(n));
         }
       }
       return request<{
@@ -1075,6 +1106,7 @@ export const api = {
       machineStatus?: 'active' | 'inactive' | 'RFQ' | 'all';
       machineStatuses?: string;
       settingsProfile?: 'capacity' | 'ocu';
+      includeRfqOperationIds?: string;
       widthOp?: 'gte' | 'lte';
       widthValue?: number;
       depthOp?: 'gte' | 'lte';
@@ -1100,6 +1132,7 @@ export const api = {
       if (params.machineStatuses) q.set('machineStatuses', params.machineStatuses);
       else if (params.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
       if (params.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
+      if (params.includeRfqOperationIds) q.set('includeRfqOperationIds', params.includeRfqOperationIds);
       const dimPairs = [
         ['width', params.widthOp, params.widthValue],
         ['depth', params.depthOp, params.depthValue],
@@ -1107,9 +1140,10 @@ export const api = {
         ['stroke', params.strokeOp, params.strokeValue],
       ] as const;
       for (const [prefix, op, val] of dimPairs) {
-        if (op && val != null && Number.isFinite(val)) {
+        const n = val == null ? NaN : Number(val);
+        if (op && Number.isFinite(n)) {
           q.set(`${prefix}Op`, op);
-          q.set(`${prefix}Value`, String(val));
+          q.set(`${prefix}Value`, String(n));
         }
       }
       return request<{
@@ -1197,6 +1231,8 @@ export const api = {
       useAlternativeCycleOnTarget?: boolean;
       scenarioId?: number;
       useContractualVolumes?: boolean;
+      effectiveFromMonth?: number;
+      effectiveFromWeek?: number;
     }) => request<any>('/allocation/execute', { method: 'POST', body: JSON.stringify(body) }),
   },
   scenarios: {

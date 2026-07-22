@@ -331,6 +331,142 @@ projectsRouter.get('/clients', (_req, res) => {
   res.json(clients);
 });
 
+/** Drzewo filtrów RFQ: klient → projekt → detal → operacje (tylko projekty status=RFQ). */
+projectsRouter.get('/rfq-filter-tree', (req, res) => {
+  const refMode = referenceModeFromReq(req);
+  const projects = db
+    .prepare(`SELECT id, client, name FROM projects WHERE status = 'RFQ' ORDER BY client, name`)
+    .all() as { id: number; client: string; name: string }[];
+
+  if (!projects.length) {
+    return res.json({ clients: [] });
+  }
+
+  const projectIds = projects.map((p) => p.id);
+  const parts = db
+    .prepare(
+      `SELECT pt.id, pt.project_id, pt.designation,
+              pd.sap_number AS detail_sap_number, pd.alias AS detail_alias, pd.free_text AS detail_free_text
+       FROM parts pt
+       LEFT JOIN part_designations pd ON pd.id = pt.designation_id
+       WHERE pt.project_id IN (${projectIds.map(() => '?').join(',')})
+       ORDER BY pt.id`
+    )
+    .all(...projectIds) as {
+    id: number;
+    project_id: number;
+    designation: string | null;
+    detail_sap_number: string | null;
+    detail_alias: string | null;
+    detail_free_text: string | null;
+  }[];
+
+  const ops = db
+    .prepare(
+      `SELECT o.id, o.project_id, o.part_id, o.machine_id,
+              m.location AS machine_location,
+              ph.name AS phase_name,
+              m.internal_number AS machine_internal,
+              m.type AS machine_type
+       FROM operations o
+       JOIN process_phases ph ON ph.id = o.phase_id
+       JOIN machines m ON m.id = o.machine_id
+       WHERE o.project_id IN (${projectIds.map(() => '?').join(',')})
+       ORDER BY o.part_id, ph.name, m.internal_number`
+    )
+    .all(...projectIds) as {
+    id: number;
+    project_id: number;
+    part_id: number;
+    machine_id: number;
+    machine_location: string | null;
+    phase_name: string | null;
+    machine_internal: string | number | null;
+    machine_type: string | null;
+  }[];
+
+  const opsByPart = new Map<number, typeof ops>();
+  for (const op of ops) {
+    const list = opsByPart.get(op.part_id) ?? [];
+    list.push(op);
+    opsByPart.set(op.part_id, list);
+  }
+
+  const partsByProject = new Map<number, typeof parts>();
+  for (const part of parts) {
+    const list = partsByProject.get(part.project_id) ?? [];
+    list.push(part);
+    partsByProject.set(part.project_id, list);
+  }
+
+  const byClient = new Map<
+    string,
+    {
+      client: string;
+      projects: {
+        id: number;
+        name: string;
+        parts: {
+          id: number;
+          label: string;
+          operations: {
+            id: number;
+            label: string;
+            machine_id: number;
+            location: string | null;
+          }[];
+        }[];
+      }[];
+    }
+  >();
+
+  for (const p of projects) {
+    const client = normalizeClientName(p.client) || String(p.client ?? '').trim() || '—';
+    if (!byClient.has(client)) byClient.set(client, { client, projects: [] });
+    const projectParts = (partsByProject.get(p.id) ?? [])
+      .map((part) => {
+        const partOps = (opsByPart.get(part.id) ?? []).map((op) => {
+          const phase = String(op.phase_name ?? '').trim() || '—';
+          const machine = [op.machine_internal, op.machine_type].filter((x) => x != null && String(x).trim()).join(' · ');
+          return {
+            id: op.id,
+            label: machine ? `${phase} · ${machine}` : phase,
+            machine_id: Number(op.machine_id),
+            location: op.machine_location != null ? String(op.machine_location) : null,
+          };
+        });
+        if (!partOps.length) return null;
+        return {
+          id: part.id,
+          label: formatDetailSapAliasLabel(
+            {
+              sap_number: part.detail_sap_number,
+              alias: part.detail_alias,
+              free_text: part.detail_free_text,
+              designation: part.designation,
+              id: part.id,
+            },
+            refMode
+          ),
+          operations: partOps,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null);
+    if (!projectParts.length) continue;
+    byClient.get(client)!.projects.push({
+      id: p.id,
+      name: String(p.name ?? '').trim() || `Project #${p.id}`,
+      parts: projectParts,
+    });
+  }
+
+  const treeClients = [...byClient.values()]
+    .filter((c) => c.projects.length > 0)
+    .sort((a, b) => a.client.localeCompare(b.client, 'pl'));
+
+  res.json({ clients: treeClients });
+});
+
 projectsRouter.get('/session/actor', (req, res) => {
   res.json({ login: resolveActor(req) });
 });

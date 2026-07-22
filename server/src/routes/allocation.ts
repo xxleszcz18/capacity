@@ -93,6 +93,8 @@ allocationRouter.post('/execute', (req, res) => {
     year,
     scenarioId,
     useContractualVolumes: useCvBody,
+    effectiveFromMonth,
+    effectiveFromWeek,
   } = req.body as any;
   const useContractualVolumes =
     useCvBody === true ||
@@ -110,6 +112,18 @@ allocationRouter.post('/execute', (req, res) => {
       ? Number(cycleTimeSecondsOnTarget)
       : undefined;
   const volUnit = volumeUnit === 'monthly' ? 'monthly' : volumeUnit === 'weekly' ? 'weekly' : 'annual';
+  const fromMonthNum = Number(effectiveFromMonth);
+  const fromWeekNum = Number(effectiveFromWeek);
+  const effectiveFrom =
+    Number.isFinite(fromMonthNum) && fromMonthNum >= 1 && fromMonthNum <= 12
+      ? {
+          month: Math.floor(fromMonthNum),
+          week:
+            Number.isFinite(fromWeekNum) && fromWeekNum >= 1 && fromWeekNum <= 5
+              ? Math.floor(fromWeekNum)
+              : 1,
+        }
+      : null;
   const sid = scenarioId != null ? Number(scenarioId) : NaN;
   if (Number.isFinite(sid) && sid > 0) {
     const exists = db.prepare('SELECT id FROM scenarios WHERE id = ?').get(sid);
@@ -124,7 +138,8 @@ allocationRouter.post('/execute', (req, res) => {
       cycle,
       resolveActor(req),
       useContractualVolumes,
-      useAlternativeCycleOnTarget
+      useAlternativeCycleOnTarget,
+      effectiveFrom
     );
     if (!result.success) return res.status(400).json({ ...result, error: result.error });
     return res.json(result);
@@ -137,7 +152,8 @@ allocationRouter.post('/execute', (req, res) => {
     yearResolved,
     cycle,
     useContractualVolumes,
-    useAlternativeCycleOnTarget
+    useAlternativeCycleOnTarget,
+    effectiveFrom
   );
   if (!result.success) return res.status(400).json({ ...result, error: result.error });
   res.json(result);

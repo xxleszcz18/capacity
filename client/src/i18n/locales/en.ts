@@ -535,6 +535,15 @@ export const en: TranslationTree = {
     dimOpGte: '≥',
     dimOpLte: '≤',
     dimValuePlaceholder: 'mm',
+    applyingDimensionFilters: 'Applying dimension filters…',
+    dimensionFilterResult: 'Dimension filter: {{summary}} — {{count}} machines',
+    showZeroLoadMachines: 'Show active machines with no load (0% in all years)',
+    showZeroLoadMachinesShort: 'including machines with no load',
+    dimensionFilterServerMismatch:
+      'Warning: the server did not apply dimension filters. Rebuild and restart the server, then hard-refresh (Ctrl+F5).',
+    zeroLoadMachinesResult: 'View includes machines with no load — {{count}} machines listed',
+    dimFilterHint:
+      'Compares machine dimensions (mm). Machines with a blank dimension are excluded. E.g. width ≥ 1600 = machines at least 1600 mm wide.',
     pageSizeShown: 'Showing {{from}}–{{to}} of {{total}} machines',
     pagePrev: 'Previous',
     pageNext: 'Next',
@@ -563,6 +572,7 @@ export const en: TranslationTree = {
     expandRow: 'Expand row to months',
     collapseRow: 'Collapse row months',
     loadingPeriodBreakdown: 'Loading month and week breakdown…',
+    reloadingAfterAllocation: 'Recalculating load after allocation…',
     sopMarker: 'Start of production (SOP) in this period',
     eopMarker: 'End of production (EOP) in this period',
     periodMonthOnly: '{{month}}',
@@ -601,6 +611,8 @@ export const en: TranslationTree = {
       transferModeTitle: 'Volume transfer method',
       modeFull: 'Transfer full detail volume',
       modeFullHelp: 'Moves 100% of the selected detail volume (all operations in the group) for each selected year.',
+      modeFullHelpPartial:
+        'Moves the year-volume fraction from the selected month/week through year-end (later selected years in full).',
       modeManual: 'Manual volume entry',
       modeManualHelp:
         'Enter the volume to transfer. If it exceeds the available detail volume in any selected year, a warning is shown — execution will move the maximum possible amount (not more than entered).',
@@ -608,6 +620,20 @@ export const en: TranslationTree = {
       modeTargetPercentHelp:
         'Calculates volume needed so the source machine reaches the entered load after transfer. If detail volume is insufficient, the full available volume is moved with a notice.',
       executionYearsNotice: 'Allocation will run for years: {{years}}',
+      executionPeriodFromMonth:
+        'Allocation from {{month}} {{year}} (fraction of anchor year; selected years: {{years}}).',
+      executionPeriodFromWeek:
+        'Allocation from CW{{week}} {{month}} {{year}} (~{{pct}}% of anchor-year volume; selected years: {{years}}).',
+      periodScopeLabel: 'Period within year',
+      periodScopeYear: 'Full year',
+      periodScopeFromMonth: 'From month',
+      periodScopeFromWeek: 'From week',
+      startMonth: 'Month from',
+      startWeek: 'Week from',
+      periodFractionHint: 'From the start point: ~{{pct}}% of year weeks on the target (weekly rate unchanged)',
+      periodScopeYearHelp: 'Transfers volume as before — for the full year (or years).',
+      periodScopePartialHelp:
+        'From the selected month/week: earlier weeks keep the full weekly rate on the source machine; from that week the same rate moves to the target (not averaged over the year). Later selected years — in full.',
       targetLoad: 'Remaining load on source machine:',
       targetLoadInputTitle:
         'Calculator load percent that should remain on the releasing machine after moving detail volume (e.g. 73 = 73% remains).',

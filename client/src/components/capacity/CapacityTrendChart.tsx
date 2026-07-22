@@ -1,9 +1,10 @@
 import { useId, useMemo, useState } from 'react';
 import {
+  Area,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -15,7 +16,9 @@ import { useI18n } from '../../context/I18nContext';
 import { useDataVizColors } from '../../context/DataVizColorsContext';
 import { resolveYAxisDomain, type ChartLoadAxisRange, DEFAULT_LOAD_AXIS_RANGE } from '../../utils/chartLoadAxisRange';
 import { transformTrendRows, type ChartMetricMode } from '../../utils/chartMetricMode';
+import { flexHiKey, flexLoKey, seriesAppliesFlex, withFlexBandRows } from '../../utils/chartFlex';
 import CapacityTrendChartDataTable, { type ChartBreakdownScope } from './CapacityTrendChartDataTable';
+import { OrderedLegendContent } from './OrderedLegendContent';
 
 type Props = {
   title: string;
@@ -27,6 +30,8 @@ type Props = {
   loadAxisRange?: ChartLoadAxisRange;
   /** Obciążenie vs wolne capacity (100% − obciążenie). */
   metricMode?: ChartMetricMode;
+  /** Flex ±% od nominału — wstęga wokół linii (np. 15 → ±15%). */
+  flexPercent?: number | null;
   /** Atrybuty do zrzutu wykresu do PDF (html2canvas). */
   captureKey?: string;
   /** Kontekst do rozwijanego podglądu klient → projekt → detal. */
@@ -49,6 +54,7 @@ export default function CapacityTrendChart({
   breakdownScope,
   loadAxisRange = DEFAULT_LOAD_AXIS_RANGE,
   metricMode = 'load',
+  flexPercent = null,
   allowDataTable = true,
 }: Props) {
   const { t } = useI18n();
@@ -58,7 +64,13 @@ export default function CapacityTrendChart({
   const activeSeries = series.filter((s) => rows.some((r) => r[s.key] != null));
   const hasData = activeSeries.length > 0 && rows.length > 0;
   const canShowDataTable = allowDataTable && !captureKey;
-  const displayRows = useMemo(() => transformTrendRows(rows, series, metricMode), [rows, series, metricMode]);
+  const showFlex = flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
+
+  const displayRows = useMemo(() => {
+    const metricRows = transformTrendRows(rows, series, metricMode);
+    return withFlexBandRows(metricRows, series, showFlex ? flexPercent : null);
+  }, [rows, series, metricMode, showFlex, flexPercent]);
+
   const yDomain = resolveYAxisDomain(loadAxisRange);
   const yAxisLabel = metricMode === 'freeCapacity' ? t('dataViz.freeCapacityPct') : t('dataViz.loadPct');
   const refLineY = metricMode === 'freeCapacity' ? 0 : 100;
@@ -125,7 +137,7 @@ export default function CapacityTrendChart({
           <p style={{ margin: 0, color: '#888', fontSize: 14 }}>{emptyHint ?? t('dataViz.emptyChartDefault')}</p>
         ) : (
           <ResponsiveContainer width="100%" height={height}>
-            <LineChart data={displayRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+            <ComposedChart data={displayRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eceff1" />
               <XAxis dataKey="year" tick={{ fontSize: 12 }} />
               <YAxis
@@ -136,11 +148,48 @@ export default function CapacityTrendChart({
                 label={{ value: yAxisLabel, angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#666' } }}
               />
               <Tooltip
-                formatter={(value, name) => [fmtLoadPct(value as number | null), String(name ?? '')]}
+                formatter={(value, name) => {
+                  if (Array.isArray(value)) return null;
+                  return [fmtLoadPct(value as number | null), String(name ?? '')];
+                }}
                 labelFormatter={(y) => t('dataViz.tooltipYear', { year: y })}
               />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <ReferenceLine y={refLineY} stroke={refLineColor} strokeDasharray="4 4" label={{ value: refLineLabel, position: 'right', fontSize: 11, fill: refLineColor }} />
+              <Legend
+                wrapperStyle={{ fontSize: 12 }}
+                content={(props) => (
+                  <OrderedLegendContent {...props} orderKeys={activeSeries.map((s) => s.key)} />
+                )}
+              />
+              <ReferenceLine
+                y={refLineY}
+                stroke={refLineColor}
+                strokeDasharray="4 4"
+                label={{ value: refLineLabel, position: 'right', fontSize: 11, fill: refLineColor }}
+              />
+              {showFlex &&
+                activeSeries.filter((s) => seriesAppliesFlex(s.key)).map((s) => (
+                  <Area
+                    key={`${s.key}__flex`}
+                    type="monotone"
+                    dataKey={(row: TrendChartRow) => {
+                      const lo = row[flexLoKey(s.key)];
+                      const hi = row[flexHiKey(s.key)];
+                      if (lo == null || hi == null || !Number.isFinite(Number(lo)) || !Number.isFinite(Number(hi))) {
+                        return null;
+                      }
+                      return [Number(lo), Number(hi)];
+                    }}
+                    name={`${s.label} Flex`}
+                    stroke="none"
+                    fill={s.color}
+                    fillOpacity={0.5}
+                    legendType="none"
+                    tooltipType="none"
+                    connectNulls={false}
+                    isAnimationActive={false}
+                    activeDot={false}
+                  />
+                ))}
               {activeSeries.map((s) => (
                 <Line
                   key={s.key}
@@ -154,7 +203,7 @@ export default function CapacityTrendChart({
                   connectNulls={false}
                 />
               ))}
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         )}
       </div>

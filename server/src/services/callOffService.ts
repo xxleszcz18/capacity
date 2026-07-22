@@ -1,4 +1,5 @@
 import { db, saveDb } from '../db/connection.js';
+import { weekOfMonthFromDate } from '../utils/sopEopFormat.js';
 import {
   deleteCallOffSourceFiles,
   getCallOffSourceFilePath,
@@ -297,16 +298,9 @@ export function importSalesFcstFile(
 export type CallOffVolumeMaps = {
   annual: Map<number, Map<number, number>>;
   monthly: Map<number, Map<number, Map<number, number>>>;
-  /** Tydzień w miesiącu (T1 = dni 1–7, …) — zgodnie z rozwinięciem w kalkulatorze. */
+  /** Tydzień w miesiącu (T1 = pierwszy tydzień pn–nd w miesiącu) — zgodnie z rozwinięciem w kalkulatorze. */
   weekly: Map<number, Map<number, Map<number, Map<number, number>>>>;
 };
-
-/** Numer tygodnia w miesiącu (1 = dni 1–7, 2 = 8–14, …) — jak kolumny T1…T5 w kalkulatorze. */
-export function weekOfMonthFromDay(day: number): number {
-  const d = Math.floor(Number(day));
-  if (!Number.isFinite(d) || d < 1) return 1;
-  return Math.max(1, Math.ceil(d / 7));
-}
 
 /** Roczny wolumen per part_id z pliku SAP (suma Corr.qty). */
 export function loadCallOffAnnualVolumeByPart(comparisonId: number): Map<number, Map<number, number>> {
@@ -367,7 +361,7 @@ export function loadCallOffVolumeMaps(comparisonId: number): CallOffVolumeMaps {
     const year = Number(r.year);
     const month = Number(r.month);
     const day = Number(String(r.volume_date ?? '').slice(8, 10));
-    const wom = weekOfMonthFromDay(day);
+    const wom = weekOfMonthFromDate(year, month, day);
     const qty = Number(r.qty) || 0;
     if (!weekly.has(partId)) weekly.set(partId, new Map());
     const byYear = weekly.get(partId)!;

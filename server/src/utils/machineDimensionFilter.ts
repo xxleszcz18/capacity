@@ -14,20 +14,47 @@ const QUERY_KEYS: { prefix: string; field: MachineDimensionField }[] = [
   { prefix: 'stroke', field: 'stroke_mm' },
 ];
 
+function firstQueryValue(raw: unknown): unknown {
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
 function parseOp(raw: unknown): MachineDimensionOp | null {
-  const s = String(raw ?? '').trim().toLowerCase();
-  if (s === 'gte' || s === '>=' || s === '≥' || s === 'ge' || s === 'gt' || s === '>' || s === 'wieksze' || s === 'większe' || s === 'wiecej' || s === 'więcej') {
+  const s = String(firstQueryValue(raw) ?? '')
+    .trim()
+    .toLowerCase();
+  if (
+    s === 'gte' ||
+    s === '>=' ||
+    s === '≥' ||
+    s === 'ge' ||
+    s === 'gt' ||
+    s === '>' ||
+    s === 'wieksze' ||
+    s === 'większe' ||
+    s === 'wiecej' ||
+    s === 'więcej'
+  ) {
     return 'gte';
   }
-  if (s === 'lte' || s === '<=' || s === '≤' || s === 'le' || s === 'lt' || s === '<' || s === 'mniejsze' || s === 'mniej') {
+  if (
+    s === 'lte' ||
+    s === '<=' ||
+    s === '≤' ||
+    s === 'le' ||
+    s === 'lt' ||
+    s === '<' ||
+    s === 'mniejsze' ||
+    s === 'mniej'
+  ) {
     return 'lte';
   }
   return null;
 }
 
 function parseValue(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  const n = Number(String(raw).trim().replace(',', '.'));
+  const v = firstQueryValue(raw);
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number(String(v).trim().replace(',', '.'));
   return Number.isFinite(n) ? n : null;
 }
 
@@ -46,13 +73,20 @@ export function appendMachineDimensionFilters(filters: MachineDimensionFilter[] 
   clause: string;
   params: number[];
 } {
-  if (!filters?.length) return { clause: '1=1', params: [] };
+  if (!filters?.length || !Array.isArray(filters)) return { clause: '1=1', params: [] };
+  const allowed = new Set<MachineDimensionField>(['width_mm', 'depth_mm', 'height_mm', 'stroke_mm']);
   const parts: string[] = [];
   const params: number[] = [];
   for (const f of filters) {
+    if (!f || typeof f !== 'object') continue;
+    if (!allowed.has(f.field)) continue;
+    if (f.op !== 'gte' && f.op !== 'lte') continue;
+    const value = Number(f.value);
+    if (!Number.isFinite(value)) continue;
     const cmp = f.op === 'gte' ? '>=' : '<=';
     parts.push(`m.${f.field} IS NOT NULL AND m.${f.field} ${cmp} ?`);
-    params.push(f.value);
+    params.push(value);
   }
+  if (!parts.length) return { clause: '1=1', params: [] };
   return { clause: parts.join(' AND '), params };
 }

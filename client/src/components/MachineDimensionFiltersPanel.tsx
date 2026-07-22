@@ -12,6 +12,12 @@ type Props = {
   onChange: (next: DimFiltersState) => void;
   /** Tekst nagłówka; domyślnie z kalkulatora. */
   titleKey?: string;
+  /** Hint pod polami (np. dataViz.dimFilterHint). */
+  hintKey?: string;
+  /** Otwórz panel przy montowaniu / gdy filtry aktywne. */
+  defaultOpen?: boolean;
+  busy?: boolean;
+  busyLabel?: string;
 };
 
 const DIM_KEYS = [
@@ -21,10 +27,28 @@ const DIM_KEYS = [
   { key: 'stroke' as const, labelKey: 'calculator.dimStroke' },
 ];
 
-export default function MachineDimensionFiltersPanel({ value, onChange, titleKey = 'calculator.advancedFilters' }: Props) {
+export default function MachineDimensionFiltersPanel({
+  value,
+  onChange,
+  titleKey = 'calculator.advancedFilters',
+  hintKey = 'calculator.dimFilterHint',
+  defaultOpen = false,
+  busy = false,
+  busyLabel,
+}: Props) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
   const active = hasActiveDimFilters(value);
+  const [open, setOpen] = useState(defaultOpen || active);
+
+  const patch = (key: keyof DimFiltersState, patchRow: Partial<{ op: DimFilterOp; value: string }>) => {
+    onChange({
+      ...value,
+      [key]: {
+        op: patchRow.op !== undefined ? patchRow.op : value[key].op,
+        value: patchRow.value !== undefined ? patchRow.value : value[key].value,
+      },
+    });
+  };
 
   return (
     <div className={`filters-toolbar filters-toolbar--advanced${active ? ' filters-toolbar--advanced-active' : ''}`} style={{ marginTop: 12 }}>
@@ -42,6 +66,12 @@ export default function MachineDimensionFiltersPanel({ value, onChange, titleKey
             <strong>{t('calculator.advancedFiltersApplied')}</strong> {formatDimFilterSummary(value, t)}
           </span>
         )}
+        {busy && (
+          <span className="data-loading-badge" role="status" aria-live="polite">
+            <span className="data-loading-spinner" aria-hidden="true" />
+            {busyLabel ?? t('calculator.applyingDimensionFilters')}
+          </span>
+        )}
       </div>
       {open && (
         <div className="calculator-advanced-filters-grid">
@@ -51,12 +81,10 @@ export default function MachineDimensionFiltersPanel({ value, onChange, titleKey
               <select
                 className="calculator-dim-filter-op"
                 value={value[key].op}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    [key]: { ...value[key], op: e.target.value as DimFilterOp },
-                  })
-                }
+                onChange={(e) => {
+                  const op = e.target.value as DimFilterOp;
+                  patch(key, { op, value: op ? value[key].value : '' });
+                }}
               >
                 <option value="">{t('calculator.dimOpNone')}</option>
                 <option value="gte">{t('calculator.dimOpGte')}</option>
@@ -68,17 +96,19 @@ export default function MachineDimensionFiltersPanel({ value, onChange, titleKey
                 min={0}
                 className="calculator-dim-filter-value"
                 value={value[key].value}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    [key]: { ...value[key], value: e.target.value },
-                  })
-                }
+                onChange={(e) => patch(key, { value: e.target.value })}
+                onBlur={(e) => patch(key, { value: e.currentTarget.value })}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  patch(key, { value: (e.target as HTMLInputElement).value });
+                }}
                 placeholder={t('calculator.dimValuePlaceholder')}
                 disabled={!value[key].op}
               />
             </label>
           ))}
+          <p className="calculator-dim-filter-hint">{t(hintKey)}</p>
         </div>
       )}
     </div>

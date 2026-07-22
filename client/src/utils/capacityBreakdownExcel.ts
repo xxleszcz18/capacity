@@ -7,7 +7,7 @@ import { pdfTrendHeaders } from '../i18n/reportLabels';
 import type { Locale } from '../i18n/types';
 import type { DimFiltersState } from './machineDimensionFilters';
 import { buildDimensionApiParams, EMPTY_DIM_FILTERS } from './machineDimensionFilters';
-import { joinCsvFilter } from './filterParams';
+import { joinCsvFilter, joinCsvFilterNumbers } from './filterParams';
 
 export type MachineStatusFilterValue = 'active' | 'inactive' | 'RFQ' | 'all';
 
@@ -21,6 +21,7 @@ export type BreakdownFetchParams = {
   callOffComparisonId?: number;
   settingsProfile?: 'capacity' | 'ocu';
   dimFilters?: DimFiltersState;
+  includeRfqOperationIds?: number[];
 };
 
 export type BreakdownSeriesKey =
@@ -51,6 +52,7 @@ export function breakdownFetchParamsToApi(fetchParams: BreakdownFetchParams) {
     scenarioId: fetchParams.scenarioId,
     callOffComparisonId: fetchParams.callOffComparisonId,
     settingsProfile: fetchParams.settingsProfile,
+    includeRfqOperationIds: joinCsvFilterNumbers(fetchParams.includeRfqOperationIds ?? []),
     ...buildDimensionApiParams(fetchParams.dimFilters ?? EMPTY_DIM_FILTERS),
   };
 }

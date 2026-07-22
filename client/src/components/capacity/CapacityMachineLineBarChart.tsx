@@ -15,6 +15,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useDataVizColors } from '../../context/DataVizColorsContext';
 import { resolveYAxisDomain, type ChartLoadAxisRange, DEFAULT_LOAD_AXIS_RANGE } from '../../utils/chartLoadAxisRange';
 import { applyChartMetric, type ChartMetricMode } from '../../utils/chartMetricMode';
+import { OrderedLegendContent } from './OrderedLegendContent';
 
 const PROD_KEY = 'production';
 const CONTRACT_KEY = 'contract';
@@ -162,26 +163,34 @@ export default function CapacityMachineLineBarChart({
                 });
               }}
             />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Legend
+              wrapperStyle={{ fontSize: 12 }}
+              content={(props) => (
+                <OrderedLegendContent
+                  {...props}
+                  orderKeys={[CONTRACT_KEY, PROD_KEY, CALL_OFF_KEY]}
+                />
+              )}
+            />
             <ReferenceLine
               y={refLineY}
               stroke={refLineColor}
               strokeDasharray="4 4"
               label={{ value: refLineLabel, position: 'insideTopRight', fontSize: 10, fill: refLineColor }}
             />
-            {showProduction && (
-              <Bar
-                dataKey={PROD_KEY}
-                name={t('reports.dataViz.seriesProd')}
-                fill={vizColors.production}
-                radius={[4, 4, 0, 0]}
-              />
-            )}
             {showContract && (
               <Bar
                 dataKey={CONTRACT_KEY}
                 name={t('reports.dataViz.seriesContract')}
                 fill={vizColors.contract}
+                radius={[4, 4, 0, 0]}
+              />
+            )}
+            {showProduction && (
+              <Bar
+                dataKey={PROD_KEY}
+                name={t('reports.dataViz.seriesProd')}
+                fill={vizColors.production}
                 radius={[4, 4, 0, 0]}
               />
             )}

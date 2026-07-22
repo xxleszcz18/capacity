@@ -6,6 +6,13 @@ import MultiSelectFilter from '../components/MultiSelectFilter';
 import DataLoadingOverlay, { DataLoadingBadge } from '../components/DataLoadingOverlay';
 import { AdminHubList } from '../components/AdminHubCards';
 import { joinCsvFilter, formatMultiFilterSummary } from '../utils/filterParams';
+import RfqTreeMultiFilter, {
+  projectNamesForLine,
+  projectNamesForMachine,
+  linesForSelectedRfqOps,
+  machineIdsForSelectedRfqOps,
+  type RfqFilterTree,
+} from '../components/RfqTreeMultiFilter';
 import MachineDimensionFiltersPanel from '../components/MachineDimensionFiltersPanel';
 import CapacityTrendChart from '../components/capacity/CapacityTrendChart';
 import CapacityMachineLineBarChart from '../components/capacity/CapacityMachineLineBarChart';
@@ -13,6 +20,7 @@ import ChartGridLayoutPicker, { chartGridStyle, type ChartGridCols } from '../co
 import ChartLoadAxisRangePicker from '../components/capacity/ChartLoadAxisRangePicker';
 import ChartMetricModePicker from '../components/capacity/ChartMetricModePicker';
 import type { ChartMetricMode } from '../utils/chartMetricMode';
+import { parseFlexPercentInput } from '../utils/chartFlex';
 import {
   DEFAULT_LOAD_AXIS_RANGE,
   type ChartLoadAxisRange,
@@ -74,10 +82,12 @@ import { useDataVizColors } from '../context/DataVizColorsContext';
 import { useAuth } from '../context/AuthContext';
 import { getDataVizPdfStrings, localeDateTime } from '../i18n/reportLabels';
 import {
-  buildDimensionApiParams,
+  buildMachineDimLookup,
   EMPTY_DIM_FILTERS,
+  filterMachinesByDimensionFilters,
   hasActiveDimFilters,
   type DimFiltersState,
+  type MachineDimLookup,
 } from '../utils/machineDimensionFilters';
 
 type TabId = 'lines' | 'machines' | 'analytics';
@@ -99,7 +109,7 @@ async function fetchCapacityBundle(params: {
   client?: string[];
   useContractualVolumes?: boolean;
   settingsProfile?: 'capacity' | 'ocu';
-  dimFilters?: DimFiltersState;
+  includeRfqOperationIds?: number[];
 }): Promise<CapacityTrendBundle> {
   const res = await api.capacity.calculator({
     yearFrom: params.yearFrom,
@@ -109,7 +119,7 @@ async function fetchCapacityBundle(params: {
     clients: joinCsvFilter(params.client ?? []),
     useContractualVolumes: params.useContractualVolumes,
     settingsProfile: params.settingsProfile === 'ocu' ? 'ocu' : undefined,
-    ...buildDimensionApiParams(params.dimFilters ?? EMPTY_DIM_FILTERS),
+    includeRfqOperationIds: joinCsvFilter((params.includeRfqOperationIds ?? []).map(String)),
   });
   return {
     yearFrom: res.yearFrom,
@@ -204,6 +214,8 @@ export default function AdminDataVisualization() {
   const [clientFilter, setClientFilter] = useState<string[]>([]);
   const [machineTypes, setMachineTypes] = useState<string[]>([]);
   const [clients, setClients] = useState<string[]>([]);
+  const [rfqTree, setRfqTree] = useState<RfqFilterTree | null>(null);
+  const [rfqOperationIds, setRfqOperationIds] = useState<number[]>([]);
   const [callOffComparisonId, setCallOffComparisonId] = useState<number | ''>('');
   const [callOffComparisons, setCallOffComparisons] = useState<
     { id: number; name: string; source_filename: string | null; date_from: string; date_to: string }[]
@@ -218,14 +230,25 @@ export default function AdminDataVisualization() {
   const [loadAxisRange, setLoadAxisRange] = useState<ChartLoadAxisRange>(DEFAULT_LOAD_AXIS_RANGE);
   const [chartMetricMode, setChartMetricMode] = useState<ChartMetricMode>('load');
   const [dimFilters, setDimFilters] = useState<DimFiltersState>(EMPTY_DIM_FILTERS);
+  const [machineDimLookup, setMachineDimLookup] = useState<MachineDimLookup | null>(null);
+
+  useEffect(() => {
+    api.machines
+      .list({ statuses: 'active,inactive,RFQ' })
+      .then((rows) => setMachineDimLookup(buildMachineDimLookup(Array.isArray(rows) ? rows : [])))
+      .catch(() => setMachineDimLookup(null));
+  }, []);
 
   const [showProduction, setShowProduction] = useState(true);
   const [showContract, setShowContract] = useState(true);
   const [showCallOff, setShowCallOff] = useState(true);
+  /** Flex ±% od nominału na wykresach liniowych (pusty = bez wstęgi). */
+  const [flexPercentInput, setFlexPercentInput] = useState('');
+  const flexPercent = useMemo(() => parseFlexPercentInput(flexPercentInput), [flexPercentInput]);
 
-  const [prod, setProd] = useState<CapacityTrendBundle | null>(null);
-  const [contract, setContract] = useState<CapacityTrendBundle | null>(null);
-  const [callOff, setCallOff] = useState<CapacityTrendBundle | null>(null);
+  const [prodRaw, setProd] = useState<CapacityTrendBundle | null>(null);
+  const [contractRaw, setContract] = useState<CapacityTrendBundle | null>(null);
+  const [callOffRaw, setCallOff] = useState<CapacityTrendBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -264,9 +287,30 @@ export default function AdminDataVisualization() {
       client: clientFilter,
       settingsProfile,
       callOffComparisonId: hasCallOff ? Number(callOffComparisonId) : undefined,
-      ...buildDimensionApiParams(dimFilters),
+      includeRfqOperationIds: rfqOperationIds,
+      dimFilters,
     }),
-    [effectiveYearFrom, effectiveYearTo, machineStatus, typeFilter, clientFilter, settingsProfile, hasCallOff, callOffComparisonId, dimFilters]
+    [effectiveYearFrom, effectiveYearTo, machineStatus, typeFilter, clientFilter, settingsProfile, hasCallOff, callOffComparisonId, dimFilters, rfqOperationIds]
+  );
+
+  const withRfqLegend = useCallback(
+    (label: string, scope?: { line?: string; machineId?: number }) => {
+      if (!rfqOperationIds.length) return label;
+      let projects: string[] = [];
+      if (scope?.machineId != null) {
+        projects = projectNamesForMachine(rfqTree, rfqOperationIds, scope.machineId);
+      } else if (scope?.line != null) {
+        projects = projectNamesForLine(rfqTree, rfqOperationIds, scope.line);
+      } else {
+        return label;
+      }
+      if (!projects.length) return label;
+      return t('reports.dataViz.seriesWithRfq', {
+        label,
+        projects: projects.join(', '),
+      });
+    },
+    [rfqTree, rfqOperationIds, t]
   );
 
   useEffect(() => {
@@ -286,6 +330,10 @@ export default function AdminDataVisualization() {
       .catch(() => setCallOffComparisons([]));
     api.machines.types().then(setMachineTypes).catch(() => setMachineTypes([]));
     api.projects.clients().then(setClients).catch(() => setClients([]));
+    api.projects
+      .rfqFilterTree()
+      .then((res) => setRfqTree({ clients: res.clients ?? [] }))
+      .catch(() => setRfqTree({ clients: [] }));
   }, []);
 
   const tableOpts: TrendTableBuildOptions = useMemo(
@@ -309,7 +357,7 @@ export default function AdminDataVisualization() {
       type: typeFilter,
       client: clientFilter,
       settingsProfile,
-      dimFilters,
+      includeRfqOperationIds: rfqOperationIds,
     };
     const coid = hasCallOff ? Number(callOffComparisonId) : undefined;
     const tasks: Promise<void>[] = [
@@ -326,7 +374,6 @@ export default function AdminDataVisualization() {
             types: joinCsvFilter(typeFilter),
             clients: joinCsvFilter(clientFilter),
             settingsProfile: settingsProfile === 'ocu' ? 'ocu' : undefined,
-            ...buildDimensionApiParams(dimFilters),
           })
           .then((res) => setCallOff(callOffCalculatorToTrendBundle(res)))
       );
@@ -347,10 +394,10 @@ export default function AdminDataVisualization() {
     machineStatus,
     typeFilter,
     clientFilter,
+    settingsProfile,
+    rfqOperationIds,
     hasCallOff,
     callOffComparisonId,
-    settingsProfile,
-    dimFilters,
     subsystem,
     t,
     te,
@@ -376,9 +423,34 @@ export default function AdminDataVisualization() {
     loadData();
   }, [loadData, yearsReady]);
 
+  const prod = useMemo(() => {
+    if (!prodRaw) return null;
+    return {
+      ...prodRaw,
+      machines: filterMachinesByDimensionFilters(prodRaw.machines, dimFilters, machineDimLookup),
+    };
+  }, [prodRaw, dimFilters, machineDimLookup]);
+  const contract = useMemo(() => {
+    if (!contractRaw) return null;
+    return {
+      ...contractRaw,
+      machines: filterMachinesByDimensionFilters(contractRaw.machines, dimFilters, machineDimLookup),
+    };
+  }, [contractRaw, dimFilters, machineDimLookup]);
+  const callOff = useMemo(() => {
+    if (!callOffRaw) return null;
+    return {
+      ...callOffRaw,
+      machines: filterMachinesByDimensionFilters(callOffRaw.machines, dimFilters, machineDimLookup),
+    };
+  }, [callOffRaw, dimFilters, machineDimLookup]);
+
   const machinesProd = prod?.machines ?? [];
   const lines = useMemo(() => uniqueLines(machinesProd), [machinesProd]);
 
+  const dataVizBusy = loading;
+
+  /** Filtry zawężające zestaw maszyn/linii — przy nich domyślnie zaznaczamy wszystko widoczne. */
   const hasActiveFilter = useMemo(
     () =>
       clientFilter.length > 0 ||
@@ -389,27 +461,59 @@ export default function AdminDataVisualization() {
     [clientFilter, typeFilter, machineStatus, dimFilters]
   );
 
-  useEffect(() => {
-    if (lines.length) {
-      setSelectedLines(new Set(hasActiveFilter ? lines : lines.slice(0, Math.min(4, lines.length))));
-    } else {
-      setSelectedLines(new Set());
-    }
-  }, [lines.join('|'), hasActiveFilter]);
+  const rfqHostLines = useMemo(
+    () => linesForSelectedRfqOps(rfqTree, rfqOperationIds),
+    [rfqTree, rfqOperationIds]
+  );
+  const rfqHostMachineIds = useMemo(
+    () => machineIdsForSelectedRfqOps(rfqTree, rfqOperationIds),
+    [rfqTree, rfqOperationIds]
+  );
 
   useEffect(() => {
-    if (machinesProd.length) {
-      setSelectedMachineIds(
-        new Set(
-          hasActiveFilter
-            ? machinesProd.map((m) => m.machine_id)
-            : machinesProd.slice(0, 3).map((m) => m.machine_id)
-        )
-      );
-    } else {
-      setSelectedMachineIds(new Set());
+    if (!lines.length) {
+      setSelectedLines(new Set());
+      return;
     }
-  }, [machinesProd.map((m) => m.machine_id).join(','), hasActiveFilter]);
+    if (rfqOperationIds.length) {
+      const scoped = rfqHostLines.filter((line) => lines.includes(line));
+      if (scoped.length) {
+        setSelectedLines(new Set(scoped));
+        return;
+      }
+    }
+    setSelectedLines((prev) => {
+      const stillValid = lines.filter((line) => prev.has(line));
+      if (stillValid.length > 0) return new Set(stillValid);
+      return new Set(hasActiveFilter ? lines : lines.slice(0, Math.min(4, lines.length)));
+    });
+  }, [lines.join('|'), hasActiveFilter, rfqOperationIds.join(','), rfqHostLines.join('|')]);
+
+  useEffect(() => {
+    if (!machinesProd.length) {
+      setSelectedMachineIds(new Set());
+      return;
+    }
+    const ids = machinesProd.map((m) => m.machine_id);
+    const idSet = new Set(ids);
+    if (rfqOperationIds.length) {
+      const scoped = rfqHostMachineIds.filter((id) => idSet.has(id));
+      if (scoped.length) {
+        setSelectedMachineIds(new Set(scoped));
+        return;
+      }
+    }
+    setSelectedMachineIds((prev) => {
+      const stillValid = ids.filter((id) => prev.has(id));
+      if (stillValid.length > 0) return new Set(stillValid);
+      return new Set(hasActiveFilter ? ids : ids.slice(0, 3));
+    });
+  }, [
+    machinesProd.map((m) => m.machine_id).join(','),
+    hasActiveFilter,
+    rfqOperationIds.join(','),
+    rfqHostMachineIds.join(','),
+  ]);
 
   useEffect(() => {
     if (analyticsScope === 'line' && analyticsLines.length === 0 && lines.length) setAnalyticsLines([lines[0]]);
@@ -422,14 +526,25 @@ export default function AdminDataVisualization() {
     prefix: string,
     getProd: (year: number) => number | null,
     getContract: (year: number) => number | null,
-    getCallOff?: (year: number) => number | null
+    getCallOff?: (year: number) => number | null,
+    scope?: { line?: string; machineId?: number }
   ): TrendSeriesDef[] => {
     const out: TrendSeriesDef[] = [];
-    if (showProduction) {
-      out.push({ key: `${prefix}_prod`, label: t('reports.dataViz.seriesProd'), color: vizColors.production, getValue: getProd });
-    }
     if (showContract) {
-      out.push({ key: `${prefix}_contract`, label: t('reports.dataViz.seriesContract'), color: vizColors.contract, getValue: getContract });
+      out.push({
+        key: `${prefix}_contract`,
+        label: withRfqLegend(t('reports.dataViz.seriesContract'), scope),
+        color: vizColors.contract,
+        getValue: getContract,
+      });
+    }
+    if (showProduction) {
+      out.push({
+        key: `${prefix}_prod`,
+        label: withRfqLegend(t('reports.dataViz.seriesProd'), scope),
+        color: vizColors.production,
+        getValue: getProd,
+      });
     }
     if (hasCallOff && showCallOff && getCallOff) {
       out.push({
@@ -448,21 +563,21 @@ export default function AdminDataVisualization() {
     let colorIdx = 0;
     for (const line of Array.from(selectedLines)) {
       const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
-      if (showProduction) {
-        out.push({
-          key: `cmp_L${line}_prod`,
-          label: t('reports.dataViz.lineSeriesProd', { line }),
-          color: nextColor(),
-          getValue: (year) => lineLoadPercent(machinesProd, line, year),
-        });
-      }
       if (showContract) {
         out.push({
           key: `cmp_L${line}_kon`,
-          label: t('reports.dataViz.lineSeriesContract', { line }),
+          label: withRfqLegend(t('reports.dataViz.lineSeriesContract', { line }), { line }),
           color: nextColor(),
           dash: '5 3',
           getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
+        });
+      }
+      if (showProduction) {
+        out.push({
+          key: `cmp_L${line}_prod`,
+          label: withRfqLegend(t('reports.dataViz.lineSeriesProd', { line }), { line }),
+          color: nextColor(),
+          getValue: (year) => lineLoadPercent(machinesProd, line, year),
         });
       }
       if (hasCallOff && showCallOff && callOff) {
@@ -485,21 +600,21 @@ export default function AdminDataVisualization() {
       const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
       const label = machineLabel(m);
       const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
-      if (showProduction) {
-        out.push({
-          key: `cmp_M${m.machine_id}_prod`,
-          label: t('reports.dataViz.machineSeriesProd', { label }),
-          color: nextColor(),
-          getValue: (year) => machineLoadPercent(m, year),
-        });
-      }
       if (showContract && cm) {
         out.push({
           key: `cmp_M${m.machine_id}_kon`,
-          label: t('reports.dataViz.machineSeriesContract', { label }),
+          label: withRfqLegend(t('reports.dataViz.machineSeriesContract', { label }), { machineId: m.machine_id }),
           color: nextColor(),
           dash: '5 3',
           getValue: (year) => machineLoadPercent(cm, year),
+        });
+      }
+      if (showProduction) {
+        out.push({
+          key: `cmp_M${m.machine_id}_prod`,
+          label: withRfqLegend(t('reports.dataViz.machineSeriesProd', { label }), { machineId: m.machine_id }),
+          color: nextColor(),
+          getValue: (year) => machineLoadPercent(m, year),
         });
       }
       const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
@@ -530,6 +645,7 @@ export default function AdminDataVisualization() {
       showCallOff,
       callOffSeriesLabel,
       vizColors,
+      withRfqLegend,
       t,
     ]
   );
@@ -548,6 +664,7 @@ export default function AdminDataVisualization() {
       showCallOff,
       callOffSeriesLabel,
       vizColors,
+      withRfqLegend,
       t,
     ]
   );
@@ -565,6 +682,7 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyLines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        flexPercent={flexPercent}
         allowDataTable={false}
       />
     ) : null;
@@ -579,6 +697,7 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyMachines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        flexPercent={flexPercent}
         allowDataTable={false}
       />
     ) : null;
@@ -681,7 +800,8 @@ export default function AdminDataVisualization() {
       `line_${line}`,
       (year) => lineLoadPercent(machinesProd, line, year),
       (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-      (year) => callOffLoadPercent(callOff, year, { kind: 'line', line })
+      (year) => callOffLoadPercent(callOff, year, { kind: 'line', line }),
+      { line }
     );
     return (
       <CapacityTrendChart
@@ -693,6 +813,7 @@ export default function AdminDataVisualization() {
         breakdownScope={{ kind: 'line', line, fetchParams: breakdownFetchParams }}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        flexPercent={flexPercent}
       />
     );
   })
@@ -708,7 +829,8 @@ export default function AdminDataVisualization() {
         `m_${m.machine_id}`,
         (year) => machineLoadPercent(m, year),
         (year) => (cm ? machineLoadPercent(cm, year) : null),
-        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null)
+        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null),
+        { machineId: m.machine_id }
       );
       return (
         <CapacityTrendChart
@@ -719,6 +841,7 @@ export default function AdminDataVisualization() {
           breakdownScope={{ kind: 'machine', machineId: m.machine_id, fetchParams: breakdownFetchParams }}
           loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        flexPercent={flexPercent}
         />
       );
   })
@@ -819,11 +942,11 @@ export default function AdminDataVisualization() {
 
   const seriesLabels = useMemo(() => {
     const out: string[] = [];
-    if (showProduction) out.push(t('dataViz.prodCapacity', { subsystem }));
-    if (showContract) out.push(t('dataViz.contractCapacity', { subsystem }));
+    if (showContract) out.push(withRfqLegend(t('dataViz.contractCapacity', { subsystem })));
+    if (showProduction) out.push(withRfqLegend(t('dataViz.prodCapacity', { subsystem })));
     if (hasCallOff && showCallOff) out.push(callOffSeriesLabel);
     return out;
-  }, [showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, subsystem, t]);
+  }, [showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, subsystem, withRfqLegend, t]);
 
   const buildTrendSection = (
     title: string,
@@ -1217,21 +1340,21 @@ export default function AdminDataVisualization() {
       let colorIdx = 0;
       for (const line of targetLines) {
         const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
-        if (showProduction) {
-          series.push({
-            key: `pdf_L${line}_prod`,
-            label: t('reports.dataViz.lineSeriesProd', { line }),
-            color: nextColor(),
-            getValue: (year) => lineLoadPercent(machinesProd, line, year),
-          });
-        }
         if (showContract) {
           series.push({
             key: `pdf_L${line}_kon`,
-            label: t('reports.dataViz.lineSeriesContract', { line }),
+            label: withRfqLegend(t('reports.dataViz.lineSeriesContract', { line }), { line }),
             color: nextColor(),
             dash: '5 3',
             getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
+          });
+        }
+        if (showProduction) {
+          series.push({
+            key: `pdf_L${line}_prod`,
+            label: withRfqLegend(t('reports.dataViz.lineSeriesProd', { line }), { line }),
+            color: nextColor(),
+            getValue: (year) => lineLoadPercent(machinesProd, line, year),
           });
         }
         if (hasCallOff && showCallOff && callOff) {
@@ -1259,7 +1382,8 @@ export default function AdminDataVisualization() {
         prefix,
         (year) => lineLoadPercent(machinesProd, line, year),
         (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-        (year) => callOffLoadPercent(callOff, year, { kind: 'line', line })
+        (year) => callOffLoadPercent(callOff, year, { kind: 'line', line }),
+        { line }
       );
       return {
         captureKey: `line-${line}`,
@@ -1268,7 +1392,7 @@ export default function AdminDataVisualization() {
         series,
       };
     });
-  }, [pdfCaptureActive, reportOptions.lineCharts, reportOptions.lineChartsMode, reportOptions.lineChartsScope, machinesProd, contract, callOff, years, selectedLines, lines, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, t]);
+  }, [pdfCaptureActive, reportOptions.lineCharts, reportOptions.lineChartsMode, reportOptions.lineChartsScope, machinesProd, contract, callOff, years, selectedLines, lines, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, withRfqLegend, t]);
 
   const pdfMachineChartItems = useMemo(() => {
     if (!pdfCaptureActive || !reportOptions.machineCharts) return [];
@@ -1280,21 +1404,21 @@ export default function AdminDataVisualization() {
         const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
         const label = machineLabel(m);
         const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
-        if (showProduction) {
-          series.push({
-            key: `pdf_M${m.machine_id}_p`,
-            label: t('reports.dataViz.machineSeriesProd', { label }),
-            color: nextColor(),
-            getValue: (year) => machineLoadPercent(m, year),
-          });
-        }
         if (showContract && cm) {
           series.push({
             key: `pdf_M${m.machine_id}_k`,
-            label: t('reports.dataViz.machineSeriesContract', { label }),
+            label: withRfqLegend(t('reports.dataViz.machineSeriesContract', { label }), { machineId: m.machine_id }),
             color: nextColor(),
             dash: '5 3',
             getValue: (year) => machineLoadPercent(cm, year),
+          });
+        }
+        if (showProduction) {
+          series.push({
+            key: `pdf_M${m.machine_id}_p`,
+            label: withRfqLegend(t('reports.dataViz.machineSeriesProd', { label }), { machineId: m.machine_id }),
+            color: nextColor(),
+            getValue: (year) => machineLoadPercent(m, year),
           });
         }
         const com = callOff?.machines.find((x) => x.machine_id === m.machine_id);
@@ -1324,7 +1448,8 @@ export default function AdminDataVisualization() {
         `pdf_m_${m.machine_id}`,
         (year) => machineLoadPercent(m, year),
         (year) => (cm ? machineLoadPercent(cm, year) : null),
-        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null)
+        (year) => (com ? callOffLoadPercent(callOff, year, { kind: 'machine', machine: com }) : null),
+        { machineId: m.machine_id }
       );
       return {
         captureKey: `machine-${m.machine_id}`,
@@ -1333,7 +1458,7 @@ export default function AdminDataVisualization() {
         series,
       };
     });
-  }, [pdfCaptureActive, reportOptions.machineCharts, reportOptions.machineChartsMode, reportOptions.machineChartsScope, machinesProd, contract, callOff, years, selectedMachineIds, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, t]);
+  }, [pdfCaptureActive, reportOptions.machineCharts, reportOptions.machineChartsMode, reportOptions.machineChartsScope, machinesProd, contract, callOff, years, selectedMachineIds, showProduction, showContract, hasCallOff, showCallOff, callOffSeriesLabel, vizColors, withRfqLegend, t]);
 
   const tabBtn = (id: TabId, label: string) => (
     <button
@@ -1438,7 +1563,21 @@ export default function AdminDataVisualization() {
               style={{ marginLeft: 4, minWidth: 160 }}
             />
           </label>
-          <DataLoadingBadge active={loading && Boolean(prod)} />
+          <label>
+            {t('dataViz.rfqFilter')}{' '}
+            <RfqTreeMultiFilter
+              tree={rfqTree}
+              selected={rfqOperationIds}
+              onChange={setRfqOperationIds}
+              noneLabel={t('dataViz.rfqNone')}
+              clearLabel={t('common.clearFilters')}
+              emptyLabel={t('dataViz.rfqEmpty')}
+              loadingLabel={t('common.loading')}
+              searchPlaceholder={t('common.searchFilter')}
+              style={{ marginLeft: 4, minWidth: 180 }}
+            />
+          </label>
+          <DataLoadingBadge active={dataVizBusy && Boolean(prod)} label={t('common.recalculating')} />
           <button
             type="button"
             onClick={loadData}
@@ -1451,7 +1590,7 @@ export default function AdminDataVisualization() {
           <button
             type="button"
             onClick={() => setReportModalOpen(true)}
-            disabled={!yearsReady || loading || exportingPdf || !prod}
+            disabled={!yearsReady || dataVizBusy || exportingPdf || !prod}
             title={t('dataViz.reportTitle')}
             style={{
               padding: '0.45rem 1rem',
@@ -1467,14 +1606,21 @@ export default function AdminDataVisualization() {
           )}
         </div>
 
-        {tab === 'machines' && (
-          <>
-            <p style={{ margin: '10px 0 0', fontSize: 13, color: '#666', maxWidth: 820, lineHeight: 1.45 }}>
-              {t('dataViz.dimFilterHint')}
-            </p>
-            <MachineDimensionFiltersPanel value={dimFilters} onChange={setDimFilters} titleKey="dataViz.advancedFiltersMachines" />
-          </>
-        )}
+        <p style={{ margin: '10px 0 0', fontSize: 13, color: '#666', maxWidth: 820, lineHeight: 1.45 }}>
+          {t('dataViz.dimFilterHint')}
+        </p>
+        <MachineDimensionFiltersPanel
+          value={dimFilters}
+          onChange={setDimFilters}
+          titleKey="dataViz.advancedFiltersMachines"
+          hintKey="dataViz.dimFilterHint"
+          defaultOpen={hasActiveDimFilters(dimFilters)}
+          busy={dataVizBusy}
+          busyLabel={t('common.recalculating')}
+        />
+        <div style={{ marginTop: 8 }}>
+          <DataLoadingBadge active={dataVizBusy} label={t('common.recalculating')} />
+        </div>
 
         <div
           style={{
@@ -1489,20 +1635,20 @@ export default function AdminDataVisualization() {
         >
           <span style={{ fontWeight: 600, fontSize: 14 }}>{t('dataViz.seriesOnCharts')}</span>
           <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={showProduction} onChange={(e) => setShowProduction(e.target.checked)} />
-            <span
-              aria-hidden
-              style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.production, flexShrink: 0 }}
-            />
-            {t('dataViz.prodCapacity', { subsystem })}
-          </label>
-          <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <input type="checkbox" checked={showContract} onChange={(e) => setShowContract(e.target.checked)} />
             <span
               aria-hidden
               style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.contract, flexShrink: 0 }}
             />
             {t('dataViz.contractCapacity', { subsystem })}
+          </label>
+          <label style={{ fontSize: 14, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <input type="checkbox" checked={showProduction} onChange={(e) => setShowProduction(e.target.checked)} />
+            <span
+              aria-hidden
+              style={{ width: 10, height: 10, borderRadius: '50%', background: vizColors.production, flexShrink: 0 }}
+            />
+            {t('dataViz.prodCapacity', { subsystem })}
           </label>
           <label style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             {t('dataViz.callOffCompare')}
@@ -1539,6 +1685,25 @@ export default function AdminDataVisualization() {
               {callOffSeriesLabel}
             </label>
           )}
+          <label
+            style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            title={t('dataViz.flexHint')}
+          >
+            {t('dataViz.flex')}
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              inputMode="decimal"
+              placeholder="%"
+              value={flexPercentInput}
+              onChange={(e) => setFlexPercentInput(e.target.value)}
+              style={{ width: 64, padding: '4px 6px' }}
+              aria-label={t('dataViz.flex')}
+            />
+            <span style={{ color: '#666' }}>%</span>
+          </label>
         </div>
       </div>
 
@@ -1565,7 +1730,7 @@ export default function AdminDataVisualization() {
         {tabBtn('analytics', t('dataViz.tabAnalytics'))}
       </div>
 
-      <DataLoadingOverlay active={loading && Boolean(prod)}>
+      <DataLoadingOverlay active={dataVizBusy && Boolean(prod)} label={t('common.recalculating')}>
       {tab === 'lines' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 280px) 1fr', gap: '1rem', alignItems: 'start' }}>
           <div style={panelStyle}>
@@ -1633,7 +1798,7 @@ export default function AdminDataVisualization() {
                 }}
               />
             ))}
-            {!lines.length && !loading && <p style={{ fontSize: 13, color: '#888' }}>{t('dataViz.noLinesInData')}</p>}
+            {!lines.length && !dataVizBusy && <p style={{ fontSize: 13, color: '#888' }}>{t('dataViz.noLinesInData')}</p>}
           </div>
           <div data-viz-export-panel="lines">
             {selectedLines.size === 0 ? (
@@ -1814,6 +1979,7 @@ export default function AdminDataVisualization() {
               height={300}
               loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+              flexPercent={flexPercent}
             />
           ))}
           {pdfMachineChartItems.map((item) => (
@@ -1826,6 +1992,7 @@ export default function AdminDataVisualization() {
               height={300}
               loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+              flexPercent={flexPercent}
             />
           ))}
           {reportOptions.analyticsChart && (
