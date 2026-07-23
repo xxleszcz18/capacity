@@ -597,9 +597,13 @@ function formatPctRange(from: number, to: number): string {
 function CalculatorLegend({
   visual,
   t,
+  callOffMode = false,
+  scenarioActive = false,
 }: {
   visual: VisualSettings;
   t: (key: string, params?: Record<string, string | number>) => string;
+  callOffMode?: boolean;
+  scenarioActive?: boolean;
 }) {
   const sw = (bg: string, border: string, label: string) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -627,7 +631,7 @@ function CalculatorLegend({
         background: '#f8fafc',
         border: '1px solid #dbe4f0',
         borderRadius: 8,
-        maxWidth: 960,
+        maxWidth: 1100,
       }}
     >
       <h2 style={{ margin: '0 0 0.75rem', fontSize: 16, fontWeight: 600, color: '#1a365d' }}>{t('calculator.legend.title')}</h2>
@@ -652,8 +656,38 @@ function CalculatorLegend({
                 sw(visual.warn_color, '1px solid #e0e0e0', t('calculator.legend.rangeWarn', { range: formatPctRange(visual.warn_from, visual.warn_to) }))}
               {visual.danger_enabled &&
                 sw(visual.danger_color, '1px solid #e0e0e0', t('calculator.legend.rangeDanger', { range: formatPctRange(visual.danger_from, visual.danger_to) }))}
-              <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>{t('calculator.legend.cellClickHint')}</p>
+              <p style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>
+                {callOffMode
+                  ? t('calculator.legend.cellClickHintCallOff')
+                  : t('calculator.legend.cellClickHint')}
+              </p>
             </>
+          )}
+          {callOffMode && (
+            <div style={{ marginTop: 12 }}>
+              <h3 style={{ margin: '0 0 0.5rem', fontSize: 14, fontWeight: 600, color: '#37474f' }}>
+                {t('calculator.legend.dualTitle')}
+              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div
+                  aria-hidden
+                  style={{
+                    width: 40,
+                    height: 40,
+                    flexShrink: 0,
+                    borderRadius: 4,
+                    overflow: 'hidden',
+                    border: '1px solid #e0e0e0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                  }}
+                >
+                  <div style={{ flex: 1, background: visual.ok_color, borderBottom: '1px solid #e0e0e0' }} />
+                  <div style={{ flex: 1, background: visual.warn_color, borderTop: '1px solid #ce93d8' }} />
+                </div>
+                <span style={{ fontSize: 13, color: '#333', lineHeight: 1.35 }}>{t('calculator.legend.dualExplain')}</span>
+              </div>
+            </div>
           )}
         </div>
 
@@ -683,6 +717,12 @@ function CalculatorLegend({
               </div>
             </>
           )}
+          <h3 style={{ margin: '12px 0 0.5rem', fontSize: 14, fontWeight: 600, color: '#37474f' }}>
+            {t('calculator.legend.periodTitle')}
+          </h3>
+          <p style={{ fontSize: 12, color: '#666', margin: '0 0 8px', lineHeight: 1.4 }}>{t('calculator.legend.periodExpand')}</p>
+          {sw('#f5f5f5', `2px solid ${visual.period_month_frame_color ?? '#3b82f6'}`, t('calculator.legend.periodMonth'))}
+          {sw('#f5f5f5', `2px solid ${visual.period_week_frame_color ?? '#6366f1'}`, t('calculator.legend.periodWeek'))}
         </div>
 
         <div>
@@ -704,6 +744,22 @@ function CalculatorLegend({
               {visual.show_rfq_badge ? t('calculator.legend.rfqOn') : t('calculator.legend.rfqOff')}
             </span>
           </div>
+          {(visual.show_sop_marker || visual.show_eop_marker) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10, fontSize: 13 }}>
+              {visual.show_sop_marker && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span className="calc-sop-marker">SOP</span>
+                  {t('calculator.legend.sopHint')}
+                </span>
+              )}
+              {visual.show_eop_marker && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span className="calc-eop-marker">EOP</span>
+                  {t('calculator.legend.eopHint')}
+                </span>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', fontSize: 13, color: '#333' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 22, height: 18, background: '#eef5ff', border: '1px solid #e0e0e0', borderRadius: 2 }} />
@@ -721,7 +777,15 @@ function CalculatorLegend({
               {!visual.colorize_avg_row ? t('calculator.legend.colorOff') : ''}
             </span>
           </div>
-          <p style={{ fontSize: 12, color: '#666', margin: '10px 0 0', lineHeight: 1.4 }}>{t('calculator.legend.footerContract')}</p>
+          <p style={{ fontSize: 12, color: '#666', margin: '8px 0 0', lineHeight: 1.4 }}>{t('calculator.legend.maxTypeAvgExplain')}</p>
+          <p style={{ fontSize: 12, color: '#666', margin: '10px 0 0', lineHeight: 1.4 }}>{t('calculator.legend.hoverName')}</p>
+          <p style={{ fontSize: 12, color: '#666', margin: '6px 0 0', lineHeight: 1.4 }}>
+            {callOffMode
+              ? t('calculator.legend.footerCallOff')
+              : scenarioActive
+                ? t('calculator.legend.footerScenario')
+                : t('calculator.legend.footerContract')}
+          </p>
         </div>
       </div>
     </section>
@@ -809,7 +873,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   const callOffMode = callOffComparisonId != null && Number.isFinite(callOffComparisonId) && callOffComparisonId > 0;
   const { t, te, locale } = useI18n();
   const { hasPermission, hasAnyPermission } = useAuth();
-  const canDownloadReports = hasPermission('calculator.download');
+  const canDownloadReports = callOffMode
+    ? hasPermission('call_offs.download')
+    : hasPermission('calculator.download');
   const canAllocate = hasPermission('projects.edit');
   const tableCanAllocate = canAllocate && !callOffMode;
   const canViewMachineDetails = hasAnyPermission(['machines.details', 'machines.edit']);
@@ -1976,12 +2042,19 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     setReportGenerating(true);
     try {
       const selected = reportTargetMachines;
+      const yearLoad = (m: any, y: number) => Number(m.years?.[y]?.load_percent ?? 0);
+      const yearCallOffLoad = (m: any, y: number) => Number(m.years?.[y]?.call_off_load_percent ?? 0);
+      const dualPct = (base: number, co: number) => `${Math.round(base)}% / ${Math.round(co)}%`;
       const summary = years.map((y) => {
-        const sum = selected.reduce((acc: number, m: any) => acc + Number(m.years?.[y]?.load_percent ?? 0), 0);
+        const sum = selected.reduce((acc: number, m: any) => acc + yearLoad(m, y), 0);
         const avg = selected.length > 0 ? sum / selected.length : 0;
-        const maxTypeAvg =
-          maxTypeAverageLoad(selected, (m: any) => Number(m.years?.[y]?.load_percent ?? 0)) ?? 0;
-        return { y, sum, avg, maxTypeAvg };
+        const maxTypeAvg = maxTypeAverageLoad(selected, (m: any) => yearLoad(m, y)) ?? 0;
+        const sumCo = callOffMode ? selected.reduce((acc: number, m: any) => acc + yearCallOffLoad(m, y), 0) : 0;
+        const avgCo = callOffMode && selected.length > 0 ? sumCo / selected.length : 0;
+        const maxTypeAvgCo = callOffMode
+          ? maxTypeAverageLoad(selected, (m: any) => yearCallOffLoad(m, y)) ?? 0
+          : 0;
+        return { y, sum, avg, maxTypeAvg, sumCo, avgCo, maxTypeAvgCo };
       });
       const settingsCache = new Map<number, any>();
       const getSettingsForYear = async (year: number) => {
@@ -2028,34 +2101,79 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           )
         : [];
 
+      type ReportDetailBd = {
+        project_label?: string;
+        detail_label: string;
+        contribution_percent: number;
+        share_percent?: number;
+        volume_quantity?: number;
+      };
       const operationRows: any[] = [];
+      const callOffDetailRows: any[] = [];
       if (reportIncludeOperationDetails && selected.length > 0) {
-        for (const m of selected) {
-          for (const y of years) {
-            const settings = await getSettingsForYear(y);
-            const workWeeks = Number(settings?.working_weeks_per_year ?? 48);
-            const ops = await api.machines.operations(Number(m.machine_id), { year: y });
-            for (const op of ops) {
-              const baseWeekly = Math.round(volumeToWeeklyClient(Number(op.volume_value ?? 0), (op.volume_unit ?? 'annual') as 'annual' | 'monthly' | 'weekly', workWeeks) * 1e6) / 1e6;
-              operationRows.push({
-                machine_id: m.machine_id,
-                sap_number: m.sap_number ?? '',
-                internal_number: m.internal_number ?? '',
-                year: y,
-                operation_id: op.id ?? '',
-                project_id: op.project_id ?? '',
-                project_name: op.project_name ?? '',
-                client: op.client ?? '',
-                part_designation: op.part_designation ?? '',
-                phase_name: op.phase_name ?? '',
-                cycle_time_seconds: op.cycle_time_seconds ?? '',
-                volume_value_base: baseWeekly,
-                volume_unit_base: 'weekly',
-                effective_volume_value: op.effective_volume_value ?? '',
-                effective_volume_unit: op.effective_volume_unit ?? '',
-                effective_volume_weekly: op.effective_volume_weekly ?? '',
-                effective_volume_source: op.effective_volume_source ?? '',
-              });
+        if (callOffMode) {
+          for (const m of selected) {
+            for (const y of years) {
+              const cell = m.years?.[y];
+              const base = (cell?.detail_breakdown ?? []) as ReportDetailBd[];
+              const co = (cell?.call_off_detail_breakdown ?? []) as ReportDetailBd[];
+              const labels = new Set<string>([
+                ...base.map((b) => b.detail_label),
+                ...co.map((c) => c.detail_label),
+              ]);
+              for (const label of labels) {
+                const b = base.find((x) => x.detail_label === label);
+                const c = co.find((x) => x.detail_label === label);
+                callOffDetailRows.push({
+                  machine_id: m.machine_id,
+                  sap_number: m.sap_number ?? '',
+                  internal_number: m.internal_number ?? '',
+                  year: y,
+                  project_name: c?.project_label ?? b?.project_label ?? '',
+                  part_designation: label,
+                  base_contrib: b?.contribution_percent ?? '',
+                  call_off_contrib: c?.contribution_percent ?? '',
+                  base_volume: b?.volume_quantity ?? '',
+                  call_off_volume: c?.volume_quantity ?? '',
+                });
+              }
+            }
+          }
+        } else {
+          for (const m of selected) {
+            for (const y of years) {
+              const settings = await getSettingsForYear(y);
+              const workWeeks = Number(settings?.working_weeks_per_year ?? 48);
+              const ops = await api.machines.operations(Number(m.machine_id), { year: y });
+              for (const op of ops) {
+                const baseWeekly =
+                  Math.round(
+                    volumeToWeeklyClient(
+                      Number(op.volume_value ?? 0),
+                      (op.volume_unit ?? 'annual') as 'annual' | 'monthly' | 'weekly',
+                      workWeeks
+                    ) * 1e6
+                  ) / 1e6;
+                operationRows.push({
+                  machine_id: m.machine_id,
+                  sap_number: m.sap_number ?? '',
+                  internal_number: m.internal_number ?? '',
+                  year: y,
+                  operation_id: op.id ?? '',
+                  project_id: op.project_id ?? '',
+                  project_name: op.project_name ?? '',
+                  client: op.client ?? '',
+                  part_designation: op.part_designation ?? '',
+                  phase_name: op.phase_name ?? '',
+                  cycle_time_seconds: op.cycle_time_seconds ?? '',
+                  volume_value_base: baseWeekly,
+                  volume_unit_base: 'weekly',
+                  effective_volume_value: op.effective_volume_value ?? '',
+                  effective_volume_unit: op.effective_volume_unit ?? '',
+                  effective_volume_weekly: op.effective_volume_weekly ?? '',
+                  effective_volume_source: op.effective_volume_source ?? '',
+                });
+              }
             }
           }
         }
@@ -2097,26 +2215,73 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         { key: 'oee_default', label: t('reports.calculator.settingsDefaultOee') },
         { key: 'startup_shutdown_seconds', label: t('reports.calculator.settingsStartup') },
       ].filter((c) => c.key === 'year' || settingsRows.some((r) => hasVal(r[c.key])));
+      const reportStamp = reportFileStamp();
+      const reportFileBase = callOffMode
+        ? `raport_calloffs_${reportStamp}`
+        : `raport_kalkulator_${reportStamp}`;
+      const callOffInfoRows: [string, string][] = callOffMode
+        ? [
+            [t('reports.calculator.callOffComparison'), callOffMeta?.name ?? String(callOffComparisonId ?? '')],
+            [t('reports.calculator.callOffFile'), callOffMeta?.source_filename ?? '—'],
+            [
+              t('reports.calculator.callOffPeriod'),
+              callOffMeta?.date_from && callOffMeta?.date_to
+                ? `${String(callOffMeta.date_from).slice(0, 10)} – ${String(callOffMeta.date_to).slice(0, 10)}`
+                : '—',
+            ],
+            [t('reports.calculator.dualLoadLegend'), t('reports.calculator.dualLoadLegendValue')],
+          ]
+        : [];
 
       if (reportFormat === 'excel') {
         const wb = XLSX.utils.book_new();
+        const yearHeaders = callOffMode
+          ? years.flatMap((y) => [
+              `${y} ${t('reports.calculator.colLoadBase')}`,
+              `${y} ${t('reports.calculator.colLoadCallOff')}`,
+            ])
+          : years.map((y) => String(y));
         const calculatorAoa: any[][] = [
-          [t('reports.calculator.colSap'), t('reports.calculator.colNumber'), t('reports.calculator.colType'), ...years.map((y) => String(y))],
+          [t('reports.calculator.colSap'), t('reports.calculator.colNumber'), t('reports.calculator.colType'), ...yearHeaders],
           ...selected.map((m: any) => [
             excelExportCell(m.sap_number ?? '') ?? '-',
             excelExportCell(m.internal_number ?? '') ?? '-',
             m.type ?? '-',
-            ...years.map((y) => Math.round(Number(m.years?.[y]?.load_percent ?? 0))),
+            ...(callOffMode
+              ? years.flatMap((y) => [Math.round(yearLoad(m, y)), Math.round(yearCallOffLoad(m, y))])
+              : years.map((y) => Math.round(yearLoad(m, y)))),
           ]),
-          [t('reports.calculator.sumRow'), '', '', ...summary.map((s) => Math.round(s.sum))],
-          [t('reports.calculator.avgRow'), '', '', ...summary.map((s) => Math.round(s.avg))],
-          [t('reports.calculator.maxTypeAvgRow'), '', '', ...summary.map((s) => Math.round(s.maxTypeAvg))],
+          [
+            t('reports.calculator.sumRow'),
+            '',
+            '',
+            ...(callOffMode
+              ? summary.flatMap((s) => [Math.round(s.sum), Math.round(s.sumCo)])
+              : summary.map((s) => Math.round(s.sum))),
+          ],
+          [
+            t('reports.calculator.avgRow'),
+            '',
+            '',
+            ...(callOffMode
+              ? summary.flatMap((s) => [Math.round(s.avg), Math.round(s.avgCo)])
+              : summary.map((s) => Math.round(s.avg))),
+          ],
+          [
+            t('reports.calculator.maxTypeAvgRow'),
+            '',
+            '',
+            ...(callOffMode
+              ? summary.flatMap((s) => [Math.round(s.maxTypeAvg), Math.round(s.maxTypeAvgCo)])
+              : summary.map((s) => Math.round(s.maxTypeAvg))),
+          ],
         ];
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(calculatorAoa), t('reports.calculator.sheetCalculator'));
 
         const infoAoa: any[][] = [
           [t('reports.calculator.infoPrintDate'), localeDateTime(locale)],
           [t('reports.calculator.infoYearRange'), `${effectiveYearFrom}-${effectiveYearTo}`],
+          ...callOffInfoRows,
           [t('reports.calculator.filterClient'), clientLbl],
           [t('reports.calculator.filterMachineType'), typeLbl],
           [t('reports.calculator.filterMachineStatus'), calculatorMachineStatusLabels(machineStatusFilter, t)],
@@ -2155,6 +2320,35 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             ]),
           ];
           XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(metaAoa), t('reports.calculator.sheetMachineParams'));
+        }
+        if (callOffDetailRows.length > 0) {
+          const detailsAoa: any[][] = [
+            [
+              t('reports.calculator.colMachineId'),
+              t('reports.calculator.colSap'),
+              t('reports.calculator.colNumber'),
+              t('reports.calculator.colYear'),
+              t('reports.calculator.colProject'),
+              t('reports.calculator.colPart'),
+              t('reports.calculator.baseContribPct'),
+              t('reports.calculator.callOffContribPct'),
+              t('reports.calculator.baseVolumeQty'),
+              t('reports.calculator.callOffVolumeQty'),
+            ],
+            ...callOffDetailRows.map((r) => [
+              excelExportCell(r.machine_id),
+              excelExportCell(r.sap_number),
+              excelExportCell(r.internal_number),
+              excelExportCell(r.year),
+              r.project_name,
+              r.part_designation,
+              excelExportCell(r.base_contrib),
+              excelExportCell(r.call_off_contrib),
+              excelExportCell(r.base_volume),
+              excelExportCell(r.call_off_volume),
+            ]),
+          ];
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detailsAoa), t('reports.calculator.sheetDetails'));
         }
         if (operationRows.length > 0) {
           const opsAoa: any[][] = [
@@ -2207,36 +2401,52 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(settingsAoa), t('reports.calculator.sheetSettings'));
         }
 
-        XLSX.writeFile(wb, `raport_kalkulator_${reportFileStamp()}.xlsx`);
+        XLSX.writeFile(wb, `${reportFileBase}.xlsx`);
       } else {
         const logoDataUrl = await fetchPdfLogoDataUrl();
         const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
         addPdfHeaderLogo(doc, logoDataUrl);
         doc.setFontSize(16);
-        doc.text(pdfSafe(t('reports.calculator.reportTitle')), 40, 36);
+        doc.text(
+          pdfSafe(callOffMode ? t('reports.calculator.reportTitleCallOff') : t('reports.calculator.reportTitle')),
+          40,
+          36
+        );
         doc.setFontSize(10);
-        doc.text(pdfSafe(`${t('reports.calculator.printDate')}: ${localeDateTime(locale)}`), 40, 54);
+        let pdfLineY = 54;
+        doc.text(pdfSafe(`${t('reports.calculator.printDate')}: ${localeDateTime(locale)}`), 40, pdfLineY);
+        pdfLineY += 14;
+        if (callOffMode) {
+          for (const [k, v] of callOffInfoRows) {
+            doc.text(pdfSafe(`${k}: ${v}`), 40, pdfLineY);
+            pdfLineY += 12;
+          }
+        }
         doc.text(
           pdfSafe(
             `${t('reports.calculator.yearRange')}: ${effectiveYearFrom}-${effectiveYearTo} | ${t('reports.calculator.client')}: ${clientLbl} | ${t('reports.calculator.type')}: ${typeLbl} | ${t('reports.calculator.machineStatus')}: ${calculatorMachineStatusLabels(machineStatusFilter, t)} | ${t('reports.calculator.lineNumbers')}: ${lineLbl} | ${t('reports.calculator.filterDimensions')}: ${dimLbl || '—'} | ${t('reports.calculator.machineNumbers')}: ${machinesFilter || '-'}`,
           ),
           40,
-          68
+          pdfLineY
         );
+        pdfLineY += 14;
         doc.text(
           pdfSafe(
             `${t('reports.calculator.reportMode')}: ${reportScope === 'filtered' ? t('reports.calculator.modeFiltered') : t('reports.calculator.modeSelected')} | ${t('reports.calculator.machineCount')}: ${selected.length}`,
           ),
           40,
-          82
+          pdfLineY
         );
+        const tableStartY = pdfLineY + 12;
 
         const reportPdfRows = selected;
         const machineRowsReport = reportPdfRows.map((m: any) => [
           pdfSafe(m.sap_number ?? '-'),
           pdfSafe(String(m.internal_number ?? '-')),
           pdfSafe(String(m.type ?? '-')),
-          ...years.map((y) => `${Number(m.years?.[y]?.load_percent ?? 0)}%`),
+          ...years.map((y) =>
+            callOffMode ? dualPct(yearLoad(m, y), yearCallOffLoad(m, y)) : `${Number(yearLoad(m, y))}%`
+          ),
         ]);
         const sumRowReportPdf: any[] = [
           {
@@ -2250,7 +2460,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             },
           },
           ...summary.map((s) => ({
-            content: `${Math.round(s.sum)}%`,
+            content: callOffMode ? dualPct(s.sum, s.sumCo) : `${Math.round(s.sum)}%`,
             styles: {
               fontStyle: 'bold' as const,
               halign: 'center' as const,
@@ -2274,7 +2484,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             },
           },
           ...summary.map((s) => ({
-            content: `${Math.round(s.avg)}%`,
+            content: callOffMode ? dualPct(s.avg, s.avgCo) : `${Math.round(s.avg)}%`,
             styles: {
               fontStyle: 'bold' as const,
               halign: 'center' as const,
@@ -2298,7 +2508,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             },
           },
           ...summary.map((s) => ({
-            content: `${Math.round(s.maxTypeAvg)}%`,
+            content: callOffMode ? dualPct(s.maxTypeAvg, s.maxTypeAvgCo) : `${Math.round(s.maxTypeAvg)}%`,
             styles: {
               fontStyle: 'bold' as const,
               halign: 'center' as const,
@@ -2313,13 +2523,13 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
 
         const reportPdfLayout = calculatorPdfTableLayout(doc, years.length);
         autoTable(doc, {
-          startY: 94,
+          startY: tableStartY,
           margin: { left: reportPdfLayout.margin, right: reportPdfLayout.margin },
           tableWidth: reportPdfLayout.tableWidth,
           head: [[pdfSafe(t('reports.calculator.colSap')), pdfSafe(t('reports.calculator.colNumber')), pdfSafe(t('reports.calculator.colType')), ...years.map((y) => String(y))]],
           body: [...machineRowsReport, sumRowReportPdf, avgRowReportPdf, maxTypeAvgRowReportPdf],
           theme: 'grid',
-          styles: { fontSize: 7, cellPadding: 3, lineColor: [224, 224, 224], lineWidth: 0.1, fillColor: [255, 255, 255] },
+          styles: { fontSize: callOffMode ? 6 : 7, cellPadding: 3, lineColor: [224, 224, 224], lineWidth: 0.1, fillColor: [255, 255, 255] },
           headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
           alternateRowStyles: { fillColor: [255, 255, 255] },
           columnStyles: reportPdfLayout.columnStyles,
@@ -2334,7 +2544,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             const c = data.column.index;
             if (c >= 3 && c < 3 + years.length) {
               const y = years[c - 3];
-              const pct = Number(reportPdfRows[data.row.index]?.years?.[y]?.load_percent ?? 0);
+              const pct = yearLoad(reportPdfRows[data.row.index], y);
               data.cell.styles.fillColor = hexToRgbForPdf(loadColor(pct, visualSettings));
               data.cell.styles.halign = 'center';
             } else if (c < 3) {
@@ -2344,7 +2554,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           },
         });
 
-        let nextY = ((doc as any).lastAutoTable?.finalY ?? 94) + 14;
+        let nextY = ((doc as any).lastAutoTable?.finalY ?? tableStartY) + 14;
 
         if (settingsRows.length > 0) {
           if (nextY > 500) {
@@ -2387,7 +2597,35 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           nextY = ((doc as any).lastAutoTable?.finalY ?? nextY) + 14;
         }
 
-        if (operationRows.length > 0) {
+        if (callOffDetailRows.length > 0) {
+          doc.addPage();
+          doc.setFontSize(11);
+          doc.text(pdfSafe(t('reports.calculator.operationsDetailCallOff')), 40, 36);
+          autoTable(doc, {
+            startY: 42,
+            head: [[
+              pdfSafe(t('reports.calculator.colNumber')),
+              pdfSafe(t('reports.calculator.colYear')),
+              pdfSafe(t('reports.calculator.colProject')),
+              pdfSafe(t('reports.calculator.colPart')),
+              pdfSafe(t('reports.calculator.baseContribPct')),
+              pdfSafe(t('reports.calculator.callOffContribPct')),
+              pdfSafe(t('reports.calculator.baseVolumeQty')),
+              pdfSafe(t('reports.calculator.callOffVolumeQty')),
+            ]],
+            body: callOffDetailRows.map((r) => [
+              pdfSafe(r.internal_number),
+              String(r.year),
+              pdfSafe(r.project_name),
+              pdfSafe(r.part_designation),
+              String(r.base_contrib),
+              String(r.call_off_contrib),
+              String(r.base_volume),
+              String(r.call_off_volume),
+            ]),
+            styles: { fontSize: 6 },
+          });
+        } else if (operationRows.length > 0) {
           doc.addPage();
           doc.setFontSize(11);
           doc.text(pdfSafe(t('reports.calculator.operationsDetail')), 40, 36);
@@ -2414,7 +2652,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           });
         }
 
-        doc.save(`raport_kalkulator_${reportFileStamp()}.pdf`);
+        doc.save(`${reportFileBase}.pdf`);
       }
 
       setReportModalOpen(false);
@@ -2453,17 +2691,26 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           )}
         </h1>
         <div className="calculator-page-actions">
-          {canDownloadReports && !callOffMode && (
-          <button type="button" onClick={() => setReportModalOpen(true)} className="calculator-primary-btn">{t('calculator.report')}</button>
+          {canDownloadReports && (
+            <button
+              type="button"
+              onClick={() => setReportModalOpen(true)}
+              className="calculator-primary-btn"
+              disabled={loading || !data || filteredMachines.length === 0}
+            >
+              {t('calculator.report')}
+            </button>
           )}
-          <button
-            type="button"
-            className="calculator-primary-btn"
-            onClick={exportCalculatorViewPdf}
-            disabled={loading || viewPdfGenerating || !data || filteredMachines.length === 0 || callOffMode}
-          >
-            {viewPdfGenerating ? t('common.generating') : t('calculator.printPdf')}
-          </button>
+          {!callOffMode && (
+            <button
+              type="button"
+              className="calculator-primary-btn"
+              onClick={exportCalculatorViewPdf}
+              disabled={loading || viewPdfGenerating || !data || filteredMachines.length === 0}
+            >
+              {viewPdfGenerating ? t('common.generating') : t('calculator.printPdf')}
+            </button>
+          )}
         </div>
       </div>
       {scenarioCallOffComparisonId != null && scenarioCallOffComparisonId > 0 && scenarioCallOffMeta && (
@@ -2649,7 +2896,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       {reportModalOpen && (
         <div onMouseDown={(e) => { if (e.target === e.currentTarget) setReportModalOpen(false); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div onMouseDown={(e) => e.stopPropagation()} style={{ background: 'white', width: 'min(920px, 94vw)', maxHeight: '90vh', overflow: 'auto', borderRadius: 10, padding: '1rem 1.25rem' }}>
-            <h3 style={{ marginTop: 0 }}>{t('reports.calculator.configTitle')}</h3>
+            <h3 style={{ marginTop: 0 }}>
+              {callOffMode ? t('reports.calculator.configTitleCallOff') : t('reports.calculator.configTitle')}
+            </h3>
             <div style={{ marginBottom: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <label><input type="radio" name="reportFormat" checked={reportFormat === 'pdf'} onChange={() => setReportFormat('pdf')} /> {t('reports.calculator.formatPdf')}</label>
               <label><input type="radio" name="reportFormat" checked={reportFormat === 'excel'} onChange={() => setReportFormat('excel')} /> {t('reports.calculator.formatExcel')}</label>
@@ -2683,11 +2932,13 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                   checked={reportIncludeOperationDetails}
                   onChange={(e) => setReportIncludeOperationDetails(e.target.checked)}
                 />{' '}
-                {t('reports.calculator.includeOperations')}
+                {callOffMode ? t('reports.calculator.includeDetailsCallOff') : t('reports.calculator.includeOperations')}
               </label>
               <label><input type="checkbox" checked={reportIncludeSystemSettings} onChange={(e) => setReportIncludeSystemSettings(e.target.checked)} /> {t('reports.calculator.includeSettings')}</label>
             </div>
-            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#666' }}>{t('reports.calculator.configHint')}</p>
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#666' }}>
+              {callOffMode ? t('reports.calculator.configHintCallOff') : t('reports.calculator.configHint')}
+            </p>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button type="button" onClick={() => setReportModalOpen(false)} style={{ padding: '0.45rem 0.8rem', background: '#9e9e9e', color: 'white', border: 'none', borderRadius: 6 }}>{t('common.cancel')}</button>
               <button type="button" onClick={generateReport} disabled={reportGenerating} style={{ padding: '0.45rem 0.8rem', background: '#1976d2', color: 'white', border: 'none', borderRadius: 6 }}>
@@ -2827,8 +3078,14 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
               return (
               <Fragment key={m.machine_id}>
               <tr>
-                <td style={{ width: pinnedSapWidth, minWidth: pinnedSapWidth, maxWidth: pinnedSapWidth, padding: '0.75rem', position: 'sticky', left: 0, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.sap_number ?? '-'}</td>
                 <td
+                  title={String(m.sap_number ?? '-')}
+                  style={{ width: pinnedSapWidth, minWidth: pinnedSapWidth, maxWidth: pinnedSapWidth, padding: '0.75rem', position: 'sticky', left: 0, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {m.sap_number ?? '-'}
+                </td>
+                <td
+                  title={String(m.internal_number ?? '-')}
                   style={{
                     width: pinnedNumberWidth,
                     minWidth: pinnedNumberWidth,
@@ -2867,7 +3124,12 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                     </span>
                   )}
                 </td>
-                <td style={{ width: pinnedTypeWidth, minWidth: pinnedTypeWidth, maxWidth: pinnedTypeWidth, padding: '0.75rem', position: 'sticky', left: pinnedSapWidth + pinnedNumberWidth, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.type}</td>
+                <td
+                  title={String(m.type ?? '')}
+                  style={{ width: pinnedTypeWidth, minWidth: pinnedTypeWidth, maxWidth: pinnedTypeWidth, padding: '0.75rem', position: 'sticky', left: pinnedSapWidth + pinnedNumberWidth, background: 'white', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
+                  {m.type}
+                </td>
                 {timelineColumns.map((col) => {
                   const yearForCell = col.year;
                   const cell = m.years?.[yearForCell];
@@ -3355,7 +3617,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       {!calculatorBusy && data && allMachines.length > 0 && filteredMachines.length === 0 && (
         <p style={{ marginTop: '1rem', color: '#666' }}>{t('calculator.noMachinesFilter')}</p>
       )}
-      <CalculatorLegend visual={visualSettings} t={t} />
+      <CalculatorLegend visual={visualSettings} t={t} callOffMode={callOffMode} scenarioActive={scenarioActive} />
       </DataLoadingOverlay>
       {allocationModal && data && tableCanAllocate && (
         <AllocationModal

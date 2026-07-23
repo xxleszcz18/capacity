@@ -12,8 +12,8 @@ type Props = {
   onChange: (next: DimFiltersState) => void;
   /** Tekst nagłówka; domyślnie z kalkulatora. */
   titleKey?: string;
-  /** Hint pod polami (np. dataViz.dimFilterHint). */
-  hintKey?: string;
+  /** Hint pod polami; `null` = bez podpowiedzi. */
+  hintKey?: string | null;
   /** Otwórz panel przy montowaniu / gdy filtry aktywne. */
   defaultOpen?: boolean;
   busy?: boolean;
@@ -108,7 +108,7 @@ export default function MachineDimensionFiltersPanel({
               />
             </label>
           ))}
-          <p className="calculator-dim-filter-hint">{t(hintKey)}</p>
+          {hintKey ? <p className="calculator-dim-filter-hint">{t(hintKey)}</p> : null}
         </div>
       )}
     </div>

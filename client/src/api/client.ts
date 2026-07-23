@@ -1543,6 +1543,7 @@ export const api = {
               alternative_border?: string;
               has_rfq?: boolean;
               detail_breakdown?: unknown[];
+              call_off_detail_breakdown?: unknown[];
             }
           >;
         }[];

@@ -1,16 +1,34 @@
 # Capacity Planning Application
 
-Aplikacja do planowania i obliczania capacity dla maszyn oraz linii (gniazd).  
+Aplikacja Autoneum do planowania i analizy obciążenia linii oraz maszyn.  
 Stack: **React (TypeScript)** + **Express (TypeScript)** + **SQLite (sql.js)**.
 
-## Funkcje
+Pełna instrukcja w aplikacji: **Administracja → Instrukcja obsługi** (PL / EN / DE).
 
-- **Ustawienia** – dni robocze, OEE, czas zmiany, czas uruchomienie/zakończenie (per rok); przelicz z miesięcy.
-- **Maszyny** – CRUD, typ, SAP, OEE nadpisany, status, lokalizacja; alternatywy; projekty; zajętość.
-- **Gniazda** – definicja zespołów maszyn (nests), przypisywanie maszyn do gniazd.
-- **Projekty** – klient, nazwa, SOP/EOP, status (aktywny/nieaktywny/RFQ); części; operacje (maszyna, faza, cykl, wolumen, OEE, % capacity, OPF); notatki.
-- **Kalkulator** – tabela capacity wg lat (obciążenie %), filtry: typ maszyny, numery maszyn (oddzielone przecinkiem); szczegóły → maszyna.
-- **Alokacja** – wykrywanie przeciążonych maszyn; propozycja wolnych maszyn (z gniazda lub z listy alternatyw, opcjonalnie ta sama lokalizacja); wykonanie alokacji (przeniesienie części wolumenu operacji na wybraną maszynę).
+## Funkcje (przegląd)
+
+| Obszar | Opis |
+|--------|------|
+| **Logowanie / RBAC** | Konta, role, uprawnienia do ekranów i API |
+| **Kalkulator** | Obciążenie % w latach / miesiącach / tygodniach (ISO); filtry; suma / średnia / **max średnia wg typu**; alokacja wolumenów; eksport PDF/Excel |
+| **Maszyny** | CRUD, wymiary, status, OEE, alternatywy, gniazda, import Excel |
+| **Projekty** | Detale, operacje, wolumeny prod./kontraktowe, SOP/EOP, sety, notatki, załączniki |
+| **Detale** | Katalog SAP / Alias / Free text, walidacja duplikatów |
+| **Scenariusze** | Snapshot „co jeśli”, edycja kopii, źródło z produkcji / scenariusza / Call offs, apply do produkcji |
+| **Call offs** | Import Sales Forecast (SAP), mapowanie, kalkulator dualny, serie w wizualizacji |
+| **Wizualizacja danych** | Trendy linii/maszyn, analityka, multiwybór scenariuszy, Call offs, Flex ±%, filtry wymiarów, PDF/Excel |
+| **Administracja** | Ustawienia bazy (dni robocze Capacity/OCU, słowniki, wizualne), backup/import, użytkownicy, historia zmian |
+
+### Tryby w nagłówku
+
+- **Wolumeny kontraktowe** — kalkulator używa wolumenów kontraktowych (fallback na produkcyjne).
+- **Wersja produkcyjna / Scenariusze / Call offs** — przestrzenie robocze (różne źródło danych).
+- **Capacity / OCU** — osobny profil parametrów (OEE, dni robocze), ta sama formuła obciążenia.
+- **Język** — PL / EN / DE.
+
+### Agregacja (kalkulator + wizualizacja)
+
+Dla grupy maszyn: średnia `%` w ramach każdego **typu**, potem **maksimum** z tych średnich (wiersz „Max średnia wg typu” oraz serie linii w Data Viz).
 
 ## Uruchomienie
 
@@ -26,63 +44,57 @@ cd server && npm install && cd ..
 cd client && npm install && cd ..
 ```
 
-### Serwer (API + baza)
-
-```bash
-cd server
-npm run dev
-```
-
-Serwer nasłuchuje na `http://localhost:3001`. Baza SQLite jest zapisywana w pliku `server/capacity.db` (tworzony przy pierwszym uruchomieniu; migracje wykonują się automatycznie).
-
-### Klient (React)
-
-```bash
-cd client
-npm run dev
-```
-
-Aplikacja jest dostępna pod `http://localhost:5173`. Proxy przekierowuje `/api` na `http://localhost:3001`.
-
-### Jednocześnie (z katalogu głównego)
+### Tryb deweloperski
 
 ```bash
 npm run dev
 ```
 
-Uruchamia serwer i klienta równolegle (wymaga `concurrently` w root: `npm install`).
+- API: `http://localhost:3001`
+- UI (Vite): `http://localhost:5173` (proxy `/api` → 3001)
+- Baza: `server/capacity.db` (migracje przy starcie)
+
+### Budowa produkcyjna
+
+```bash
+npm run build
+npm start
+```
+
+Serwer serwuje UI z `client/dist`. Po aktualizacji kodu na drugim komputerze: `git pull` → `npm run build` → restart `npm start` → twarde odświeżenie (Ctrl+F5).
+
+## Przepływy (skrót)
+
+1. **Master data** → słowniki i maszyny → projekty z operacjami i wolumenami → Kalkulator.  
+2. **Alokacja** → przeciążona maszyna → kandydaci (gniazdo / alternatywy) → przeniesienie wolumenu.  
+3. **Scenariusz** → utwórz snapshot → edytuj kopię → porównaj w Data Viz → opcjonalnie apply do produkcji.  
+4. **Call offs** → plik SalesFcst → mapowanie SAP → kalkulator dualny / serie na wykresach.  
+5. **Wizualizacja** → serie bazowe + Call offs + multi-scenariusze → Flex → eksport.
+
+Szczegóły wzorów (dostępność, wolumen tygodniowy, obciążenie, SOP/EOP, max wg typu): instrukcja w aplikacji, sekcja „Wzory obliczeniowe”, oraz `server/CAPACITY_LOGIC.md`.
 
 ## API (skrót)
 
-- `GET/POST/PUT/DELETE /api/settings` – dni robocze (konfiguracja roczna)
-- `POST /api/settings/from-months` – przelicz sumę dni z miesięcy I–XII
-- `GET/POST/PUT/DELETE /api/machines` – maszyny; `GET /api/machines/:id/operations` – operacje na maszynie
-- `GET/POST/PUT/DELETE /api/nests`, `POST /api/nests/:id/machines`, `DELETE /api/nests/:id/machines/:machineId`
-- `GET /api/alternatives/machine/:machineId`, `POST /api/alternatives`, `DELETE /api/alternatives/:machineId/:alternativeMachineId`
-- `GET/POST/PUT/DELETE /api/projects` – projekty, części, operacje, notatki (podścieżki jak w planie)
-- `GET /api/capacity/calculator?yearFrom=&yearTo=&type=&machines=` – dane do kalkulatora
-- `GET /api/capacity/machine/:machineId`, `GET /api/capacity/year/:year`, `GET /api/capacity/nests/year/:year`
-- `GET /api/allocation/overloaded?year=&threshold=`
-- `GET /api/allocation/candidates/:machineId?year=&maxLoad=`
-- `POST /api/allocation/execute` – body: `{ operationId, targetMachineId, volumeToMove, volumeUnit }`
+- Auth / users / roles — `/api/auth`, `/api/users`, …
+- Settings, machines, nests, alternatives, projects — jak wcześniej
+- `GET /api/capacity/calculator` — m.in. `scenarioId`, `useContractualVolumes`, `settingsProfile=ocu`
+- Call offs — `/api/call-offs` (lista, upload, calculator)
+- Scenarios — `/api/scenarios` (CRUD, snapshot, apply, historia)
+- Allocation — `/api/allocation/…`
 
 ## GitHub
 
-Repozytorium: **[github.com/xxleszcz18/capacity](https://github.com/xxleszcz18/capacity)**. Gałąź robocza: `main`. W `.gitignore` są m.in. `node_modules/`, `*.db` i folder `.tools/` (lokalny portable MinGit).
-
-Lokalnie ustawiony jest remote `origin` → `https://github.com/xxleszcz18/capacity.git`. Aby wypchnąć commity (wymaga zalogowania do GitHub):
+Repozytorium: **[github.com/xxleszcz18/capacity](https://github.com/xxleszcz18/capacity)** (`main`).
 
 ```powershell
-cd "ścieżka\do\Capacity test"
 git push -u origin main
 ```
 
-Albo z MinGit z projektu: `.tools\MinGit\cmd\git.exe push -u origin main`.
+W `.gitignore`: `node_modules/`, `*.db`, lokalne backupy itd.
 
-Przy HTTPS użyj **Personal Access Token** (nie hasła konta) albo [GitHub Desktop](https://desktop.github.com/). Inne repozytorium: `.\scripts\push-to-github.ps1 -RemoteUrl "https://github.com/USER/REPO.git"`.
+## Zasady capacity (skrót)
 
-## Zasady
-
-- **Capacity:** dostępność [s/tydzień] z ustawień (dni robocze, czas zmiany, OEE) minus czas uruchomienie/zakończenie; obciążenie % = wymagany czas (suma wolumen×cykl) / dostępność. OEE: nadpis operacji > nadpis maszyny > ustawienia.
-- **Alokacja:** kandydaci = maszyny z tego samego gniazda LUB z listy alternatyw; opcjonalnie ten sam kod lokalizacji. Wykonanie = zmniejszenie wolumenu wybranej operacji + utworzenie nowej operacji na maszynie docelowej z przeniesionym wolumenem.
-- **Procent capacity:** dla maszyny dzielonej między operacje suma % capacity musi wynosić 100% (walidacja przy zapisie operacji).
+- **Dostępność** z dni roboczych, czasu zmiany, OEE i startup/shutdown; OEE: operacja > maszyna > ustawienia roku.  
+- **Obciążenie %** = wymagany czas / dostępność × machine usage.  
+- **Alokacja**: kandydaci z gniazda lub alternatyw; wykonanie = zmniejszenie wolumenu + nowa operacja na maszynie docelowej.  
+- **% capacity** na maszynie dzielonej: suma operacji = 100% (walidacja przy zapisie).

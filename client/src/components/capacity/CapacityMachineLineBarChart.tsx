@@ -1,4 +1,4 @@
-import { useId, useMemo } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
   Bar,
   BarChart,
@@ -21,6 +21,15 @@ const PROD_KEY = 'production';
 const CONTRACT_KEY = 'contract';
 const CALL_OFF_KEY = 'callOff';
 
+export type ExtraBarSeriesMeta = {
+  key: string;
+  name: string;
+  color: string;
+};
+
+/** @deprecated Użyj ExtraBarSeriesMeta */
+export type CallOffBarSeriesMeta = ExtraBarSeriesMeta;
+
 type Props = {
   title: string;
   rows: DualLoadBarRow[];
@@ -28,8 +37,13 @@ type Props = {
   xAxisKind: 'machine' | 'line';
   showProduction: boolean;
   showContract: boolean;
+  /** Pojedynczy Call offs (gdy brak extraSeries z Call offs). */
   showCallOff?: boolean;
   callOffSeriesLabel?: string;
+  /** Dodatkowe serie (Call offs, scenariusze). */
+  extraSeries?: ExtraBarSeriesMeta[];
+  /** Alias wsteczny — to samo co extraSeries. */
+  callOffSeries?: ExtraBarSeriesMeta[];
   year: number;
   height?: number;
   emptyHint?: string;
@@ -46,6 +60,8 @@ export default function CapacityMachineLineBarChart({
   showContract,
   showCallOff = false,
   callOffSeriesLabel,
+  extraSeries,
+  callOffSeries,
   year,
   height = 380,
   emptyHint,
@@ -62,6 +78,38 @@ export default function CapacityMachineLineBarChart({
   const refLineLabel = metricMode === 'freeCapacity' ? t('dataViz.refFreeCapacity0') : t('dataViz.refLoad100');
   const refLineColor = metricMode === 'freeCapacity' ? vizColors.refLineFree : vizColors.refLineOverload;
   const callOffName = callOffSeriesLabel ?? t('reports.dataViz.seriesCallOff');
+  const extras = extraSeries ?? callOffSeries ?? [];
+  const hasExtras = extras.length > 0;
+  const extraKeys = hasExtras ? extras.map((s) => s.key) : showCallOff ? [CALL_OFF_KEY] : [];
+
+  const availableKeys = useMemo(() => {
+    const keys: string[] = [];
+    if (showContract) keys.push(CONTRACT_KEY);
+    if (showProduction) keys.push(PROD_KEY);
+    keys.push(...extraKeys);
+    return keys;
+  }, [showContract, showProduction, extraKeys]);
+
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    setHiddenKeys((prev) => {
+      const next = new Set<string>();
+      for (const k of prev) {
+        if (availableKeys.includes(k)) next.add(k);
+      }
+      return next.size === prev.size && [...prev].every((k) => next.has(k)) ? prev : next;
+    });
+  }, [availableKeys]);
+
+  const toggleSeries = useCallback((dataKey: string) => {
+    setHiddenKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(dataKey)) next.delete(dataKey);
+      else next.add(dataKey);
+      return next;
+    });
+  }, []);
 
   const barData = useMemo(
     () =>
@@ -70,17 +118,25 @@ export default function CapacityMachineLineBarChart({
           xAxisKind === 'line' ? t('dataViz.lineShortLabel', { line: r.shortLabel }) : r.shortLabel;
         const axisLabel =
           xAxisKind === 'line' ? t('dataViz.lineLabel', { line: r.label }) : r.label;
-        return {
+        const row: Record<string, string | number | null | undefined> = {
           key: r.key,
           axisShort,
           axisLabel,
           machineCount: r.machineCount,
           [PROD_KEY]: applyChartMetric(r.production, metricMode),
           [CONTRACT_KEY]: applyChartMetric(r.contract, metricMode),
-          [CALL_OFF_KEY]: applyChartMetric(r.callOff ?? null, metricMode),
         };
+        if (hasExtras) {
+          for (const s of extras) {
+            const raw = r.seriesValues?.[s.key] ?? null;
+            row[s.key] = applyChartMetric(raw, metricMode);
+          }
+        } else {
+          row[CALL_OFF_KEY] = applyChartMetric(r.callOff ?? null, metricMode);
+        }
+        return row;
       }),
-    [rows, metricMode, t, xAxisKind]
+    [rows, metricMode, t, xAxisKind, hasExtras, extras]
   );
 
   const manyTicks =
@@ -89,15 +145,21 @@ export default function CapacityMachineLineBarChart({
   const xAxisHeight = manyTicks ? 56 : 28;
   const chartBottomMargin = manyTicks ? 12 : 4;
 
-  const hasSeries = showProduction || showContract || showCallOff;
+  const showContractBar = showContract && !hiddenKeys.has(CONTRACT_KEY);
+  const showProductionBar = showProduction && !hiddenKeys.has(PROD_KEY);
+  const visibleExtraKeys = extraKeys.filter((k) => !hiddenKeys.has(k));
+
+  const hasConfiguredSeries = showProduction || showContract || extraKeys.length > 0;
   const hasData =
-    hasSeries &&
+    hasConfiguredSeries &&
     barData.some(
       (r) =>
         (showProduction && r[PROD_KEY] != null) ||
         (showContract && r[CONTRACT_KEY] != null) ||
-        (showCallOff && r[CALL_OFF_KEY] != null)
+        extraKeys.some((k) => r[k] != null)
     );
+
+  const legendOrder = [CONTRACT_KEY, PROD_KEY, ...extraKeys];
 
   const wrapProps = captureKey
     ? { 'data-pdf-chart': captureKey, 'data-pdf-chart-title': title }
@@ -164,11 +226,13 @@ export default function CapacityMachineLineBarChart({
               }}
             />
             <Legend
-              wrapperStyle={{ fontSize: 12 }}
+              wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
               content={(props) => (
                 <OrderedLegendContent
                   {...props}
-                  orderKeys={[CONTRACT_KEY, PROD_KEY, CALL_OFF_KEY]}
+                  orderKeys={legendOrder}
+                  hiddenKeys={hiddenKeys}
+                  onItemClick={toggleSeries}
                 />
               )}
             />
@@ -184,6 +248,7 @@ export default function CapacityMachineLineBarChart({
                 name={t('reports.dataViz.seriesContract')}
                 fill={vizColors.contract}
                 radius={[4, 4, 0, 0]}
+                hide={!showContractBar}
               />
             )}
             {showProduction && (
@@ -192,16 +257,29 @@ export default function CapacityMachineLineBarChart({
                 name={t('reports.dataViz.seriesProd')}
                 fill={vizColors.production}
                 radius={[4, 4, 0, 0]}
+                hide={!showProductionBar}
               />
             )}
-            {showCallOff && (
-              <Bar
-                dataKey={CALL_OFF_KEY}
-                name={callOffName}
-                fill={vizColors.callOff}
-                radius={[4, 4, 0, 0]}
-              />
-            )}
+            {hasExtras
+              ? extras.map((s) => (
+                  <Bar
+                    key={s.key}
+                    dataKey={s.key}
+                    name={s.name}
+                    fill={s.color}
+                    radius={[4, 4, 0, 0]}
+                    hide={!visibleExtraKeys.includes(s.key)}
+                  />
+                ))
+              : showCallOff && (
+                  <Bar
+                    dataKey={CALL_OFF_KEY}
+                    name={callOffName}
+                    fill={vizColors.callOff}
+                    radius={[4, 4, 0, 0]}
+                    hide={hiddenKeys.has(CALL_OFF_KEY)}
+                  />
+                )}
           </BarChart>
         </ResponsiveContainer>
       )}

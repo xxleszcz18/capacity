@@ -164,6 +164,42 @@ export function ScenarioDiagram() {
   );
 }
 
+export function CallOffsDiagram() {
+  const { t } = useI18n();
+  const p = 'manual.diagrams.callOffs';
+  return (
+    <DiagramPanel title={t(`${p}.title`)}>
+      <FlowRow>
+        <Box label={t(`${p}.file`)} />
+        <Arrow />
+        <Box label={t(`${p}.match`)} accent="#0091EA" />
+        <Arrow />
+        <Box label={t(`${p}.calc`)} accent="#0091EA" />
+        <Arrow />
+        <Box label={t(`${p}.viz`)} accent="#6a1b9a" />
+      </FlowRow>
+    </DiagramPanel>
+  );
+}
+
+export function DataVizDiagram() {
+  const { t } = useI18n();
+  const p = 'manual.diagrams.dataViz';
+  return (
+    <DiagramPanel title={t(`${p}.title`)}>
+      <FlowRow>
+        <Box label={t(`${p}.base`)} />
+        <Arrow />
+        <Box label={t(`${p}.sources`)} accent="#1565c0" />
+        <Arrow />
+        <Box label={t(`${p}.charts`)} accent="#6a1b9a" />
+        <Arrow />
+        <Box label={t(`${p}.export`)} />
+      </FlowRow>
+    </DiagramPanel>
+  );
+}
+
 export function AdminMapDiagram() {
   const { t } = useI18n();
   const p = 'manual.diagrams.adminMap';
@@ -172,8 +208,9 @@ export function AdminMapDiagram() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '0.5rem' }}>
         <Box label={t(`${p}.db`)} />
         <Box label={t(`${p}.adm`)} />
-        <Box label={t(`${p}.viz`)} accent="#1565c0" />
+        <Box label={t(`${p}.users`)} accent="#1565c0" />
         <Box label={t(`${p}.hist`)} />
+        <Box label={t(`${p}.manual`)} />
       </div>
     </DiagramPanel>
   );
@@ -201,6 +238,8 @@ export type ManualDiagramId =
   | 'calculation'
   | 'projectFlow'
   | 'scenario'
+  | 'callOffs'
+  | 'dataViz'
   | 'adminMap'
   | 'dependencies';
 
@@ -210,6 +249,8 @@ const DIAGRAM_MAP: Record<ManualDiagramId, () => JSX.Element> = {
   calculation: CalculationDiagram,
   projectFlow: ProjectFlowDiagram,
   scenario: ScenarioDiagram,
+  callOffs: CallOffsDiagram,
+  dataViz: DataVizDiagram,
   adminMap: AdminMapDiagram,
   dependencies: DependenciesDiagram,
 };

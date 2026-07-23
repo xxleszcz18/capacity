@@ -16,8 +16,14 @@ type SectionDef = {
 const SECTIONS: SectionDef[] = [
   {
     id: 'overview',
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+  },
+  {
+    id: 'auth',
     paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3', 'step4'],
+    steps: ['step1', 'step2', 'step3'],
+    list: ['role1', 'role2', 'role3'],
   },
   {
     id: 'header',
@@ -26,6 +32,7 @@ const SECTIONS: SectionDef[] = [
     subsections: [
       { titleKey: 'contractualTitle', bodyKey: 'contractual' },
       { titleKey: 'capacityTitle', bodyKey: 'capacity' },
+      { titleKey: 'callOffsTitle', bodyKey: 'callOffs' },
       { titleKey: 'ocuTitle', bodyKey: 'ocu' },
       { titleKey: 'langTitle', bodyKey: 'lang' },
     ],
@@ -34,13 +41,18 @@ const SECTIONS: SectionDef[] = [
     id: 'dataModel',
     diagram: 'dataModel',
     paragraphs: ['p1', 'p2'],
-    list: ['dep1', 'dep2', 'dep3', 'dep4'],
+    list: ['dep1', 'dep2', 'dep3', 'dep4', 'dep5'],
   },
   {
     id: 'calculator',
     diagram: 'calculation',
-    paragraphs: ['p1', 'p2', 'p3'],
-    steps: ['step1', 'step2', 'step3', 'step4'],
+    paragraphs: ['p1', 'p2', 'p3', 'p4'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+    subsections: [
+      { titleKey: 'summaryTitle', bodyKey: 'summary' },
+      { titleKey: 'allocTitle', bodyKey: 'alloc' },
+      { titleKey: 'filtersTitle', bodyKey: 'filters' },
+    ],
   },
   {
     id: 'machines',
@@ -51,7 +63,7 @@ const SECTIONS: SectionDef[] = [
     id: 'projects',
     diagram: 'projectFlow',
     paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3', 'step4'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
   },
   {
     id: 'details',
@@ -60,8 +72,25 @@ const SECTIONS: SectionDef[] = [
   {
     id: 'scenarios',
     diagram: 'scenario',
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+  },
+  {
+    id: 'callOffs',
+    diagram: 'callOffs',
     paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3'],
+    steps: ['step1', 'step2', 'step3', 'step4'],
+  },
+  {
+    id: 'dataViz',
+    diagram: 'dataViz',
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4'],
+    subsections: [
+      { titleKey: 'seriesTitle', bodyKey: 'series' },
+      { titleKey: 'aggTitle', bodyKey: 'agg' },
+      { titleKey: 'flexTitle', bodyKey: 'flex' },
+    ],
   },
   {
     id: 'admin',
@@ -70,7 +99,7 @@ const SECTIONS: SectionDef[] = [
     subsections: [
       { titleKey: 'dbTitle', bodyKey: 'db' },
       { titleKey: 'admTitle', bodyKey: 'adm' },
-      { titleKey: 'vizTitle', bodyKey: 'viz' },
+      { titleKey: 'usersTitle', bodyKey: 'users' },
       { titleKey: 'histTitle', bodyKey: 'hist' },
     ],
   },
@@ -78,7 +107,7 @@ const SECTIONS: SectionDef[] = [
     id: 'formulas',
     diagram: 'dependencies',
     paragraphs: ['p1'],
-    list: ['avail', 'weekly', 'required', 'load', 'sop'],
+    list: ['avail', 'weekly', 'required', 'load', 'sop', 'maxType', 'isoWeek'],
   },
 ];
 

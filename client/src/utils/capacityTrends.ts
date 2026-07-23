@@ -130,7 +130,7 @@ export function machineLabel(m: CapacityMachineTrend): string {
   return sap ? `${nr} · ${sap}` : String(nr);
 }
 
-/** Wspólny wiersz dual-bar (produkcja / kontrakt [/ call off]) — maszyna lub linia na osi X. */
+/** Wspólny wiersz dual-bar (produkcja / kontrakt [/ Call offs / scenariusze…]) — maszyna lub linia na osi X. */
 export type DualLoadBarRow = {
   key: string;
   /** Pełna etykieta (tooltip). */
@@ -139,9 +139,35 @@ export type DualLoadBarRow = {
   shortLabel: string;
   production: number | null;
   contract: number | null;
+  /** Pojedynczy Call offs (kompatybilność wsteczna). */
   callOff?: number | null;
+  /** Dodatkowe serie (Call offs, scenariusze): dataKey → wartość %. */
+  seriesValues?: Record<string, number | null>;
   machineCount?: number;
 };
+
+/** Źródło dodatkowej serii na wykresie słupkowym (Call offs / scenariusz). */
+export type BarSeriesSource = {
+  key: string;
+  machines: CapacityMachineTrend[];
+  dataYears?: number[] | null;
+};
+
+/** @deprecated Użyj BarSeriesSource */
+export type CallOffBarSource = BarSeriesSource;
+
+function barSeriesValuesForYear(
+  sources: BarSeriesSource[],
+  year: number,
+  getLoad: (machines: CapacityMachineTrend[]) => number | null
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const src of sources) {
+    const yearOk = !src.dataYears?.length || src.dataYears.includes(year);
+    out[src.key] = yearOk && src.machines.length ? getLoad(src.machines) : null;
+  }
+  return out;
+}
 
 /**
  * Mapuje odpowiedź kalkulatora Call offs na bundle trendów:
@@ -281,13 +307,11 @@ export function buildMachineBarRows(
   selectedMachineIds: number[] | Set<number>,
   year: number,
   labelMode: MachineDisplayMode = 'internal',
-  machinesCallOff?: CapacityMachineTrend[] | null,
-  callOffDataYears?: number[] | null
+  extraSources?: BarSeriesSource[] | null
 ): DualLoadBarRow[] {
   const idSet = selectedMachineIds instanceof Set ? selectedMachineIds : new Set(selectedMachineIds);
   const contractById = new Map(machinesContract.map((m) => [m.machine_id, m]));
-  const callOffById = new Map((machinesCallOff ?? []).map((m) => [m.machine_id, m]));
-  const callOffYearOk = !callOffDataYears?.length || callOffDataYears.includes(year);
+  const sources = extraSources ?? [];
   return machinesProd
     .filter((m) => idSet.has(m.machine_id))
     .slice()
@@ -299,15 +323,20 @@ export function buildMachineBarRows(
     })
     .map((m) => {
       const c = contractById.get(m.machine_id);
-      const co = callOffById.get(m.machine_id);
       const axisLabel = formatMachineSapInternalLabel(m, labelMode);
+      const seriesValues = barSeriesValuesForYear(sources, year, (machines) => {
+        const co = machines.find((x) => x.machine_id === m.machine_id);
+        return co ? machineLoadPercent(co, year) : null;
+      });
+      const firstCallOffKey = sources.find((s) => s.key.startsWith('callOff_'))?.key;
       return {
         key: String(m.machine_id),
         label: axisLabel,
         shortLabel: axisLabel,
         production: machineLoadPercent(m, year),
         contract: c ? machineLoadPercent(c, year) : null,
-        callOff: callOffYearOk && co ? machineLoadPercent(co, year) : null,
+        callOff: firstCallOffKey != null ? seriesValues[firstCallOffKey] ?? null : null,
+        seriesValues: sources.length > 0 ? seriesValues : undefined,
       };
     });
 }
@@ -318,22 +347,25 @@ export function buildLineBarRows(
   machinesContract: CapacityMachineTrend[],
   selectedLines: string[] | Set<string>,
   year: number,
-  machinesCallOff?: CapacityMachineTrend[] | null,
-  callOffDataYears?: number[] | null
+  extraSources?: BarSeriesSource[] | null
 ): DualLoadBarRow[] {
   const lineSet = selectedLines instanceof Set ? selectedLines : new Set(selectedLines);
   const lines = uniqueLines(machinesProd).filter((line) => lineSet.has(line));
-  const callOffYearOk = !callOffDataYears?.length || callOffDataYears.includes(year);
+  const sources = extraSources ?? [];
   return lines.map((line) => {
     const machineCount = machinesProd.filter((m) => lineKey(m.location) === line).length;
+    const seriesValues = barSeriesValuesForYear(sources, year, (machines) =>
+      lineLoadPercent(machines, line, year)
+    );
+    const firstCallOffKey = sources.find((s) => s.key.startsWith('callOff_'))?.key;
     return {
       key: line,
       label: line,
       shortLabel: line,
       production: lineLoadPercent(machinesProd, line, year),
       contract: lineLoadPercent(machinesContract, line, year),
-      callOff:
-        callOffYearOk && machinesCallOff?.length ? lineLoadPercent(machinesCallOff, line, year) : null,
+      callOff: firstCallOffKey != null ? seriesValues[firstCallOffKey] ?? null : null,
+      seriesValues: sources.length > 0 ? seriesValues : undefined,
       machineCount,
     };
   });
