@@ -16,6 +16,7 @@ import { machineStatusFromDb } from '../utils/machineStatusStyle';
 import * as XLSX from 'xlsx';
 import { excelExportCell } from '../utils/excelExportCell';
 import { machineMatchesCalculatorFilter } from '../utils/machineSearchFilter';
+import { maxTypeAverageLoad } from '../utils/maxTypeAverageLoad';
 import { compareInternalMachineNumbers } from '../utils/internalMachineNumber';
 import SortableTh from '../components/SortableTh';
 import { sortIndicator, sortRows, type SortDirection } from '../utils/tableSort';
@@ -175,31 +176,33 @@ function normalizeCalculatorPageSize(v: unknown): number {
 }
 
 /** Czy dany wiersz podsumowania ma być wyróżniony (checkbox w ustawieniach). */
-function summaryRowColorizeEnabled(visual: VisualSettings, rowKind: 'sum' | 'avg'): boolean {
+function summaryRowColorizeEnabled(visual: VisualSettings, rowKind: 'sum' | 'avg' | 'maxTypeAvg'): boolean {
   return rowKind === 'sum' ? visual.colorize_sum_row : visual.colorize_avg_row;
 }
 
 /** Progi obciążenia w wierszu sumy/średniej — tylko gdy włączono kolorowanie wiersza i kafelków. */
-function summaryRowUsesLoadThresholds(visual: VisualSettings, rowKind: 'sum' | 'avg'): boolean {
+function summaryRowUsesLoadThresholds(visual: VisualSettings, rowKind: 'sum' | 'avg' | 'maxTypeAvg'): boolean {
   return summaryRowColorizeEnabled(visual, rowKind) && visual.colorize_load_cells;
 }
 
 /** Delikatne tło wiersza sumy/średniej (gdy wiersz włączony, ale bez progów obciążenia). */
-function summaryRowTint(visual: VisualSettings, rowKind: 'sum' | 'avg'): string | undefined {
+function summaryRowTint(visual: VisualSettings, rowKind: 'sum' | 'avg' | 'maxTypeAvg'): string | undefined {
   if (!summaryRowColorizeEnabled(visual, rowKind)) return undefined;
-  return rowKind === 'sum' ? '#eef5ff' : '#f3f8ff';
+  if (rowKind === 'sum') return '#eef5ff';
+  if (rowKind === 'maxTypeAvg') return '#eefaf3';
+  return '#f3f8ff';
 }
 
-function summaryLabelCellStyle(visual: VisualSettings, rowKind: 'sum' | 'avg'): CSSProperties {
+function summaryLabelCellStyle(visual: VisualSettings, rowKind: 'sum' | 'avg' | 'maxTypeAvg'): CSSProperties {
   const tint = summaryRowTint(visual, rowKind);
-  const fallback = rowKind === 'sum' ? '#f5f5f5' : '#fafafa';
+  const fallback = rowKind === 'sum' ? '#f5f5f5' : rowKind === 'maxTypeAvg' ? '#f5faf7' : '#fafafa';
   return { padding: '0.75rem', position: 'sticky', left: 0, background: tint ?? fallback, zIndex: 1 };
 }
 
 function summaryValueCellStyle(
   pct: number,
   visual: VisualSettings,
-  rowKind: 'sum' | 'avg',
+  rowKind: 'sum' | 'avg' | 'maxTypeAvg',
   callOffDual: boolean
 ): CSSProperties {
   const base: CSSProperties = {
@@ -710,6 +713,11 @@ function CalculatorLegend({
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 22, height: 18, background: '#f3f8ff', border: '1px solid #e0e0e0', borderRadius: 2 }} />
               {t('calculator.legend.avgRow')}
+              {!visual.colorize_avg_row ? t('calculator.legend.colorOff') : ''}
+            </span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 22, height: 18, background: '#eefaf3', border: '1px solid #e0e0e0', borderRadius: 2 }} />
+              {t('calculator.legend.maxTypeAvgRow')}
               {!visual.colorize_avg_row ? t('calculator.legend.colorOff') : ''}
             </span>
           </div>
@@ -1592,7 +1600,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   const loadSummaryByYear = years.map((y) => {
     const sum = filteredMachines.reduce((acc: number, m: any) => acc + Number(m.years?.[y]?.load_percent ?? 0), 0);
     const avg = filteredMachines.length > 0 ? sum / filteredMachines.length : 0;
-    return { year: y, sum, avg };
+    const maxTypeAvg =
+      maxTypeAverageLoad(filteredMachines, (m: any) => Number(m.years?.[y]?.load_percent ?? 0)) ?? 0;
+    return { year: y, sum, avg, maxTypeAvg };
   });
   const pinnedSapWidth = 156;
   const pinnedNumberWidth = 143;
@@ -1889,6 +1899,30 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           },
         })),
       ];
+      const maxTypeAvgRowPdf: any[] = [
+        {
+          content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: rows.length })),
+          colSpan: 3,
+          styles: {
+            fontStyle: 'bold',
+            halign: 'left',
+            fillColor: [245, 250, 247] as [number, number, number],
+            textColor: [0, 0, 0],
+          },
+        },
+        ...loadSummaryByYear.map((s) => ({
+          content: `${Math.round(s.maxTypeAvg)}%`,
+          styles: {
+            fontStyle: 'bold' as const,
+            halign: 'center' as const,
+            fillColor: hexToRgbForPdf(
+              summaryRowUsesLoadThresholds(visualSettings, 'maxTypeAvg')
+                ? loadColor(Math.round(s.maxTypeAvg), visualSettings)
+                : summaryRowTint(visualSettings, 'maxTypeAvg') ?? '#ffffff'
+            ),
+          },
+        })),
+      ];
 
       const pdfLayout = calculatorPdfTableLayout(doc, years.length);
       autoTable(doc, {
@@ -1896,7 +1930,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         margin: { left: pdfLayout.margin, right: pdfLayout.margin },
         tableWidth: pdfLayout.tableWidth,
         head: [[pdfSafe(t('reports.calculator.colSap')), pdfSafe(t('reports.calculator.colNumber')), pdfSafe(t('reports.calculator.colType')), ...years.map((y) => String(y))]],
-        body: [...machineRows, sumRowPdf, avgRowPdf],
+        body: [...machineRows, sumRowPdf, avgRowPdf, maxTypeAvgRowPdf],
         theme: 'grid',
         styles: { fontSize: 7, cellPadding: 3, lineColor: [224, 224, 224], lineWidth: 0.1, fillColor: [255, 255, 255] },
         headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
@@ -1945,7 +1979,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       const summary = years.map((y) => {
         const sum = selected.reduce((acc: number, m: any) => acc + Number(m.years?.[y]?.load_percent ?? 0), 0);
         const avg = selected.length > 0 ? sum / selected.length : 0;
-        return { y, sum, avg };
+        const maxTypeAvg =
+          maxTypeAverageLoad(selected, (m: any) => Number(m.years?.[y]?.load_percent ?? 0)) ?? 0;
+        return { y, sum, avg, maxTypeAvg };
       });
       const settingsCache = new Map<number, any>();
       const getSettingsForYear = async (year: number) => {
@@ -2074,6 +2110,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           ]),
           [t('reports.calculator.sumRow'), '', '', ...summary.map((s) => Math.round(s.sum))],
           [t('reports.calculator.avgRow'), '', '', ...summary.map((s) => Math.round(s.avg))],
+          [t('reports.calculator.maxTypeAvgRow'), '', '', ...summary.map((s) => Math.round(s.maxTypeAvg))],
         ];
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(calculatorAoa), t('reports.calculator.sheetCalculator'));
 
@@ -2249,6 +2286,30 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             },
           })),
         ];
+        const maxTypeAvgRowReportPdf: any[] = [
+          {
+            content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: reportPdfRows.length })),
+            colSpan: 3,
+            styles: {
+              fontStyle: 'bold',
+              halign: 'left',
+              fillColor: [245, 250, 247] as [number, number, number],
+              textColor: [0, 0, 0],
+            },
+          },
+          ...summary.map((s) => ({
+            content: `${Math.round(s.maxTypeAvg)}%`,
+            styles: {
+              fontStyle: 'bold' as const,
+              halign: 'center' as const,
+              fillColor: hexToRgbForPdf(
+                summaryRowUsesLoadThresholds(visualSettings, 'maxTypeAvg')
+                  ? loadColor(Math.round(s.maxTypeAvg), visualSettings)
+                  : summaryRowTint(visualSettings, 'maxTypeAvg') ?? '#ffffff'
+              ),
+            },
+          })),
+        ];
 
         const reportPdfLayout = calculatorPdfTableLayout(doc, years.length);
         autoTable(doc, {
@@ -2256,7 +2317,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           margin: { left: reportPdfLayout.margin, right: reportPdfLayout.margin },
           tableWidth: reportPdfLayout.tableWidth,
           head: [[pdfSafe(t('reports.calculator.colSap')), pdfSafe(t('reports.calculator.colNumber')), pdfSafe(t('reports.calculator.colType')), ...years.map((y) => String(y))]],
-          body: [...machineRowsReport, sumRowReportPdf, avgRowReportPdf],
+          body: [...machineRowsReport, sumRowReportPdf, avgRowReportPdf, maxTypeAvgRowReportPdf],
           theme: 'grid',
           styles: { fontSize: 7, cellPadding: 3, lineColor: [224, 224, 224], lineWidth: 0.1, fillColor: [255, 255, 255] },
           headStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
@@ -3212,6 +3273,61 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                         />
                       ) : (
                         `${Math.round(avg)}%`
+                      )}
+                    </td>
+                    );
+                  })}
+                  {!callOffMode && <td style={{ padding: '0.75rem' }}></td>}
+                </tr>
+                <tr style={{ fontWeight: 600 }}>
+                  <td style={summaryLabelCellStyle(visualSettings, 'maxTypeAvg')} colSpan={3}>
+                    {t('calculator.maxTypeAvgLoadsWithCount', { count: filteredMachines.length })}
+                  </td>
+                  {timelineColumns.map((col) => {
+                    const maxTypeAvg =
+                      maxTypeAverageLoad(filteredMachines, (m: any) => {
+                        const monthsData =
+                          col.kind === 'year' ? undefined : getMachineMonthsData(m.machine_id, col.year);
+                        return getTimelineColumnLoad(col, m.years?.[col.year]?.load_percent, monthsData);
+                      }) ?? 0;
+                    const coMaxTypeAvg = callOffMode
+                      ? maxTypeAverageLoad(filteredMachines, (m: any) => {
+                          const monthsData =
+                            col.kind === 'year' ? undefined : getMachineMonthsData(m.machine_id, col.year);
+                          return getTimelineColumnCallOffLoad(
+                            col,
+                            m.years?.[col.year]?.call_off_load_percent,
+                            monthsData
+                          );
+                        }) ?? 0
+                      : 0;
+                    return (
+                    <td
+                      key={
+                        col.kind === 'year'
+                          ? `max-type-avg-y-${col.year}`
+                          : col.kind === 'month'
+                            ? `max-type-avg-m-${col.year}-${col.month}`
+                            : `max-type-avg-w-${col.year}-${col.month}-${col.week}`
+                      }
+                      className={col.kind === 'year' ? 'calc-year-col' : 'calc-period-col'}
+                      style={summaryValueCellStyle(Math.round(maxTypeAvg), visualSettings, 'maxTypeAvg', callOffMode)}
+                    >
+                      {isPeriodColumnPending(col) ? (
+                        <span className="calc-period-cell-loading" aria-hidden="true">
+                          <span className="data-loading-spinner" />
+                        </span>
+                      ) : callOffMode ? (
+                        <DualLoadCell
+                          basePct={maxTypeAvg}
+                          callOffPct={coMaxTypeAvg}
+                          visual={visualSettings}
+                          compact
+                          colorizeLoads={summaryRowUsesLoadThresholds(visualSettings, 'maxTypeAvg')}
+                          neutralBackground={summaryRowTint(visualSettings, 'maxTypeAvg')}
+                        />
+                      ) : (
+                        `${Math.round(maxTypeAvg)}%`
                       )}
                     </td>
                     );

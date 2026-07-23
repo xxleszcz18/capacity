@@ -1,4 +1,5 @@
 import { formatMachineSapInternalLabel, type MachineDisplayMode } from './machineLabel';
+import { maxTypeAverageLoad } from './maxTypeAverageLoad';
 
 export type YearCapacityPoint = {
   load_percent: number;
@@ -50,44 +51,40 @@ export function uniqueLines(machines: CapacityMachineTrend[]): string[] {
   });
 }
 
+/**
+ * Agregacja wielu maszyn: max ze średnich obciążenia w ramach typu
+ * (ta sama logika co trzeci wiersz podsumowania w Kalkulatorze).
+ */
 function aggregateLoadPercent(
   machines: CapacityMachineTrend[],
   year: number,
   include: (m: CapacityMachineTrend) => boolean
 ): number | null {
-  let req = 0;
-  let avail = 0;
-  for (const m of machines) {
-    if (!include(m)) continue;
-    const y = m.years[year];
-    if (!y) continue;
-    req += y.required_sec_per_week ?? 0;
-    avail += y.availability_sec_per_week ?? 0;
-  }
-  if (avail <= 0) return req > 0 ? 100 : null;
-  return Math.round((req / avail) * 100);
+  const subset = machines.filter(include);
+  const avg = maxTypeAverageLoad(subset, (m) => Number(m.years[year]?.load_percent ?? 0));
+  return avg == null ? null : Math.round(avg);
 }
 
-/** Obciążenie linii = suma wymaganego czasu / suma dostępności maszyn na linii. */
+/** Obciążenie linii = max średniej wg typu wśród maszyn na linii. */
 export function lineLoadPercent(machines: CapacityMachineTrend[], line: string, year: number): number | null {
   return aggregateLoadPercent(machines, year, (m) => lineKey(m.location) === line);
 }
 
-/** Obciążenie wielu linii (agregacja maszyn z wybranych linii). */
+/** Obciążenie wielu linii = max średniej wg typu wśród maszyn z wybranych linii. */
 export function linesLoadPercent(machines: CapacityMachineTrend[], lines: string[], year: number): number | null {
   if (!lines.length) return null;
   const lineSet = new Set(lines);
   return aggregateLoadPercent(machines, year, (m) => lineSet.has(lineKey(m.location)));
 }
 
-/** Obciążenie wielu maszyn (agregacja wybranych maszyn). */
+/** Obciążenie wielu maszyn = max średniej wg typu wśród wybranych maszyn. */
 export function machinesLoadPercent(machines: CapacityMachineTrend[], machineIds: number[], year: number): number | null {
   if (!machineIds.length) return null;
   const idSet = new Set(machineIds);
   return aggregateLoadPercent(machines, year, (m) => idSet.has(m.machine_id));
 }
 
-/** Obciążenie wybranych maszyn na danej linii (agregacja). */
+/** Obciążenie wybranych maszyn na danej linii = max średniej wg typu. */
 export function selectedMachinesOnLineLoadPercent(
   machines: CapacityMachineTrend[],
   machineIds: number[] | Set<number>,
@@ -270,18 +267,8 @@ export function callOffLoadPercent(
       return linesLoadPercent(bundle.machines, scope.lines, year);
     case 'machines':
       return machinesLoadPercent(bundle.machines, scope.machineIds, year);
-    case 'plant': {
-      let req = 0;
-      let avail = 0;
-      for (const m of bundle.machines) {
-        const y = m.years[year];
-        if (!y) continue;
-        req += y.required_sec_per_week ?? 0;
-        avail += y.availability_sec_per_week ?? 0;
-      }
-      if (avail <= 0) return req > 0 ? 100 : null;
-      return Math.round((req / avail) * 100);
-    }
+    case 'plant':
+      return aggregateLoadPercent(bundle.machines, year, () => true);
     default:
       return null;
   }

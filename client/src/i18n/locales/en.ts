@@ -564,6 +564,7 @@ export const en: TranslationTree = {
     transferVolume: 'Transfer volume',
     sumLoadsWithCount: 'Sum of loads ({{count}} machines)',
     avgLoadsWithCount: 'Average loads ({{count}} machines)',
+    maxTypeAvgLoadsWithCount: 'Max average by type ({{count}} machines)',
     sortYearLoad: 'Sort by load in this year',
     expandYear: 'Expand to months',
     collapseYear: 'Collapse months',

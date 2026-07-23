@@ -566,6 +566,7 @@ export const pl: TranslationTree = {
     transferVolume: 'Przenieś wolumen',
     sumLoadsWithCount: 'Suma obciążeń ({{count}} maszyn)',
     avgLoadsWithCount: 'Średnia obciążeń ({{count}} maszyn)',
+    maxTypeAvgLoadsWithCount: 'Max średnia wg typu ({{count}} maszyn)',
     sortYearLoad: 'Sortuj po obciążeniu w tym roku',
     expandYear: 'Rozwiń na miesiące',
     collapseYear: 'Zwiń miesiące',
