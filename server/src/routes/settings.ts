@@ -575,7 +575,7 @@ type VisualSettings = {
   contractual_calculator_frame_color: string;
   /** 25, 50 lub 0 = wszystkie maszyny na jednej stronie kalkulatora */
   calculator_page_size: number;
-  /** Domyślny zakres lat na stronie wizualizacji danych (administracja). */
+  /** Domyślny zakres lat przy otwarciu kalkulatora i wizualizacji danych. */
   data_viz_default_year_from: number;
   data_viz_default_year_to: number;
   /** Kolorystyka sekcji Wizualizacja danych. */

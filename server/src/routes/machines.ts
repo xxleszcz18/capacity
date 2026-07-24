@@ -258,10 +258,20 @@ machinesRouter.get('/:id/operations', (req, res) => {
     if (year != null) {
       const settings = resolveSettingsForScenarioYear(year, bundle) ?? resolveSettingsForYear(year);
       const ov = bundle.operation_volume_by_year || [];
+      const volumeMap = new Map(
+        ov
+          .filter((v: any) => Number(v.year) === year)
+          .map((v: any) => [
+            Number(v.operation_id),
+            {
+              volume_value: Number(v.volume_value),
+              volume_unit: String(v.volume_unit),
+              source: v.source ?? null,
+            },
+          ])
+      );
       for (const row of list) {
-        const opYear = ov.find((v: any) => Number(v.operation_id) === Number(row.id) && Number(v.year) === year) as
-          | { volume_value: number; volume_unit: string }
-          | undefined;
+        const opYear = volumeMap.get(Number(row.id)) ?? null;
         const resolved = resolveOperationVolumeForYear(
           {
             operation_id: row.id,
@@ -272,9 +282,13 @@ machinesRouter.get('/:id/operations', (req, res) => {
             split_from_operation_id: row.split_from_operation_id,
           },
           year,
-          opYear ?? null,
+          opYear,
           bundle,
-          useContractualVolumes
+          useContractualVolumes,
+          undefined,
+          undefined,
+          undefined,
+          volumeMap
         );
         row.effective_volume_value = resolved.volume_value;
         row.effective_volume_unit = resolved.volume_unit;
@@ -323,11 +337,28 @@ machinesRouter.get('/:id/operations', (req, res) => {
   }
   if (year != null) {
     const settings = resolveSettingsForYear(year);
-    const opYearStmt = db.prepare(
-      'SELECT volume_value, volume_unit FROM operation_volume_by_year WHERE operation_id = ? AND year = ?'
-    );
+    let volumeMap = new Map<number, { volume_value: number; volume_unit: string; source?: string | null }>();
+    try {
+      const rows = db
+        .prepare(
+          `SELECT operation_id, volume_value, volume_unit, COALESCE(source, 'manual') AS source
+           FROM operation_volume_by_year WHERE year = ?`
+        )
+        .all(year) as { operation_id: number; volume_value: number; volume_unit: string; source: string }[];
+      volumeMap = new Map(
+        rows.map((v) => [
+          v.operation_id,
+          { volume_value: v.volume_value, volume_unit: v.volume_unit, source: v.source },
+        ])
+      );
+    } catch {
+      const rows = db
+        .prepare('SELECT operation_id, volume_value, volume_unit FROM operation_volume_by_year WHERE year = ?')
+        .all(year) as { operation_id: number; volume_value: number; volume_unit: string }[];
+      volumeMap = new Map(rows.map((v) => [v.operation_id, v]));
+    }
     for (const row of list) {
-      const opYear = opYearStmt.get(row.id, year) as { volume_value: number; volume_unit: string } | undefined;
+      const opYear = volumeMap.get(row.id) ?? null;
       const resolved = resolveOperationVolumeForYear(
         {
           operation_id: row.id,
@@ -338,9 +369,13 @@ machinesRouter.get('/:id/operations', (req, res) => {
           split_from_operation_id: row.split_from_operation_id,
         },
         year,
-        opYear ?? null,
+        opYear,
         null,
-        useContractualVolumes
+        useContractualVolumes,
+        undefined,
+        undefined,
+        undefined,
+        volumeMap
       );
       row.effective_volume_value = resolved.volume_value;
       row.effective_volume_unit = resolved.volume_unit;

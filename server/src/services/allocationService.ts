@@ -11,6 +11,7 @@ import {
   resolveWeeklyVolumeFromResolved,
   resolveOperationCycleForCalculator,
   operationHasAlternativeCycle,
+  invalidateAllocationSplitIndex,
 } from './capacityService.js';
 import { getProductionMonthsInYear } from '../utils/sopEopFormat.js';
 
@@ -634,6 +635,7 @@ export function executeAllocation(
   }
 
   saveDb();
+  invalidateAllocationSplitIndex();
   return { success: true };
 }
 
@@ -902,6 +904,7 @@ export function executeAllocationInScenario(
     db.prepare('UPDATE scenarios SET snapshot = ? WHERE id = ?').run(JSON.stringify(bundle), scenarioId);
   }
   saveDb();
+  invalidateAllocationSplitIndex();
   return { success: true };
 }
 

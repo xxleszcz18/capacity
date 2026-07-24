@@ -1083,7 +1083,7 @@ export const extendedPl: TranslationTree = {
       colType: 'Typ',
       sumLoad: 'Suma obciążeń ({{count}} maszyn)',
       avgLoad: 'Średnia obciążeń ({{count}} maszyn)',
-      maxTypeAvgLoad: 'Max średnia wg typu ({{count}} maszyn)',
+      maxTypeAvgLoad: 'Max średnia wg typu ({{count}} maszyn tego typu)',
       settingsUsed: 'Dane uzyte do obliczen wg ustawien systemu',
       machineParams: 'Parametry maszyn',
       operationsDetail: 'Szczegoly operacji wplywajacych na obciazenie',

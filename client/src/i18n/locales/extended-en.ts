@@ -1080,7 +1080,7 @@ export const extendedEn: TranslationTree = {
       colType: 'Type',
       sumLoad: 'Sum load ({{count}} machines)',
       avgLoad: 'Average load ({{count}} machines)',
-      maxTypeAvgLoad: 'Max average by type ({{count}} machines)',
+      maxTypeAvgLoad: 'Max average by type ({{count}} machines of that type)',
       settingsUsed: 'Calculation inputs from system settings',
       machineParams: 'Machine parameters',
       operationsDetail: 'Operations affecting load',

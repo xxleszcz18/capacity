@@ -44,6 +44,8 @@ export type OperationYearVolumeRow = {
   volume_value_before?: number | null;
   effective_from_month?: number | null;
   effective_from_week?: number | null;
+  /** `allocation` | `manual` — z operation_volume_by_year.source */
+  source?: string | null;
 };
 
 export type CapacityComputeShared = {
@@ -58,6 +60,8 @@ export type CapacityComputeShared = {
   scenarioRfqMachineIds: number[];
   /** Maszyny hostujące wybrane operacje RFQ (mogą mieć status RFQ — trzeba je dociągnąć do zapytania). */
   includeRfqMachineIds: number[];
+  /** Cache udziałów SAP: klucz = year|month|week|contract */
+  callOffShareCache?: Map<string, Map<number, number>>;
 };
 
 const CAPACITY_OPS_SELECT = `
@@ -118,7 +122,8 @@ function loadOpVolumeMapsForYearRange(yearFrom: number, yearTo: number): Map<num
   try {
     const rows = db
       .prepare(
-        `SELECT operation_id, year, volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week
+        `SELECT operation_id, year, volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week,
+                COALESCE(source, 'manual') AS source
          FROM operation_volume_by_year WHERE year >= ? AND year <= ?`
       )
       .all(yearFrom, yearTo) as {
@@ -129,6 +134,7 @@ function loadOpVolumeMapsForYearRange(yearFrom: number, yearTo: number): Map<num
       volume_value_before: number | null;
       effective_from_month: number | null;
       effective_from_week: number | null;
+      source: string;
     }[];
     for (const r of rows) {
       const yMap = byYear.get(r.year);
@@ -139,6 +145,7 @@ function loadOpVolumeMapsForYearRange(yearFrom: number, yearTo: number): Map<num
           volume_value_before: r.volume_value_before,
           effective_from_month: r.effective_from_month,
           effective_from_week: r.effective_from_week,
+          source: r.source,
         });
       }
     }
@@ -227,6 +234,7 @@ function buildCapacityComputeShared(
                       volume_value_before: v.volume_value_before,
                       effective_from_month: v.effective_from_month,
                       effective_from_week: v.effective_from_week,
+                      source: (v as { source?: string | null }).source ?? null,
                     },
                   ])
                 )
@@ -240,6 +248,7 @@ function buildCapacityComputeShared(
     effectiveProfile,
     scenarioRfqMachineIds: [],
     includeRfqMachineIds,
+    callOffShareCache: new Map(),
   };
 }
 
@@ -744,6 +753,219 @@ export function pickOperationYearVolumeForPeriod(
 
 export type OperationVolumeSource = 'operation_year' | 'part' | 'operation_base';
 
+function isAllocationVolumeSource(source: string | null | undefined): boolean {
+  return String(source ?? '').trim().toLowerCase() === 'allocation';
+}
+
+/** Indeks split_from — ładowany raz, invalidowany po alokacji. */
+let allocationSplitParentById: Map<number, number | null> | null = null;
+let allocationChildrenByParent: Map<number, number[]> | null = null;
+
+type AllocationShareCacheEntry = {
+  year: number;
+  activeMonth: number | undefined;
+  activeWeek: number | undefined;
+  settingsKey: string;
+  shares: Map<number, number>;
+};
+
+/** Cache udziałów per volumeMap (ten sam obiekt mapy w ramach jednego przeliczenia). */
+let allocationShareCache = new WeakMap<Map<number, OperationYearVolumeRow>, AllocationShareCacheEntry>();
+
+export function invalidateAllocationSplitIndex(): void {
+  allocationSplitParentById = null;
+  allocationChildrenByParent = null;
+  allocationShareCache = new WeakMap();
+}
+
+function ensureAllocationSplitIndex(): {
+  parentById: Map<number, number | null>;
+  childrenByParent: Map<number, number[]>;
+} {
+  if (allocationSplitParentById && allocationChildrenByParent) {
+    return { parentById: allocationSplitParentById, childrenByParent: allocationChildrenByParent };
+  }
+  const parentById = new Map<number, number | null>();
+  const childrenByParent = new Map<number, number[]>();
+  try {
+    const rows = db.prepare('SELECT id, split_from_operation_id FROM operations').all() as {
+      id: number;
+      split_from_operation_id: number | null;
+    }[];
+    for (const r of rows) {
+      const id = Number(r.id);
+      if (!Number.isFinite(id)) continue;
+      const parent =
+        r.split_from_operation_id != null && Number.isFinite(Number(r.split_from_operation_id))
+          ? Number(r.split_from_operation_id)
+          : null;
+      parentById.set(id, parent);
+      if (parent != null) {
+        const list = childrenByParent.get(parent);
+        if (list) list.push(id);
+        else childrenByParent.set(parent, [id]);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  allocationSplitParentById = parentById;
+  allocationChildrenByParent = childrenByParent;
+  return { parentById, childrenByParent };
+}
+
+/** Korzeń łańcucha alokacji w zbiorze operacji (split_from → …). */
+function allocationFamilyRootId(
+  opId: number,
+  splitFrom: number | null | undefined,
+  opById: Map<number, { split_from_operation_id?: number | null }>
+): number {
+  let cur = opId;
+  let parent = splitFrom != null ? Number(splitFrom) : null;
+  for (let i = 0; i < 10000; i++) {
+    if (parent == null || !Number.isFinite(parent)) return cur;
+    const pOp = opById.get(parent);
+    if (!pOp) return parent;
+    cur = parent;
+    parent = pOp.split_from_operation_id != null ? Number(pOp.split_from_operation_id) : null;
+  }
+  return cur;
+}
+
+function allocationFamilyRootFromIndex(operationId: number, parentById: Map<number, number | null>): number {
+  let cur = operationId;
+  for (let i = 0; i < 10000; i++) {
+    const parent = parentById.get(cur);
+    if (parent == null || !Number.isFinite(parent)) return cur;
+    cur = parent;
+  }
+  return cur;
+}
+
+function collectAllocationFamilyIds(
+  rootId: number,
+  childrenByParent: Map<number, number[]>
+): number[] {
+  const familyIds: number[] = [rootId];
+  const queue = [rootId];
+  const seen = new Set<number>([rootId]);
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const children = childrenByParent.get(id);
+    if (!children) continue;
+    for (const cid of children) {
+      if (seen.has(cid)) continue;
+      seen.add(cid);
+      familyIds.push(cid);
+      queue.push(cid);
+    }
+  }
+  return familyIds;
+}
+
+function settingsCacheKey(settings: WorkingDaysRow): string {
+  return `${settings.working_weeks_per_year ?? 48}|${settings.working_days_year ?? 252}`;
+}
+
+/**
+ * Buduje mapę udziałów alokacji wyłącznie z volumeMap + indeksu split (bez zapytań per operacja).
+ */
+function buildAllocationFamilyShareMap(
+  volumeMap: Map<number, OperationYearVolumeRow>,
+  year: number,
+  settings: WorkingDaysRow,
+  activeMonth?: number,
+  activeWeek?: number
+): Map<number, number> {
+  const shares = new Map<number, number>();
+  const { parentById, childrenByParent } = ensureAllocationSplitIndex();
+
+  const weeklyOf = (row: OperationYearVolumeRow | null | undefined): number => {
+    if (!row) return 0;
+    const picked = pickOperationYearVolumeForPeriod(row, year, activeMonth, activeWeek);
+    const unit =
+      picked.volume_unit === 'monthly' || picked.volume_unit === 'weekly' ? picked.volume_unit : 'annual';
+    return volumeToWeekly(Number(picked.volume_value) || 0, unit, settings);
+  };
+
+  const rootsDone = new Set<number>();
+  for (const opId of volumeMap.keys()) {
+    const rootId = allocationFamilyRootFromIndex(opId, parentById);
+    if (rootsDone.has(rootId)) continue;
+    rootsDone.add(rootId);
+    const familyIds = collectAllocationFamilyIds(rootId, childrenByParent);
+    if (familyIds.length <= 1) continue;
+
+    let totalWeekly = 0;
+    const weeklies = new Map<number, number>();
+    for (const fid of familyIds) {
+      const w = weeklyOf(volumeMap.get(fid));
+      weeklies.set(fid, w);
+      totalWeekly += w;
+    }
+    if (totalWeekly <= 1e-9) continue;
+    for (const [fid, w] of weeklies) {
+      if (w > 1e-9) shares.set(fid, w / totalWeekly);
+    }
+  }
+  return shares;
+}
+
+function getAllocationFamilyShareMap(
+  volumeMap: Map<number, OperationYearVolumeRow>,
+  year: number,
+  settings: WorkingDaysRow,
+  activeMonth?: number,
+  activeWeek?: number
+): Map<number, number> {
+  const sk = settingsCacheKey(settings);
+  const cached = allocationShareCache.get(volumeMap);
+  if (
+    cached &&
+    cached.year === year &&
+    cached.activeMonth === activeMonth &&
+    cached.activeWeek === activeWeek &&
+    cached.settingsKey === sk
+  ) {
+    return cached.shares;
+  }
+  const shares = buildAllocationFamilyShareMap(volumeMap, year, settings, activeMonth, activeWeek);
+  allocationShareCache.set(volumeMap, {
+    year,
+    activeMonth,
+    activeWeek,
+    settingsKey: sk,
+    shares,
+  });
+  return shares;
+}
+
+/**
+ * Udział operacji w rodzinie alokacji (weekly z nadpisań allocation).
+ * Zwraca null, gdy nie ma sensownego podziału (brak rodzeństwa / zerowe sumy).
+ */
+function allocationFamilyShareForOperation(
+  operationId: number,
+  year: number,
+  opYearOverride: OperationYearVolumeRow | null | undefined,
+  volumeMap: Map<number, OperationYearVolumeRow> | null | undefined,
+  settings: WorkingDaysRow,
+  activeMonth?: number,
+  activeWeek?: number
+): number | null {
+  if (!opYearOverride) return null;
+  if (!volumeMap || volumeMap.size === 0) return null;
+
+  if (!volumeMap.has(operationId)) {
+    volumeMap.set(operationId, opYearOverride);
+    // Nowa zawartość mapy — wymuś przebudowę cache udziałów.
+    allocationShareCache.delete(volumeMap);
+  }
+  const shares = getAllocationFamilyShareMap(volumeMap, year, settings, activeMonth, activeWeek);
+  const share = shares.get(operationId);
+  return share != null && Number.isFinite(share) ? share : null;
+}
+
 /** Ten sam wolumen co w kalkulatorze obciążenia dla operacji w danym roku: nadpisanie per rok > projekt/detal > pole operacji. */
 export function resolveOperationVolumeForYear(
   op: {
@@ -761,7 +983,11 @@ export function resolveOperationVolumeForYear(
   useContractualVolumes: boolean = false,
   volumePrefetch?: VolumePrefetchMaps | null,
   activeMonth?: number,
-  activeWeek?: number
+  activeWeek?: number,
+  /** Mapa nadpisań roku (do proporcji alokacji przy wolumenach kontraktowych). */
+  opVolumeMapForYear?: Map<number, OperationYearVolumeRow> | null,
+  /** false = nie skaluj alokacji do kontraktu (np. liczenie udziałów SAP). */
+  applyAllocationContractFraction: boolean = true
 ): {
   volume_value: number;
   volume_unit: 'annual' | 'monthly' | 'weekly';
@@ -776,6 +1002,68 @@ export function resolveOperationVolumeForYear(
     opYearOverride != null
       ? pickOperationYearVolumeForPeriod(opYearOverride, year, activeMonth, activeWeek)
       : null;
+
+  const allocationOverride =
+    opYearOverride != null &&
+    (isAllocationVolumeSource(opYearOverride.source) ||
+      (op.split_from_operation_id != null &&
+        (opYearOverride.source == null ||
+          String(opYearOverride.source).trim() === '' ||
+          isAllocationVolumeSource(opYearOverride.source))));
+
+  /** Przy wolumenach kontraktowych: nadpisanie alokacji = udział × wolumen kontraktowy detalu. */
+  if (
+    applyAllocationContractFraction &&
+    useContractualVolumes &&
+    allocationOverride &&
+    periodOverride &&
+    op.project_id &&
+    op.part_id
+  ) {
+    const effective = scenarioSnapshot
+      ? getEffectiveVolumeForPartScenarioPreferContract(
+          op.project_id,
+          op.part_id,
+          year,
+          scenarioSnapshot,
+          true
+        )
+      : volumePrefetch
+        ? lookupEffectiveVolumeForPartPreferContract(
+            op.project_id,
+            op.part_id,
+            year,
+            volumePrefetch,
+            true,
+            parseSopEop,
+            normalizeVolumeOrigin
+          )
+        : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, true);
+    if (effective) {
+      const settings =
+        scenarioSnapshot != null
+          ? resolveSettingsForScenarioYear(year, scenarioSnapshot) ?? resolveSettingsForYear(year, 'capacity')
+          : resolveSettingsForYear(year, 'capacity');
+      const share = allocationFamilyShareForOperation(
+        op.operation_id,
+        year,
+        opYearOverride,
+        opVolumeMapForYear ?? null,
+        settings,
+        activeMonth,
+        activeWeek
+      );
+      if (share != null && Number.isFinite(share)) {
+        return {
+          volume_value: (Number(effective.volume_value) || 0) * share,
+          volume_unit: asUnit(effective.volume_unit),
+          source: 'part',
+          volume_origin: effective.volume_origin ?? 'manual_year',
+          count_after_eop: effective.count_after_eop,
+        };
+      }
+    }
+  }
 
   if (op.split_from_operation_id != null) {
     if (periodOverride) {
@@ -1007,13 +1295,13 @@ function callOffVolumeUnitForPeriod(
   return 'annual';
 }
 
-/** Udział operacji w wolumenie SAP detalu — produkcja, potem kontrakt, na końcu równy podział. */
+/** Udział operacji w wolumenie SAP — w rodzinie alokacji (wszystkie maszyny), nie per maszyna. */
 function buildCallOffOperationShares(
-  machineOps: any[],
+  allOps: any[],
   year: number,
   activeMonth: number | undefined,
   activeWeek: number | undefined,
-  volumeMap: Map<number, { volume_value: number; volume_unit: string }>,
+  volumeMap: Map<number, OperationYearVolumeRow>,
   scenarioSnapshotEff: ScenarioBundle | null,
   useContract: boolean,
   volumePrefetch: VolumePrefetchMaps | undefined,
@@ -1022,66 +1310,88 @@ function buildCallOffOperationShares(
 ): Map<number, number> {
   const callOffOpShare = new Map<number, number>();
 
-  const accumulateShares = (useContractForShare: boolean) => {
-    const partWeeklyTotal = new Map<number, number>();
-    const opWeekly = new Map<number, number>();
-    const opPartId = new Map<number, number>();
+  // 1) Szybko: udziały z nadpisań alokacji (volumeMap), bez resolve per operacja.
+  const familyShares = buildAllocationFamilyShareMap(volumeMap, year, settings, activeMonth, activeWeek);
+  for (const [opId, share] of familyShares) {
+    callOffOpShare.set(opId, share);
+  }
 
-    for (const op of machineOps) {
+  const opById = new Map<number, any>();
+  for (const op of allOps) {
+    const opKey = Number(op.operation_id ?? op.id);
+    if (Number.isFinite(opKey)) opById.set(opKey, op);
+  }
+
+  const familyKeyOf = (op: any, opKey: number) =>
+    allocationFamilyRootId(opKey, op.split_from_operation_id, opById);
+
+  const weeklyFromResolved = (op: any, opKey: number, useContractForShare: boolean): number => {
+    const resolved = resolveOperationVolumeForYear(
+      {
+        operation_id: opKey,
+        project_id: op.project_id,
+        part_id: op.part_id,
+        volume_value: op.volume_value,
+        volume_unit: op.volume_unit,
+        split_from_operation_id: op.split_from_operation_id,
+      },
+      year,
+      volumeMap.get(opKey),
+      scenarioSnapshotEff,
+      useContractForShare,
+      volumePrefetch,
+      activeMonth,
+      activeWeek,
+      volumeMap,
+      false
+    );
+    if (
+      !shouldIncludeOperationInCapacity(
+        op.sop ?? '',
+        op.eop ?? '',
+        year,
+        activeMonth ?? undefined,
+        Boolean(resolved.count_after_eop),
+        op.project_id != null
+      )
+    ) {
+      return 0;
+    }
+    return resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
+      sop: op.sop ?? '',
+      eop: op.eop ?? '',
+      year,
+      volume_origin: resolved.volume_origin,
+      count_after_eop: resolved.count_after_eop,
+      has_project: op.project_id != null,
+    }).weekly;
+  };
+
+  const accumulateShares = (useContractForShare: boolean) => {
+    const familyWeeklyTotal = new Map<number, number>();
+    const opWeekly = new Map<number, number>();
+    const opFamily = new Map<number, number>();
+
+    for (const op of allOps) {
       const opKey = Number(op.operation_id ?? op.id);
       if (!Number.isFinite(opKey)) continue;
       if ((callOffOpShare.get(opKey) ?? 0) > 0) continue;
 
-      const resolved = resolveOperationVolumeForYear(
-        {
-          operation_id: opKey,
-          project_id: op.project_id,
-          part_id: op.part_id,
-          volume_value: op.volume_value,
-          volume_unit: op.volume_unit,
-          split_from_operation_id: op.split_from_operation_id,
-        },
-        year,
-        volumeMap.get(opKey),
-        scenarioSnapshotEff,
-        useContractForShare,
-        volumePrefetch,
-        activeMonth,
-        activeWeek
-      );
-      if (
-        !shouldIncludeOperationInCapacity(
-          op.sop ?? '',
-          op.eop ?? '',
-          year,
-          activeMonth ?? undefined,
-          Boolean(resolved.count_after_eop),
-          op.project_id != null
-        )
-      ) {
-        continue;
-      }
-      const weeklyResolved = resolveWeeklyVolumeFromResolved(resolved.volume_value, resolved.volume_unit, settings, {
-        sop: op.sop ?? '',
-        eop: op.eop ?? '',
-        year,
-        volume_origin: resolved.volume_origin,
-        count_after_eop: resolved.count_after_eop,
-        has_project: op.project_id != null,
-      });
-      if (weeklyResolved.weekly <= 1e-9) continue;
+      const weekly = weeklyFromResolved(op, opKey, useContractForShare);
+      if (weekly <= 1e-9) continue;
       const partId = op.part_id != null ? Number(op.part_id) : null;
       if (partId == null || !Number.isFinite(partId)) continue;
-      opWeekly.set(opKey, weeklyResolved.weekly);
-      opPartId.set(opKey, partId);
-      partWeeklyTotal.set(partId, (partWeeklyTotal.get(partId) ?? 0) + weeklyResolved.weekly);
+      const family = familyKeyOf(op, opKey);
+      opWeekly.set(opKey, weekly);
+      opFamily.set(opKey, family);
+      familyWeeklyTotal.set(family, (familyWeeklyTotal.get(family) ?? 0) + weekly);
     }
 
     for (const [opKey, weekly] of opWeekly) {
       if ((callOffOpShare.get(opKey) ?? 0) > 0) continue;
-      const partId = opPartId.get(opKey);
-      if (partId == null) continue;
-      const total = partWeeklyTotal.get(partId) ?? weekly;
+      const family = opFamily.get(opKey);
+      if (family == null) continue;
+      const total = familyWeeklyTotal.get(family) ?? weekly;
       if (total <= 1e-9) continue;
       callOffOpShare.set(opKey, weekly / total);
     }
@@ -1090,8 +1400,8 @@ function buildCallOffOperationShares(
   accumulateShares(useContract);
   if (!useContract) accumulateShares(true);
 
-  const opsByPartWithoutShare = new Map<number, number[]>();
-  for (const op of machineOps) {
+  const opsByFamilyWithoutShare = new Map<number, number[]>();
+  for (const op of allOps) {
     const opKey = Number(op.operation_id ?? op.id);
     if (!Number.isFinite(opKey)) continue;
     if ((callOffOpShare.get(opKey) ?? 0) > 0) continue;
@@ -1114,7 +1424,11 @@ function buildCallOffOperationShares(
       volumeMap.get(opKey),
       scenarioSnapshotEff,
       useContract,
-      volumePrefetch
+      volumePrefetch,
+      undefined,
+      undefined,
+      volumeMap,
+      false
     );
     if (
       !shouldIncludeOperationInCapacity(
@@ -1130,11 +1444,12 @@ function buildCallOffOperationShares(
     }
     if (!isOperationAssignedOnMachineForPeriod(op, year, activeMonth, resolved)) continue;
 
-    if (!opsByPartWithoutShare.has(partId)) opsByPartWithoutShare.set(partId, []);
-    opsByPartWithoutShare.get(partId)!.push(opKey);
+    const family = familyKeyOf(op, opKey);
+    if (!opsByFamilyWithoutShare.has(family)) opsByFamilyWithoutShare.set(family, []);
+    opsByFamilyWithoutShare.get(family)!.push(opKey);
   }
 
-  for (const opKeys of opsByPartWithoutShare.values()) {
+  for (const opKeys of opsByFamilyWithoutShare.values()) {
     if (opKeys.length === 0) continue;
     const equalShare = 1 / opKeys.length;
     for (const opKey of opKeys) callOffOpShare.set(opKey, equalShare);
@@ -1244,6 +1559,29 @@ export function getMachineCapacitiesForYear(
   const operationsByMachine = computeShared.operationsByMachine;
   const volumeMap = computeShared.opVolumeMapByYear.get(year) ?? new Map();
 
+  /** Udziały SAP raz na rok/miesiąc/tydzień — z cache shared (Call offs liczy wiele tygodni). */
+  const callOffOpShare = (() => {
+    if (!callOffVolumes) return null;
+    const cache = computeShared.callOffShareCache ?? (computeShared.callOffShareCache = new Map());
+    const key = `${year}|${activeMonth ?? ''}|${activeWeek ?? ''}|${useContract ? 1 : 0}`;
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const built = buildCallOffOperationShares(
+      operations,
+      year,
+      activeMonth,
+      activeWeek,
+      volumeMap,
+      scenarioSnapshotEff,
+      useContract,
+      volumePrefetch,
+      settings,
+      callOffVolumes
+    );
+    cache.set(key, built);
+    return built;
+  })();
+
   return machines.map((m) => {
     const machineOps = operationsByMachine.get(m.machine_id) ?? [];
     let totalRequiredSec = 0;
@@ -1257,28 +1595,12 @@ export function getMachineCapacitiesForYear(
     >();
     let hasRfq = false;
 
-    /** Udział operacji w wolumenie SAP detalu na tej maszynie. */
-    const callOffOpShare = callOffVolumes
-      ? buildCallOffOperationShares(
-          machineOps,
-          year,
-          activeMonth,
-          activeWeek,
-          volumeMap,
-          scenarioSnapshotEff,
-          useContract,
-          volumePrefetch,
-          settings,
-          callOffVolumes
-        )
-      : new Map<number, number>();
-
     for (const op of machineOps) {
       const opKey = Number(op.operation_id ?? op.id);
       if (!Number.isFinite(opKey)) continue;
       let opVolumeOverride = volumeMap.get(opKey);
       if (callOffVolumes) {
-        const share = callOffOpShare.get(opKey);
+        const share = callOffOpShare?.get(opKey);
         const partId = op.part_id != null ? Number(op.part_id) : null;
         const periodUnit = callOffVolumeUnitForPeriod(activeMonth, activeWeek);
         if (share != null && share > 0 && partId != null && Number.isFinite(partId)) {
@@ -1286,12 +1608,14 @@ export function getMachineCapacitiesForYear(
           opVolumeOverride = {
             volume_value: sapRaw * share,
             volume_unit: periodUnit,
+            source: 'call_off',
           };
         } else if (includeAssignedZeroVolumeDetails) {
           /** Detal przypisany w SOP–EOP bez wolumenu SAP w okresie — nadal w podglądzie (0%). */
           opVolumeOverride = {
             volume_value: 0,
             volume_unit: periodUnit,
+            source: 'call_off',
           };
         } else {
           continue;
@@ -1312,7 +1636,8 @@ export function getMachineCapacitiesForYear(
         useContract,
         volumePrefetch,
         activeMonth,
-        activeWeek
+        activeWeek,
+        callOffVolumes ? null : volumeMap
       );
       if (
         !shouldIncludeOperationInCapacity(
@@ -1513,16 +1838,44 @@ export function getMachineLoadComputationDetails(
         year: number;
         volume_value: number;
         volume_unit: string;
+        source?: string | null;
       }[];
-      return new Map(rows.map((v) => [Number(v.operation_id), v]));
+      return new Map(
+        rows.map((v) => [
+          Number(v.operation_id),
+          {
+            volume_value: v.volume_value,
+            volume_unit: v.volume_unit,
+            source: v.source ?? null,
+          },
+        ])
+      );
     }
-    const volumeByYear = db.prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year = ?').all(year) as {
-      operation_id: number;
-      year: number;
-      volume_value: number;
-      volume_unit: string;
-    }[];
-    return new Map(volumeByYear.map((v) => [v.operation_id, v]));
+    try {
+      const volumeByYear = db
+        .prepare(
+          `SELECT operation_id, year, volume_value, volume_unit, COALESCE(source, 'manual') AS source
+           FROM operation_volume_by_year WHERE year = ?`
+        )
+        .all(year) as {
+        operation_id: number;
+        year: number;
+        volume_value: number;
+        volume_unit: string;
+        source: string;
+      }[];
+      return new Map(
+        volumeByYear.map((v) => [
+          v.operation_id,
+          { volume_value: v.volume_value, volume_unit: v.volume_unit, source: v.source },
+        ])
+      );
+    } catch {
+      const volumeByYear = db
+        .prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year = ?')
+        .all(year) as { operation_id: number; year: number; volume_value: number; volume_unit: string }[];
+      return new Map(volumeByYear.map((v) => [v.operation_id, v]));
+    }
   })();
 
   const machineOps = operations.filter((o: any) => o.machine_id === m.machine_id);
@@ -1555,7 +1908,11 @@ export function getMachineLoadComputationDetails(
       year,
       opVolumeOverride ?? null,
       scenarioSnapshot ?? null,
-      useContract
+      useContract,
+      undefined,
+      undefined,
+      undefined,
+      volumeMap
     );
     if (
       !shouldIncludeOperationInCapacity(
@@ -2454,31 +2811,57 @@ function accumulateScopeBreakdown(
         year: number;
         volume_value: number;
         volume_unit: string;
+        source?: string | null;
       }[];
-      return new Map(rows.map((v) => [Number(v.operation_id), v]));
-    }
-    const volumeByYear = db
-      .prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year = ?')
-      .all(year) as { operation_id: number; year: number; volume_value: number; volume_unit: string }[];
-    return new Map(volumeByYear.map((v) => [v.operation_id, v]));
-  })();
-  const callOffSharesByMachine = opts.callOffVolumes
-    ? new Map(
-        [...new Set(operations.map((op) => Number(op.machine_id)).filter(Number.isFinite))].map((machineId) => [
-          machineId,
-          buildCallOffOperationShares(
-            operations.filter((op) => Number(op.machine_id) === machineId),
-            year,
-            undefined,
-            undefined,
-            volumeMap,
-            opts.scenarioSnapshot ?? null,
-            useContract,
-            undefined,
-            settings,
-            opts.callOffVolumes!
-          ),
+      return new Map(
+        rows.map((v) => [
+          Number(v.operation_id),
+          {
+            volume_value: v.volume_value,
+            volume_unit: v.volume_unit,
+            source: v.source ?? null,
+          },
         ])
+      );
+    }
+    try {
+      const volumeByYear = db
+        .prepare(
+          `SELECT operation_id, year, volume_value, volume_unit, COALESCE(source, 'manual') AS source
+           FROM operation_volume_by_year WHERE year = ?`
+        )
+        .all(year) as {
+        operation_id: number;
+        year: number;
+        volume_value: number;
+        volume_unit: string;
+        source: string;
+      }[];
+      return new Map(
+        volumeByYear.map((v) => [
+          v.operation_id,
+          { volume_value: v.volume_value, volume_unit: v.volume_unit, source: v.source },
+        ])
+      );
+    } catch {
+      const volumeByYear = db
+        .prepare('SELECT operation_id, year, volume_value, volume_unit FROM operation_volume_by_year WHERE year = ?')
+        .all(year) as { operation_id: number; year: number; volume_value: number; volume_unit: string }[];
+      return new Map(volumeByYear.map((v) => [v.operation_id, v]));
+    }
+  })();
+  const callOffOpShare = opts.callOffVolumes
+    ? buildCallOffOperationShares(
+        operations,
+        year,
+        undefined,
+        undefined,
+        volumeMap,
+        opts.scenarioSnapshot ?? null,
+        useContract,
+        undefined,
+        settings,
+        opts.callOffVolumes
       )
     : null;
 
@@ -2492,14 +2875,13 @@ function accumulateScopeBreakdown(
     if (!Number.isFinite(opKey)) continue;
     let opVolumeOverride = volumeMap.get(opKey);
     if (opts.callOffVolumes) {
-      const share = callOffSharesByMachine?.get(machineId)?.get(opKey);
+      const share = callOffOpShare?.get(opKey);
       const partId = op.part_id != null ? Number(op.part_id) : null;
       if (share == null || share <= 0 || partId == null || !Number.isFinite(partId)) continue;
       opVolumeOverride = {
-        operation_id: opKey,
-        year,
         volume_value: callOffQuantityForPeriod(opts.callOffVolumes, partId, year, undefined, undefined) * share,
         volume_unit: callOffVolumeUnitForPeriod(undefined, undefined),
+        source: 'call_off',
       };
     }
     const resolved = resolveOperationVolumeForYear(
@@ -2514,7 +2896,11 @@ function accumulateScopeBreakdown(
       year,
       opVolumeOverride,
       opts.scenarioSnapshot ?? null,
-      useContract
+      useContract,
+      undefined,
+      undefined,
+      undefined,
+      opts.callOffVolumes ? null : volumeMap
     );
     if (
       !shouldIncludeOperationInCapacity(

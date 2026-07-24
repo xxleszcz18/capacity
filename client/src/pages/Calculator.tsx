@@ -16,7 +16,7 @@ import { machineStatusFromDb } from '../utils/machineStatusStyle';
 import * as XLSX from 'xlsx';
 import { excelExportCell } from '../utils/excelExportCell';
 import { machineMatchesCalculatorFilter } from '../utils/machineSearchFilter';
-import { maxTypeAverageLoad } from '../utils/maxTypeAverageLoad';
+import { maxTypeAverageLoad, maxTypeAverageLoadDetails } from '../utils/maxTypeAverageLoad';
 import { compareInternalMachineNumbers } from '../utils/internalMachineNumber';
 import SortableTh from '../components/SortableTh';
 import { sortIndicator, sortRows, type SortDirection } from '../utils/tableSort';
@@ -173,6 +173,20 @@ function normalizeCalculatorPageSize(v: unknown): number {
   const n = Number(v);
   if (n === 0 || n === 25 || n === 50) return n;
   return 25;
+}
+
+/** Domyślny zakres lat z ustawień wizualnych (kalkulator + wizualizacja danych). */
+function normalizeVisualDefaultYearRange(
+  fromRaw: unknown,
+  toRaw: unknown
+): { from: number; to: number } {
+  const fallbackFrom = calendarYear() - 1;
+  const fallbackTo = calendarYear() + 10;
+  const from = Number(fromRaw);
+  const to = Number(toRaw);
+  const a = Number.isFinite(from) ? Math.round(from) : fallbackFrom;
+  const b = Number.isFinite(to) ? Math.round(to) : fallbackTo;
+  return { from: Math.min(a, b), to: Math.max(a, b) };
 }
 
 /** Czy dany wiersz podsumowania ma być wyróżniony (checkbox w ustawieniach). */
@@ -945,6 +959,11 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   const [yearTo, setYearTo] = useState(() => calendarYear() + 10);
   const [debouncedYearFrom, setDebouncedYearFrom] = useState(() => calendarYear() - 1);
   const [debouncedYearTo, setDebouncedYearTo] = useState(() => calendarYear() + 10);
+  /** Domyślny zakres z Administracja → Ustawienia wizualne (do clear filtrów / startu). */
+  const [defaultYearFrom, setDefaultYearFrom] = useState(() => calendarYear() - 1);
+  const [defaultYearTo, setDefaultYearTo] = useState(() => calendarYear() + 10);
+  const yearDefaultsAppliedRef = useRef(false);
+  const yearsLockedByCallOffRef = useRef(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1039,7 +1058,10 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       api.settings.visual
         .get()
         .then((v) => {
-          const raw = v as VisualSettings;
+          const raw = v as VisualSettings & {
+            data_viz_default_year_from?: number;
+            data_viz_default_year_to?: number;
+          };
           setVisualSettings({
             ...defaultVisualSettings,
             ...raw,
@@ -1053,6 +1075,19 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             period_week_header_color: raw.period_week_header_color ?? '#e0e7ff',
             period_week_frame_color: raw.period_week_frame_color ?? '#6366f1',
           });
+          const { from, to } = normalizeVisualDefaultYearRange(
+            raw.data_viz_default_year_from,
+            raw.data_viz_default_year_to
+          );
+          setDefaultYearFrom(from);
+          setDefaultYearTo(to);
+          if (!yearDefaultsAppliedRef.current && !yearsLockedByCallOffRef.current && !callOffMode) {
+            yearDefaultsAppliedRef.current = true;
+            setYearFrom(from);
+            setYearTo(to);
+            setDebouncedYearFrom(from);
+            setDebouncedYearTo(to);
+          }
         })
         .catch(() => {});
     };
@@ -1062,10 +1097,28 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, []);
+  }, [callOffMode]);
+
+  /** Po wyjściu z Call offs — z powrotem domyślny zakres z ustawień. */
+  const prevCallOffModeRef = useRef(callOffMode);
+  useEffect(() => {
+    if (prevCallOffModeRef.current && !callOffMode) {
+      yearsLockedByCallOffRef.current = false;
+      yearDefaultsAppliedRef.current = false;
+      const { from, to } = { from: defaultYearFrom, to: defaultYearTo };
+      setYearFrom(from);
+      setYearTo(to);
+      setDebouncedYearFrom(from);
+      setDebouncedYearTo(to);
+      yearDefaultsAppliedRef.current = true;
+    }
+    prevCallOffModeRef.current = callOffMode;
+  }, [callOffMode, defaultYearFrom, defaultYearTo]);
 
   useEffect(() => {
     if (!callOffMode || !callOffComparisonId) return;
+    yearsLockedByCallOffRef.current = true;
+    yearDefaultsAppliedRef.current = false;
     setTimelineYearsReady(false);
     setData(null);
     setLoading(true);
@@ -1099,6 +1152,9 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         setScenarioCallOffComparisonId(null);
         setScenarioCallOffMeta(null);
         setTimelineYearsReady(true);
+        if (!callOffMode) {
+          yearsLockedByCallOffRef.current = false;
+        }
       }
       return;
     }
@@ -1111,6 +1167,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         setActiveScenario(scenarioId, s.name);
         const coId = s.source_call_off_comparison_id;
         if (coId != null && coId > 0) {
+          yearsLockedByCallOffRef.current = true;
           setScenarioCallOffComparisonId(coId);
           try {
             const row = await api.callOffs.get(coId);
@@ -1124,6 +1181,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
             setScenarioCallOffMeta(null);
           }
         } else {
+          yearsLockedByCallOffRef.current = false;
           setScenarioCallOffComparisonId(null);
           setScenarioCallOffMeta(null);
         }
@@ -1670,6 +1728,14 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       maxTypeAverageLoad(filteredMachines, (m: any) => Number(m.years?.[y]?.load_percent ?? 0)) ?? 0;
     return { year: y, sum, avg, maxTypeAvg };
   });
+  /** Liczba maszyn w typie, którego średnia wygrywa (opis wiersza „Max średnia wg typu”). */
+  const maxTypeAvgMachineCount =
+    maxTypeAverageLoadDetails(filteredMachines, (m: any) => {
+      if (!years.length) return 0;
+      let sum = 0;
+      for (const y of years) sum += Number(m.years?.[y]?.load_percent ?? 0);
+      return sum / years.length;
+    })?.count ?? filteredMachines.length;
   const pinnedSapWidth = 156;
   const pinnedNumberWidth = 143;
   const pinnedTypeWidth = 94;
@@ -1831,8 +1897,10 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         })
         .catch(() => {});
     } else {
-      setYearFrom(calendarYear() - 1);
-      setYearTo(calendarYear() + 10);
+      setYearFrom(defaultYearFrom);
+      setYearTo(defaultYearTo);
+      setDebouncedYearFrom(defaultYearFrom);
+      setDebouncedYearTo(defaultYearTo);
     }
     setTypeFilter([]);
     setClientFilter([]);
@@ -1967,7 +2035,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
       ];
       const maxTypeAvgRowPdf: any[] = [
         {
-          content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: rows.length })),
+          content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: maxTypeAvgMachineCount })),
           colSpan: 3,
           styles: {
             fontStyle: 'bold',
@@ -2056,6 +2124,13 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
           : 0;
         return { y, sum, avg, maxTypeAvg, sumCo, avgCo, maxTypeAvgCo };
       });
+      const reportMaxTypeAvgMachineCount =
+        maxTypeAverageLoadDetails(selected, (m: any) => {
+          if (!years.length) return 0;
+          let sum = 0;
+          for (const y of years) sum += yearLoad(m, y);
+          return sum / years.length;
+        })?.count ?? selected.length;
       const settingsCache = new Map<number, any>();
       const getSettingsForYear = async (year: number) => {
         if (settingsCache.has(year)) return settingsCache.get(year);
@@ -2498,7 +2573,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         ];
         const maxTypeAvgRowReportPdf: any[] = [
           {
-            content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: reportPdfRows.length })),
+            content: pdfSafe(t('reports.calculator.maxTypeAvgLoad', { count: reportMaxTypeAvgMachineCount })),
             colSpan: 3,
             styles: {
               fontStyle: 'bold',
@@ -2953,18 +3028,6 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
         label={calculatorBusyLabel}
         className="calculator-data-panel"
       >
-      {calculatorBusy && (
-        <div className="calculator-loading-banner" role="status" aria-live="polite">
-          <span className="data-loading-spinner" aria-hidden="true" />
-          <span>{calculatorBusyLabel ?? t('common.recalculating')}</span>
-        </div>
-      )}
-      {calculatorBusy && (!data || displayedMachines.length === 0) && (
-        <div className="calculator-loading-panel" role="status" aria-live="polite">
-          <span className="data-loading-spinner" aria-hidden="true" />
-          <span>{calculatorBusyLabel ?? t('common.recalculating')}</span>
-        </div>
-      )}
       {!calculatorBusy && !data && (
         <p style={{ margin: '1rem 0', padding: '0.75rem 1rem', background: '#ffebee', borderRadius: 8, color: '#b71c1c' }}>
           {t('common.error')}
@@ -3543,7 +3606,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                 </tr>
                 <tr style={{ fontWeight: 600 }}>
                   <td style={summaryLabelCellStyle(visualSettings, 'maxTypeAvg')} colSpan={3}>
-                    {t('calculator.maxTypeAvgLoadsWithCount', { count: filteredMachines.length })}
+                    {t('calculator.maxTypeAvgLoadsWithCount', { count: maxTypeAvgMachineCount })}
                   </td>
                   {timelineColumns.map((col) => {
                     const maxTypeAvg =
