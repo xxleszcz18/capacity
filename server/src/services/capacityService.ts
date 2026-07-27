@@ -1011,10 +1011,9 @@ export function resolveOperationVolumeForYear(
           String(opYearOverride.source).trim() === '' ||
           isAllocationVolumeSource(opYearOverride.source))));
 
-  /** Przy wolumenach kontraktowych: nadpisanie alokacji = udział × wolumen kontraktowy detalu. */
+  /** Nadpisanie alokacji = udział w rodzinie × aktualny wolumen detalu (produkcja lub kontrakt). */
   if (
     applyAllocationContractFraction &&
-    useContractualVolumes &&
     allocationOverride &&
     periodOverride &&
     op.project_id &&
@@ -1026,7 +1025,7 @@ export function resolveOperationVolumeForYear(
           op.part_id,
           year,
           scenarioSnapshot,
-          true
+          useContractualVolumes
         )
       : volumePrefetch
         ? lookupEffectiveVolumeForPartPreferContract(
@@ -1034,11 +1033,11 @@ export function resolveOperationVolumeForYear(
             op.part_id,
             year,
             volumePrefetch,
-            true,
+            useContractualVolumes,
             parseSopEop,
             normalizeVolumeOrigin
           )
-        : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, true);
+        : getEffectiveVolumeForPartPreferContract(op.project_id, op.part_id, year, useContractualVolumes);
     if (effective) {
       const settings =
         scenarioSnapshot != null

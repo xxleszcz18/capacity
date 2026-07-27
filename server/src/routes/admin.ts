@@ -4,7 +4,7 @@ import path from 'path';
 import multer from 'multer';
 import { db, getDatabasePath, restoreDbFromBackupFile, saveDb } from '../db/connection.js';
 import { performDatabaseBackup, resolveBackupDirectory } from '../services/backupService.js';
-import { resolveAttachmentsDirectory } from '../services/projectAttachmentService.js';
+import { resolveAttachmentsDirectory, listAllAttachmentsForAdmin } from '../services/projectAttachmentService.js';
 import { getPickLocationJob, startPickLocationJob } from '../services/pickLocationJobService.js';
 import {
   browseStorageDirectory,
@@ -187,6 +187,14 @@ adminRouter.get('/backup-settings', (_req, res) => {
     absolute_attachments_output_dir: absoluteAttachmentsOutputDir,
     ...getStorageInfo(),
   });
+});
+
+adminRouter.get('/attachments', (_req, res) => {
+  try {
+    res.json(listAllAttachmentsForAdmin());
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Nie udało się pobrać listy załączników.' });
+  }
 });
 
 adminRouter.put('/backup-settings', (req, res) => {

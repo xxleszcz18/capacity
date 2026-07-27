@@ -926,94 +926,120 @@ export function findAllocationTreeRootOperationId(operationId: number): number {
   return operationId;
 }
 
-export function mergeSplitChildVolumesIntoParent(parentOperationId: number, childOperationId: number): void {
-  const childRows = db
+/** Scala wolumen jednego roku z operacji-dziecka alokacji z powrotem do rodzica. */
+export function mergeSplitChildYearVolumeIntoParent(
+  parentOperationId: number,
+  childOperationId: number,
+  year: number
+): void {
+  const row = db
     .prepare(
       `SELECT year, volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week
-       FROM operation_volume_by_year WHERE operation_id = ? ORDER BY year`
+       FROM operation_volume_by_year WHERE operation_id = ? AND year = ?`
     )
-    .all(childOperationId) as {
-    year: number;
-    volume_value: number;
-    volume_unit: string;
-    volume_value_before: number | null;
-    effective_from_month: number | null;
-    effective_from_week: number | null;
-  }[];
+    .get(childOperationId, year) as
+    | {
+        year: number;
+        volume_value: number;
+        volume_unit: string;
+        volume_value_before: number | null;
+        effective_from_month: number | null;
+        effective_from_week: number | null;
+      }
+    | undefined;
+  if (!row) return;
 
-  for (const row of childRows) {
-    const { year, volume_value: cv, volume_unit: cuRaw } = row;
-    const cu = cuRaw === 'monthly' || cuRaw === 'weekly' ? cuRaw : 'annual';
-    const settings = resolveSettingsForYear(year);
+  const cu = row.volume_unit === 'monthly' || row.volume_unit === 'weekly' ? row.volume_unit : 'annual';
+  const settings = resolveSettingsForYear(year);
 
-    const childAfterWeekly = volumeToWeekly(cv, cu, settings);
-    const childBeforeWeekly =
-      row.effective_from_month != null && row.volume_value_before != null
-        ? volumeToWeekly(Number(row.volume_value_before), cu, settings)
-        : childAfterWeekly;
-    if (childAfterWeekly <= 1e-9 && childBeforeWeekly <= 1e-9) continue;
+  const childAfterWeekly = volumeToWeekly(row.volume_value, cu, settings);
+  const childBeforeWeekly =
+    row.effective_from_month != null && row.volume_value_before != null
+      ? volumeToWeekly(Number(row.volume_value_before), cu, settings)
+      : childAfterWeekly;
+  if (childAfterWeekly <= 1e-9 && childBeforeWeekly <= 1e-9) return;
 
-    const parentYearRow = db
-      .prepare(
-        `SELECT volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week
-         FROM operation_volume_by_year WHERE operation_id = ? AND year = ?`
-      )
-      .get(parentOperationId, year) as
-      | {
-          volume_value: number;
-          volume_unit: string;
-          volume_value_before: number | null;
-          effective_from_month: number | null;
-          effective_from_week: number | null;
-        }
-      | undefined;
+  const parentYearRow = db
+    .prepare(
+      `SELECT volume_value, volume_unit, volume_value_before, effective_from_month, effective_from_week
+       FROM operation_volume_by_year WHERE operation_id = ? AND year = ?`
+    )
+    .get(parentOperationId, year) as
+    | {
+        volume_value: number;
+        volume_unit: string;
+        volume_value_before: number | null;
+        effective_from_month: number | null;
+        effective_from_week: number | null;
+      }
+    | undefined;
 
-    let parentAfterWeekly = 0;
-    let parentBeforeWeekly = 0;
-    let fromMonth: number | null = null;
-    let fromWeek: number | null = null;
-    if (parentYearRow) {
-      const pu =
-        parentYearRow.volume_unit === 'monthly' || parentYearRow.volume_unit === 'weekly'
-          ? parentYearRow.volume_unit
-          : 'annual';
-      parentAfterWeekly = volumeToWeekly(parentYearRow.volume_value, pu, settings);
-      parentBeforeWeekly =
-        parentYearRow.effective_from_month != null && parentYearRow.volume_value_before != null
-          ? volumeToWeekly(Number(parentYearRow.volume_value_before), pu, settings)
-          : parentAfterWeekly;
-      fromMonth = parentYearRow.effective_from_month;
-      fromWeek = parentYearRow.effective_from_week;
-    }
-    if (row.effective_from_month != null) {
-      fromMonth = fromMonth ?? row.effective_from_month;
-      fromWeek = fromWeek ?? row.effective_from_week ?? 1;
-    }
+  let parentAfterWeekly = 0;
+  let parentBeforeWeekly = 0;
+  let fromMonth: number | null = null;
+  let fromWeek: number | null = null;
+  if (parentYearRow) {
+    const pu =
+      parentYearRow.volume_unit === 'monthly' || parentYearRow.volume_unit === 'weekly'
+        ? parentYearRow.volume_unit
+        : 'annual';
+    parentAfterWeekly = volumeToWeekly(parentYearRow.volume_value, pu, settings);
+    parentBeforeWeekly =
+      parentYearRow.effective_from_month != null && parentYearRow.volume_value_before != null
+        ? volumeToWeekly(Number(parentYearRow.volume_value_before), pu, settings)
+        : parentAfterWeekly;
+    fromMonth = parentYearRow.effective_from_month;
+    fromWeek = parentYearRow.effective_from_week;
+  }
+  if (row.effective_from_month != null) {
+    fromMonth = fromMonth ?? row.effective_from_month;
+    fromWeek = fromWeek ?? row.effective_from_week ?? 1;
+  }
 
-    const mergedAfter = parentAfterWeekly + childAfterWeekly;
-    const mergedBefore = parentBeforeWeekly + childBeforeWeekly;
-    if (fromMonth != null && Math.abs(mergedBefore - mergedAfter) > 1e-6) {
-      upsertOperationYearVolume({
-        operationId: parentOperationId,
-        year,
-        volumeValue: mergedAfter,
-        volumeUnit: 'weekly',
-        source: 'allocation',
-        volumeValueBefore: mergedBefore,
-        effectiveFromMonth: fromMonth,
-        effectiveFromWeek: fromWeek ?? 1,
-      });
-    } else {
-      upsertOperationYearVolume({
-        operationId: parentOperationId,
-        year,
-        volumeValue: mergedAfter,
-        volumeUnit: 'weekly',
-        source: 'allocation',
-      });
-    }
+  const mergedAfter = parentAfterWeekly + childAfterWeekly;
+  const mergedBefore = parentBeforeWeekly + childBeforeWeekly;
+  if (fromMonth != null && Math.abs(mergedBefore - mergedAfter) > 1e-6) {
+    upsertOperationYearVolume({
+      operationId: parentOperationId,
+      year,
+      volumeValue: mergedAfter,
+      volumeUnit: 'weekly',
+      source: 'allocation',
+      volumeValueBefore: mergedBefore,
+      effectiveFromMonth: fromMonth,
+      effectiveFromWeek: fromWeek ?? 1,
+    });
+  } else {
+    upsertOperationYearVolume({
+      operationId: parentOperationId,
+      year,
+      volumeValue: mergedAfter,
+      volumeUnit: 'weekly',
+      source: 'allocation',
+    });
+  }
+}
+
+export function mergeSplitChildVolumesIntoParent(parentOperationId: number, childOperationId: number): void {
+  const childRows = db
+    .prepare(`SELECT year FROM operation_volume_by_year WHERE operation_id = ? ORDER BY year`)
+    .all(childOperationId) as { year: number }[];
+
+  for (const { year } of childRows) {
+    mergeSplitChildYearVolumeIntoParent(parentOperationId, childOperationId, year);
   }
   ensureSplitChildYearCoverage(parentOperationId);
+}
+
+/** Usuwa wpisy operation_volume_by_year bez istniejącej operacji (po usunięciu bez CASCADE). */
+export function cleanupOrphanOperationYearVolumes(): number {
+  const r = db
+    .prepare(
+      `DELETE FROM operation_volume_by_year
+       WHERE operation_id NOT IN (SELECT id FROM operations)`
+    )
+    .run();
+  return Number(r.changes ?? 0);
 }
 
 /** If parent has no more split children, remove allocation overrides and return to project/detail volumes. */

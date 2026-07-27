@@ -106,20 +106,26 @@ export function machineLoadPercent(m: CapacityMachineTrend, year: number): numbe
   return y.load_percent ?? null;
 }
 
-export type TrendChartRow = { year: number; [seriesKey: string]: number | null };
+export type TrendChartRow = { year: number; periodLabel?: string; [seriesKey: string]: number | string | null | undefined };
 
 export type TrendSeriesDef = {
   key: string;
   label: string;
   color: string;
   dash?: string;
-  getValue: (year: number) => number | null;
+  getValue: (periodId: number) => number | null;
 };
 
-export function buildTrendRows(years: number[], series: TrendSeriesDef[]): TrendChartRow[] {
-  return years.map((year) => {
-    const row: TrendChartRow = { year };
-    for (const s of series) row[s.key] = s.getValue(year);
+export function buildTrendRows(
+  periodIds: number[],
+  series: TrendSeriesDef[],
+  periodLabels?: Map<number, string>
+): TrendChartRow[] {
+  return periodIds.map((periodId) => {
+    const row: TrendChartRow = { year: periodId };
+    const label = periodLabels?.get(periodId);
+    if (label) row.periodLabel = label;
+    for (const s of series) row[s.key] = s.getValue(periodId);
     return row;
   });
 }

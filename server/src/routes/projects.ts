@@ -4,6 +4,7 @@ import { db, saveDb } from '../db/connection.js';
 import {
   cleanupOrphanPartsForProject,
   deleteOperationInProject,
+  deleteOperationYearVolumeInProject,
 } from '../services/operationDeleteService.js';
 import { formatDetailSapAliasLabel, type ReferenceDisplayMode } from '../utils/detailLabel.js';
 import { loadReferenceDisplayMode } from '../utils/referenceDisplayMode.js';
@@ -1987,11 +1988,20 @@ projectsRouter.put('/:projectId/operations/:opId/volumes', (req, res) => {
   const projectId = Number(req.params.projectId);
   const actor = resolveActor(req);
   const op = db
-    .prepare('SELECT id, machine_id, part_id FROM operations WHERE id = ? AND project_id = ?')
-    .get(opId, projectId) as { id: number; machine_id: number | null; part_id: number | null } | undefined;
+    .prepare('SELECT id, machine_id, part_id, split_from_operation_id FROM operations WHERE id = ? AND project_id = ?')
+    .get(opId, projectId) as
+    | { id: number; machine_id: number | null; part_id: number | null; split_from_operation_id: number | null }
+    | undefined;
   if (!op) return res.status(404).json({ error: 'Not found' });
   const body = req.body as any;
+  const parentId = op.split_from_operation_id != null ? Number(op.split_from_operation_id) : null;
   if (body.volumes && Array.isArray(body.volumes)) {
+    if (parentId != null && Number.isFinite(parentId)) {
+      return res.status(400).json({
+        error:
+          'Operacja z alokacji: żeby oddać wolumen matce usuń operację potomną albo wyzeruj / usuń wolumen wybranego roku. Hurtowa podmiana wolumenów jest niedozwolona.',
+      });
+    }
     db.prepare('DELETE FROM operation_volume_by_year WHERE operation_id = ?').run(opId);
     for (const v of body.volumes) {
       const year = Number(v.year);
@@ -2009,13 +2019,33 @@ projectsRouter.put('/:projectId/operations/:opId/volumes', (req, res) => {
       machineId: op.machine_id,
       partId: op.part_id,
     });
+    saveDb();
     return res.json(rows);
   }
   const year = Number(body.year);
   const volume_value = Number(body.volume_value);
   const volume_unit = ['annual', 'monthly', 'weekly'].includes(body.volume_unit) ? body.volume_unit : 'annual';
+  // Obniżenie / wyzerowanie roku u dziecka alokacji — najpierw oddaj stary wolumen matce.
+  if (parentId != null && Number.isFinite(parentId) && Number.isFinite(volume_value) && volume_value <= 1e-9) {
+    const parent = db.prepare('SELECT id FROM operations WHERE id = ? AND project_id = ?').get(parentId, projectId);
+    if (parent) {
+      const result = deleteOperationYearVolumeInProject(projectId, opId, year);
+      if (!result.ok) {
+        return res.status(result.statusCode ?? 400).json({ error: result.error });
+      }
+      saveDb();
+      const row = db.prepare('SELECT year, volume_value, volume_unit FROM operation_volume_by_year WHERE operation_id = ? AND year = ?').get(opId, year) as any;
+      insertProjectNote(projectId, `Automatyczna zmiana: zaktualizowano wolumen operacji #${opId} dla roku ${year}.`, actor, 'auto', undefined, {
+        operationId: opId,
+        machineId: op.machine_id,
+        partId: op.part_id,
+      });
+      return res.json(row ?? { year, volume_value: 0, volume_unit: 'weekly' });
+    }
+  }
+  const source = parentId != null ? 'allocation' : 'manual';
   try {
-    db.prepare('INSERT OR REPLACE INTO operation_volume_by_year (operation_id, year, volume_value, volume_unit, source) VALUES (?, ?, ?, ?, ?)').run(opId, year, volume_value, volume_unit, 'manual');
+    db.prepare('INSERT OR REPLACE INTO operation_volume_by_year (operation_id, year, volume_value, volume_unit, source) VALUES (?, ?, ?, ?, ?)').run(opId, year, volume_value, volume_unit, source);
   } catch (_) {
     db.prepare('INSERT OR REPLACE INTO operation_volume_by_year (operation_id, year, volume_value, volume_unit) VALUES (?, ?, ?, ?)').run(opId, year, volume_value, volume_unit);
   }
@@ -2025,6 +2055,7 @@ projectsRouter.put('/:projectId/operations/:opId/volumes', (req, res) => {
     machineId: op.machine_id,
     partId: op.part_id,
   });
+  saveDb();
   res.json(row);
 });
 
@@ -2037,7 +2068,11 @@ projectsRouter.delete('/:projectId/operations/:opId/volumes/:year', (req, res) =
     .prepare('SELECT id, machine_id, part_id FROM operations WHERE id = ? AND project_id = ?')
     .get(opId, projectId) as { id: number; machine_id: number | null; part_id: number | null } | undefined;
   if (!op) return res.status(404).json({ error: 'Not found' });
-  db.prepare('DELETE FROM operation_volume_by_year WHERE operation_id = ? AND year = ?').run(opId, year);
+  const result = deleteOperationYearVolumeInProject(projectId, opId, year);
+  if (!result.ok) {
+    return res.status(result.statusCode ?? 400).json({ error: result.error });
+  }
+  saveDb();
   insertProjectNote(projectId, `Automatyczna zmiana: usunięto wolumen operacji #${opId} dla roku ${year}.`, actor, 'auto', undefined, {
     operationId: opId,
     machineId: op.machine_id,

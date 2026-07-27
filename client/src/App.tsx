@@ -20,6 +20,7 @@ import SettingsVisual from './pages/SettingsVisual';
 import ChangeHistory from './pages/ChangeHistory';
 import Administration from './pages/Administration';
 import AdminSettings from './pages/AdminSettings';
+import AdminAttachments from './pages/AdminAttachments';
 import AdminDataVisualization from './pages/AdminDataVisualization';
 import AdminUsers from './pages/AdminUsers';
 import AdminRoles from './pages/AdminRoles';
@@ -237,6 +238,14 @@ function AppShell() {
                     element={
                       <ProtectedRoute permission="admin_settings.view">
                         <AdminSettings />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/administracja/zalaczniki"
+                    element={
+                      <ProtectedRoute permission="admin_settings.view">
+                        <AdminAttachments />
                       </ProtectedRoute>
                     }
                   />

@@ -619,6 +619,24 @@ header nav a:not(.active):hover {
   color: #666;
 }
 
+/* Projekt — układ z lewym sticky nav przy przewijaniu długich zakładek (np. Wolumeny) */
+.project-detail-layout {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.project-detail-nav {
+  flex: 0 0 11.16rem;
+  width: 11.16rem;
+  min-width: 0;
+  position: sticky;
+  top: 1rem;
+  align-self: flex-start;
+  z-index: 2;
+}
+
 /* Projekt — główna kolumna treści musi móc się kurczyć (flex domyślnie min-width: auto) */
 .project-detail-content {
   flex: 3 1 0;

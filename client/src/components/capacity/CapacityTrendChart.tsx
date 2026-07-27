@@ -63,6 +63,7 @@ export default function CapacityTrendChart({
   const [showDataTable, setShowDataTable] = useState(false);
   const activeSeries = series.filter((s) => rows.some((r) => r[s.key] != null));
   const hasData = activeSeries.length > 0 && rows.length > 0;
+  const xDataKey = rows.some((r) => r.periodLabel) ? 'periodLabel' : 'year';
   const canShowDataTable = allowDataTable && !captureKey;
   const showFlex = flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
 
@@ -139,7 +140,7 @@ export default function CapacityTrendChart({
           <ResponsiveContainer width="100%" height={height}>
             <ComposedChart data={displayRows} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eceff1" />
-              <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+              <XAxis dataKey={xDataKey} tick={{ fontSize: 12 }} />
               <YAxis
                 tick={{ fontSize: 12 }}
                 domain={yDomain}
@@ -152,7 +153,11 @@ export default function CapacityTrendChart({
                   if (Array.isArray(value)) return null;
                   return [fmtLoadPct(value as number | null), String(name ?? '')];
                 }}
-                labelFormatter={(y) => t('dataViz.tooltipYear', { year: y })}
+                labelFormatter={(label) =>
+                  xDataKey === 'periodLabel'
+                    ? String(label)
+                    : t('dataViz.tooltipYear', { year: label })
+                }
               />
               <Legend
                 wrapperStyle={{ fontSize: 12 }}

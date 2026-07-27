@@ -1,10 +1,13 @@
 import { db } from '../db/connection.js';
 import {
   clearParentAllocationOverridesIfNoChildren,
+  cleanupOrphanOperationYearVolumes,
   ensureSplitChildYearCoverage,
   findAllocationTreeRootOperationId,
   mergeSplitChildVolumesIntoParent,
+  mergeSplitChildYearVolumeIntoParent,
 } from './allocationService.js';
+import { invalidateAllocationSplitIndex } from './capacityService.js';
 
 export type DeleteOperationResult = { ok: true } | { ok: false; error: string; statusCode?: number };
 
@@ -57,12 +60,16 @@ export function deleteOperationInProject(projectId: number, opId: number): Delet
     }
     const r = db.prepare('DELETE FROM operations WHERE id = ? AND project_id = ?').run(opId, projectId);
     if (r.changes === 0) return { ok: false, error: 'Nie znaleziono operacji', statusCode: 404 };
+    // CASCADE czasem nie działa (stare sesje / FK) — wolumen wraca do matki, potem czyścimy resztki.
+    db.prepare('DELETE FROM operation_volume_by_year WHERE operation_id = ?').run(opId);
     cleanupOrphanPartsForProject(projectId);
     clearParentAllocationOverridesIfNoChildren(rootId);
     const immediateParentId = Number(opRow.split_from_operation_id);
     if (Number.isFinite(immediateParentId)) {
       clearParentAllocationOverridesIfNoChildren(immediateParentId);
     }
+    cleanupOrphanOperationYearVolumes();
+    invalidateAllocationSplitIndex();
     return { ok: true };
   }
 
@@ -74,10 +81,51 @@ export function deleteOperationInProject(projectId: number, opId: number): Delet
 
   const r = db.prepare('DELETE FROM operations WHERE id = ? AND project_id = ?').run(opId, projectId);
   if (r.changes === 0) return { ok: false, error: 'Nie znaleziono operacji', statusCode: 404 };
+  db.prepare('DELETE FROM operation_volume_by_year WHERE operation_id = ?').run(opId);
   cleanupOrphanPartsForProject(projectId);
   if (parentId != null && !Number.isNaN(parentId)) {
     clearParentAllocationOverridesIfNoChildren(parentId);
   }
+  cleanupOrphanOperationYearVolumes();
+  invalidateAllocationSplitIndex();
+  return { ok: true };
+}
+
+/**
+ * Usuwa wolumen operacji dla jednego roku.
+ * Dla dziecka alokacji — najpierw scala ten rok z powrotem do matki.
+ */
+export function deleteOperationYearVolumeInProject(
+  projectId: number,
+  opId: number,
+  year: number
+): DeleteOperationResult {
+  const op = db
+    .prepare('SELECT id, split_from_operation_id FROM operations WHERE id = ? AND project_id = ?')
+    .get(opId, projectId) as { id: number; split_from_operation_id: number | null } | undefined;
+  if (!op) return { ok: false, error: 'Nie znaleziono operacji', statusCode: 404 };
+  if (!Number.isInteger(year)) return { ok: false, error: 'Nieprawidłowy rok', statusCode: 400 };
+
+  const parentId = op.split_from_operation_id != null ? Number(op.split_from_operation_id) : null;
+  if (parentId != null && Number.isFinite(parentId)) {
+    const parent = db.prepare('SELECT id FROM operations WHERE id = ? AND project_id = ?').get(parentId, projectId);
+    if (parent) {
+      mergeSplitChildYearVolumeIntoParent(parentId, opId, year);
+    }
+  }
+
+  db.prepare('DELETE FROM operation_volume_by_year WHERE operation_id = ? AND year = ?').run(opId, year);
+
+  // Dziecko alokacji bez wiersza roku = 0 w kalkulatorze — zostaw jawne 0, żeby nie wracało do volume_value bazy.
+  if (parentId != null && Number.isFinite(parentId)) {
+    db.prepare(
+      `INSERT OR REPLACE INTO operation_volume_by_year (operation_id, year, volume_value, volume_unit, source)
+       VALUES (?, ?, 0, 'weekly', 'allocation')`
+    ).run(opId, year);
+    clearParentAllocationOverridesIfNoChildren(parentId);
+  }
+
+  invalidateAllocationSplitIndex();
   return { ok: true };
 }
 

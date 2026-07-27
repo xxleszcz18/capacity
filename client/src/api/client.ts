@@ -217,6 +217,28 @@ export const api = {
     backupNow: () => request<{ ok: boolean; file_path: string; created_at: string }>('/admin/backup-now', { method: 'POST' }),
     pickBackupDirectory: () => request<{ chosen: boolean; path: string }>('/admin/pick-backup-directory', { method: 'POST' }),
     pickAttachmentsDirectory: () => request<{ chosen: boolean; path: string }>('/admin/pick-attachments-directory', { method: 'POST' }),
+    listAttachments: () =>
+      request<{
+        storage_configured: boolean;
+        storage_root: string | null;
+        attachments: {
+          id: number;
+          project_id: number;
+          project_client: string;
+          project_name: string;
+          description: string;
+          original_filename: string;
+          stored_filename: string;
+          mime_type: string | null;
+          size_bytes: number;
+          uploaded_at: string;
+          uploaded_by: string | null;
+          is_shared: number;
+          relative_dir: string;
+          absolute_path: string | null;
+          file_exists: boolean | null;
+        }[];
+      }>('/admin/attachments'),
     startPickLocation: (body: { target: 'backup' | 'attachments' | 'backup-file'; initial_dir?: string }) =>
       request<{ job_id: string }>('/admin/pick-location/start', { method: 'POST', body: JSON.stringify(body) }),
     getPickLocationResult: (jobId: string) =>

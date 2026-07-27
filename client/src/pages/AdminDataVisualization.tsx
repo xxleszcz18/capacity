@@ -82,12 +82,30 @@ import { useAuth } from '../context/AuthContext';
 import { getDataVizPdfStrings, localeDateTime } from '../i18n/reportLabels';
 import {
   buildMachineDimLookup,
+  buildDimensionApiParams,
   EMPTY_DIM_FILTERS,
   filterMachinesByDimensionFilters,
   hasActiveDimFilters,
   type DimFiltersState,
   type MachineDimLookup,
 } from '../utils/machineDimensionFilters';
+import {
+  type DataVizRangeMode,
+  type YearMonth,
+  defaultMonthRange,
+  defaultWeekRange,
+  enumerateMonthsBetween,
+  enumerateWeeksBetween,
+  parseWeekAnchorKey,
+  uniqueYearsFromPeriods,
+  localizedMonthName,
+  buildWeekAnchorSelectOptionsForYear,
+  formatWeekAnchorLabel,
+  formatWeekAnchorShortLabel,
+  toWeekAnchorKey,
+} from '../utils/dataVizPeriodRange';
+import { buildPeriodTrendBundle, buildCallOffPeriodTrendBundle } from '../utils/capacityPeriodTrendBundle';
+import { callOffCompareSeriesStyle } from '../utils/dataVizColors';
 
 type TabId = 'lines' | 'machines' | 'analytics';
 type MachineStatusFilter = 'active' | 'inactive' | 'RFQ' | 'all';
@@ -209,6 +227,11 @@ export default function AdminDataVisualization() {
   const [tab, setTab] = useState<TabId>('lines');
   const [yearFrom, setYearFrom] = useState<number | null>(null);
   const [yearTo, setYearTo] = useState<number | null>(null);
+  const [rangeMode, setRangeMode] = useState<DataVizRangeMode>('year');
+  const [monthFrom, setMonthFrom] = useState<YearMonth>(() => defaultMonthRange().from);
+  const [monthTo, setMonthTo] = useState<YearMonth>(() => defaultMonthRange().to);
+  const [weekFromKey, setWeekFromKey] = useState('');
+  const [weekToKey, setWeekToKey] = useState('');
   const [yearsReady, setYearsReady] = useState(false);
   const [machineStatus, setMachineStatus] = useState<MachineStatusFilter[]>(['active']);
   const [typeFilter, setTypeFilter] = useState<string[]>([]);
@@ -283,7 +306,111 @@ export default function AdminDataVisualization() {
 
   const effectiveYearFrom = Math.min(yearFrom ?? calendarYear() - 1, yearTo ?? calendarYear() + 10);
   const effectiveYearTo = Math.max(yearFrom ?? calendarYear() - 1, yearTo ?? calendarYear() + 10);
-  const years = yearsRange(effectiveYearFrom, effectiveYearTo);
+
+  const setRangeModeExclusive = useCallback((mode: DataVizRangeMode) => {
+    setRangeMode(mode);
+    if (mode === 'month') {
+      const d = defaultMonthRange();
+      setMonthFrom(d.from);
+      setMonthTo(d.to);
+    }
+    if (mode === 'week') {
+      const d = defaultWeekRange();
+      setWeekFromKey(toWeekAnchorKey(d.from));
+      setWeekToKey(toWeekAnchorKey(d.to));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (rangeMode !== 'year') {
+      setLineChartBars(false);
+      setMachineChartLineBars(false);
+    }
+  }, [rangeMode]);
+
+  const weekFromYear = useMemo(
+    () => parseWeekAnchorKey(weekFromKey)?.year ?? calendarYear(),
+    [weekFromKey]
+  );
+  const weekToYear = useMemo(
+    () => parseWeekAnchorKey(weekToKey)?.year ?? calendarYear(),
+    [weekToKey]
+  );
+  const weekFromOptions = useMemo(
+    () => buildWeekAnchorSelectOptionsForYear(weekFromYear, locale, (key, params) => t(key, params)),
+    [weekFromYear, locale, t]
+  );
+  const weekToOptions = useMemo(
+    () => buildWeekAnchorSelectOptionsForYear(weekToYear, locale, (key, params) => t(key, params)),
+    [weekToYear, locale, t]
+  );
+
+  const pickWeekKeyForYear = useCallback(
+    (currentKey: string, targetYear: number) => {
+      const y = Math.min(2100, Math.max(2000, Math.floor(targetYear) || calendarYear()));
+      const opts = buildWeekAnchorSelectOptionsForYear(y, locale, (key, params) => t(key, params));
+      if (!opts.length) return currentKey;
+      const cur = parseWeekAnchorKey(currentKey);
+      if (cur) {
+        const sameMonthWeek = opts.find((opt) => opt.anchor.month === cur.month && opt.anchor.week === cur.week);
+        if (sameMonthWeek) return sameMonthWeek.key;
+        const sameMonth = opts.find((opt) => opt.anchor.month === cur.month);
+        if (sameMonth) return sameMonth.key;
+      }
+      return opts[0].key;
+    },
+    [locale, t]
+  );
+
+  useEffect(() => {
+    if (rangeMode !== 'week') return;
+    if (weekFromOptions.length && !weekFromOptions.some((opt) => opt.key === weekFromKey)) {
+      setWeekFromKey(weekFromOptions[0].key);
+    }
+  }, [rangeMode, weekFromKey, weekFromOptions]);
+
+  useEffect(() => {
+    if (rangeMode !== 'week') return;
+    if (weekToOptions.length && !weekToOptions.some((opt) => opt.key === weekToKey)) {
+      setWeekToKey(weekToOptions[0].key);
+    }
+  }, [rangeMode, weekToKey, weekToOptions]);
+
+  const chartPeriods = useMemo(() => {
+    if (rangeMode === 'year') {
+      return yearsRange(effectiveYearFrom, effectiveYearTo).map((y) => ({
+        id: y,
+        label: String(y),
+        year: y,
+      }));
+    }
+    if (rangeMode === 'month') {
+      return enumerateMonthsBetween(monthFrom, monthTo, (y, m) =>
+        t('calculator.periodMonthLabel', { year: y, month: localizedMonthName(m, locale, 'short') })
+      );
+    }
+    const from = parseWeekAnchorKey(weekFromKey);
+    const to = parseWeekAnchorKey(weekToKey);
+    if (!from || !to) return [];
+    return enumerateWeeksBetween(from, to, (a) => formatWeekAnchorLabel(a, locale, t));
+  }, [
+    rangeMode,
+    effectiveYearFrom,
+    effectiveYearTo,
+    monthFrom.year,
+    monthFrom.month,
+    monthTo.year,
+    monthTo.month,
+    weekFromKey,
+    weekToKey,
+    locale,
+    t,
+  ]);
+
+  const periodLabelById = useMemo(() => new Map(chartPeriods.map((p) => [p.id, p.label])), [chartPeriods]);
+  const chartPeriodIds = useMemo(() => chartPeriods.map((p) => p.id), [chartPeriods]);
+  const chartPeriodsKey = useMemo(() => chartPeriods.map((p) => `${p.id}:${p.label}`).join('|'), [chartPeriods]);
+  const years = chartPeriodIds;
   const hasCallOff = callOffIds.length > 0;
   /** Analityka / słupki / kolumny PDF — jedna kolumna Call offs tylko przy pojedynczym wyborze. */
   const singleCallOffMode = callOffIds.length === 1;
@@ -373,39 +500,90 @@ export default function AdminDataVisualization() {
     [showProduction, showContract, singleScenarioMode, showScenarioProduction, showScenarioContract]
   );
 
-  const vizBaseParams = useMemo(
-    () => ({
-      yearFrom: effectiveYearFrom,
-      yearTo: effectiveYearTo,
+  const vizBaseParams = useMemo(() => {
+    const periodYearFrom = chartPeriods.length ? Math.min(...chartPeriods.map((p) => p.year)) : effectiveYearFrom;
+    const periodYearTo = chartPeriods.length ? Math.max(...chartPeriods.map((p) => p.year)) : effectiveYearTo;
+    return {
+      yearFrom: rangeMode === 'year' ? effectiveYearFrom : periodYearFrom,
+      yearTo: rangeMode === 'year' ? effectiveYearTo : periodYearTo,
       machineStatus,
       type: typeFilter,
       client: clientFilter,
       settingsProfile,
       includeRfqOperationIds: rfqOperationIds,
-    }),
-    [
-      effectiveYearFrom,
-      effectiveYearTo,
-      machineStatus,
-      typeFilter,
-      clientFilter,
-      settingsProfile,
-      rfqOperationIds,
-    ]
-  );
+    };
+  }, [
+    rangeMode,
+    effectiveYearFrom,
+    effectiveYearTo,
+    chartPeriods,
+    machineStatus,
+    typeFilter,
+    clientFilter,
+    settingsProfile,
+    rfqOperationIds,
+  ]);
 
   const loadBaseBundles = useCallback(async () => {
     const gen = ++loadBaseGenRef.current;
     setBaseLoading(true);
     setError('');
     try {
-      const [prodBundle, contractBundle] = await Promise.all([
-        fetchCapacityBundle(vizBaseParams),
-        fetchCapacityBundle({ ...vizBaseParams, useContractualVolumes: true }),
+      if (rangeMode === 'year') {
+        const [prodBundle, contractBundle] = await Promise.all([
+          fetchCapacityBundle(vizBaseParams),
+          fetchCapacityBundle({ ...vizBaseParams, useContractualVolumes: true }),
+        ]);
+        if (gen !== loadBaseGenRef.current) return;
+        setProd(prodBundle);
+        setContract(contractBundle);
+        return;
+      }
+
+      const periods = chartPeriods;
+      if (!periods.length) {
+        if (gen !== loadBaseGenRef.current) return;
+        setProd(null);
+        setContract(null);
+        return;
+      }
+
+      const yearsNeeded = uniqueYearsFromPeriods(periods);
+      const yMin = Math.min(...yearsNeeded);
+      const yMax = Math.max(...yearsNeeded);
+      const dimApi = buildDimensionApiParams(dimFilters);
+      const baseForMeta = { ...vizBaseParams, yearFrom: yMin, yearTo: yMax };
+
+      const fetchBreakdown = (year: number, useContractualVolumes: boolean) =>
+        api.capacity.periodBreakdown({
+          year,
+          machineStatuses: joinCsvFilter(vizBaseParams.machineStatus),
+          types: joinCsvFilter(vizBaseParams.type ?? []),
+          clients: joinCsvFilter(vizBaseParams.client ?? []),
+          useContractualVolumes,
+          settingsProfile: vizBaseParams.settingsProfile === 'ocu' ? 'ocu' : undefined,
+          ...dimApi,
+        });
+
+      const [metaProd, metaContract, ...breakdownRows] = await Promise.all([
+        fetchCapacityBundle(baseForMeta),
+        fetchCapacityBundle({ ...baseForMeta, useContractualVolumes: true }),
+        ...yearsNeeded.flatMap((y) => [fetchBreakdown(y, false), fetchBreakdown(y, true)]),
       ]);
+
       if (gen !== loadBaseGenRef.current) return;
-      setProd(prodBundle);
-      setContract(contractBundle);
+
+      const prodByYear = new Map<number, (typeof breakdownRows)[0]>();
+      const contractByYear = new Map<number, (typeof breakdownRows)[0]>();
+      let i = 0;
+      for (const y of yearsNeeded) {
+        prodByYear.set(y, breakdownRows[i++]);
+        contractByYear.set(y, breakdownRows[i++]);
+      }
+
+      const periodMode = rangeMode === 'week' ? 'week' : 'month';
+      setProd(buildPeriodTrendBundle(metaProd, prodByYear, periods, periodMode));
+      setContract(buildPeriodTrendBundle(metaContract, contractByYear, periods, periodMode));
     } catch (e: unknown) {
       if (gen !== loadBaseGenRef.current) return;
       const msg = e instanceof Error ? e.message : '';
@@ -415,7 +593,7 @@ export default function AdminDataVisualization() {
     } finally {
       if (gen === loadBaseGenRef.current) setBaseLoading(false);
     }
-  }, [vizBaseParams, subsystem, t, te]);
+  }, [vizBaseParams, subsystem, t, te, rangeMode, chartPeriods, chartPeriodsKey, dimFilters]);
 
   const loadCallOffBundles = useCallback(async () => {
     const gen = ++loadCallOffGenRef.current;
@@ -428,17 +606,60 @@ export default function AdminDataVisualization() {
         if (gen !== loadCallOffGenRef.current) return;
         return;
       }
+      const dimApi = buildDimensionApiParams(dimFilters);
+      const filterParams = {
+        machineStatuses: joinCsvFilter(vizBaseParams.machineStatus),
+        types: joinCsvFilter(vizBaseParams.type ?? []),
+        clients: joinCsvFilter(vizBaseParams.client ?? []),
+        settingsProfile: vizBaseParams.settingsProfile === 'ocu' ? 'ocu' : undefined,
+        ...dimApi,
+      };
+
+      if (rangeMode === 'year') {
+        const pairs = await Promise.all(
+          callOffIds.map(async (coid) => {
+            const res = await api.callOffs.calculator(coid, {
+              yearFrom: vizBaseParams.yearFrom,
+              yearTo: vizBaseParams.yearTo,
+              ...filterParams,
+            });
+            return [coid, callOffCalculatorToTrendBundle(res)] as const;
+          })
+        );
+        if (gen !== loadCallOffGenRef.current) return;
+        const next: Record<number, CapacityTrendBundle> = {};
+        for (const [coid, bundle] of pairs) next[coid] = bundle;
+        setCallOffBundlesRaw(next);
+        return;
+      }
+
+      const periods = chartPeriods;
+      if (!periods.length) {
+        if (gen !== loadCallOffGenRef.current) return;
+        return;
+      }
+
+      const yearsNeeded = uniqueYearsFromPeriods(periods);
+      const yMin = Math.min(...yearsNeeded);
+      const yMax = Math.max(...yearsNeeded);
+      const periodMode = rangeMode === 'week' ? 'week' : 'month';
+
       const pairs = await Promise.all(
         callOffIds.map(async (coid) => {
-          const res = await api.callOffs.calculator(coid, {
-            yearFrom: vizBaseParams.yearFrom,
-            yearTo: vizBaseParams.yearTo,
-            machineStatuses: joinCsvFilter(vizBaseParams.machineStatus),
-            types: joinCsvFilter(vizBaseParams.type),
-            clients: joinCsvFilter(vizBaseParams.client),
-            settingsProfile: vizBaseParams.settingsProfile === 'ocu' ? 'ocu' : undefined,
+          const metaRes = await api.callOffs.calculator(coid, {
+            yearFrom: yMin,
+            yearTo: yMax,
+            ...filterParams,
           });
-          return [coid, callOffCalculatorToTrendBundle(res)] as const;
+          const metaBundle = callOffCalculatorToTrendBundle(metaRes);
+          const breakdownByYear = new Map<number, Awaited<ReturnType<typeof api.callOffs.periodBreakdown>>>();
+          await Promise.all(
+            yearsNeeded.map(async (y) => {
+              const bd = await api.callOffs.periodBreakdown(coid, { year: y, machineIds: '', ...filterParams });
+              breakdownByYear.set(y, bd);
+            })
+          );
+          return [coid, buildCallOffPeriodTrendBundle(metaBundle, breakdownByYear, periods, periodMode)] as const;
         })
       );
       if (gen !== loadCallOffGenRef.current) return;
@@ -453,7 +674,7 @@ export default function AdminDataVisualization() {
     } finally {
       if (gen === loadCallOffGenRef.current) setCallOffLoading(false);
     }
-  }, [callOffIds, vizBaseParams, subsystem, t, te]);
+  }, [callOffIds, vizBaseParams, subsystem, t, te, rangeMode, chartPeriods, chartPeriodsKey, dimFilters]);
 
   const loadScenarioBundles = useCallback(async () => {
     const gen = ++loadScenarioGenRef.current;
@@ -492,8 +713,10 @@ export default function AdminDataVisualization() {
   const loadData = useCallback(() => {
     void loadBaseBundles();
     void loadCallOffBundles();
-    void loadScenarioBundles();
-  }, [loadBaseBundles, loadCallOffBundles, loadScenarioBundles]);
+    if (rangeMode === 'year') {
+      void loadScenarioBundles();
+    }
+  }, [loadBaseBundles, loadCallOffBundles, loadScenarioBundles, rangeMode]);
 
   useEffect(() => {
     api.settings.visual
@@ -521,9 +744,9 @@ export default function AdminDataVisualization() {
   }, [yearsReady, loadCallOffBundles]);
 
   useEffect(() => {
-    if (!yearsReady) return;
+    if (!yearsReady || rangeMode !== 'year') return;
     void loadScenarioBundles();
-  }, [yearsReady, loadScenarioBundles]);
+  }, [yearsReady, rangeMode, loadScenarioBundles]);
 
   const prod = useMemo(() => {
     if (!prodRaw) return null;
@@ -540,7 +763,6 @@ export default function AdminDataVisualization() {
     };
   }, [contractRaw, dimFilters, machineDimLookup]);
   const callOffCompareList = useMemo(() => {
-    const palette = vizColors.comparePalette;
     return callOffIds
       .map((id, index) => {
         const raw = callOffBundlesRaw[id];
@@ -550,13 +772,14 @@ export default function AdminDataVisualization() {
         const label = cmp?.source_filename
           ? t('reports.dataViz.seriesCallOffNamed', { name, file: cmp.source_filename })
           : t('reports.dataViz.seriesCallOffNamedShort', { name });
-        const color = index === 0 ? vizColors.callOff : palette[(index + 3) % palette.length];
+        const { color, dash } = callOffCompareSeriesStyle(index, vizColors);
         return {
           id,
           name,
           index,
           label,
           color,
+          dash,
           bundle: {
             ...raw,
             machines: filterMachinesByDimensionFilters(raw.machines, dimFilters, machineDimLookup),
@@ -714,7 +937,7 @@ export default function AdminDataVisualization() {
           key: `${prefix}_co${co.id}_calloff`,
           label: co.label,
           color: co.color,
-          dash: '2 3',
+          dash: co.dash,
           getValue: (year) => {
             if (scope?.machineId != null) {
               const m = co.bundle.machines.find((x) => x.machine_id === scope.machineId);
@@ -728,42 +951,44 @@ export default function AdminDataVisualization() {
         });
       }
     }
-    for (const scen of scenarioCompareList) {
-      if (showScenarioContract) {
-        out.push({
-          key: `${prefix}_scen${scen.id}_scen_contract`,
-          label: scen.labelContract,
-          color: scen.colorContract,
-          dash: '6 3',
-          getValue: (year) => {
-            if (scope?.machineId != null) {
-              const sm = scen.contract.machines.find((x) => x.machine_id === scope.machineId);
-              return sm ? machineLoadPercent(sm, year) : null;
-            }
-            if (scope?.line != null) {
-              return lineLoadPercent(scen.contract.machines, scope.line, year);
-            }
-            return null;
-          },
-        });
-      }
-      if (showScenarioProduction) {
-        out.push({
-          key: `${prefix}_scen${scen.id}_scen_prod`,
-          label: scen.labelProd,
-          color: scen.colorProd,
-          dash: '4 2',
-          getValue: (year) => {
-            if (scope?.machineId != null) {
-              const sm = scen.prod.machines.find((x) => x.machine_id === scope.machineId);
-              return sm ? machineLoadPercent(sm, year) : null;
-            }
-            if (scope?.line != null) {
-              return lineLoadPercent(scen.prod.machines, scope.line, year);
-            }
-            return null;
-          },
-        });
+    if (rangeMode === 'year') {
+      for (const scen of scenarioCompareList) {
+        if (showScenarioContract) {
+          out.push({
+            key: `${prefix}_scen${scen.id}_scen_contract`,
+            label: scen.labelContract,
+            color: scen.colorContract,
+            dash: '6 3',
+            getValue: (year) => {
+              if (scope?.machineId != null) {
+                const sm = scen.contract.machines.find((x) => x.machine_id === scope.machineId);
+                return sm ? machineLoadPercent(sm, year) : null;
+              }
+              if (scope?.line != null) {
+                return lineLoadPercent(scen.contract.machines, scope.line, year);
+              }
+              return null;
+            },
+          });
+        }
+        if (showScenarioProduction) {
+          out.push({
+            key: `${prefix}_scen${scen.id}_scen_prod`,
+            label: scen.labelProd,
+            color: scen.colorProd,
+            dash: '4 2',
+            getValue: (year) => {
+              if (scope?.machineId != null) {
+                const sm = scen.prod.machines.find((x) => x.machine_id === scope.machineId);
+                return sm ? machineLoadPercent(sm, year) : null;
+              }
+              if (scope?.line != null) {
+                return lineLoadPercent(scen.prod.machines, scope.line, year);
+              }
+              return null;
+            },
+          });
+        }
       }
     }
     return out;
@@ -796,30 +1021,32 @@ export default function AdminDataVisualization() {
           out.push({
             key: `cmp_L${line}_co${co.id}_calloff`,
             label: t('reports.dataViz.lineSeriesCallOff', { line, name: co.label }),
-            color: nextColor(),
-            dash: '2 3',
+            color: co.color,
+            dash: co.dash,
             getValue: (year) => callOffLoadPercent(co.bundle, year, { kind: 'line', line }),
           });
         }
       }
-      for (const scen of scenarioCompareList) {
-        if (showScenarioContract) {
-          out.push({
-            key: `cmp_L${line}_scen${scen.id}_scen_contract`,
-            label: `${scen.labelContract} · L${line}`,
-            color: nextColor(),
-            dash: '6 3',
-            getValue: (year) => lineLoadPercent(scen.contract.machines, line, year),
-          });
-        }
-        if (showScenarioProduction) {
-          out.push({
-            key: `cmp_L${line}_scen${scen.id}_scen_prod`,
-            label: `${scen.labelProd} · L${line}`,
-            color: nextColor(),
-            dash: '4 2',
-            getValue: (year) => lineLoadPercent(scen.prod.machines, line, year),
-          });
+      if (rangeMode === 'year') {
+        for (const scen of scenarioCompareList) {
+          if (showScenarioContract) {
+            out.push({
+              key: `cmp_L${line}_scen${scen.id}_scen_contract`,
+              label: `${scen.labelContract} · L${line}`,
+              color: nextColor(),
+              dash: '6 3',
+              getValue: (year) => lineLoadPercent(scen.contract.machines, line, year),
+            });
+          }
+          if (showScenarioProduction) {
+            out.push({
+              key: `cmp_L${line}_scen${scen.id}_scen_prod`,
+              label: `${scen.labelProd} · L${line}`,
+              color: nextColor(),
+              dash: '4 2',
+              getValue: (year) => lineLoadPercent(scen.prod.machines, line, year),
+            });
+          }
         }
       }
     }
@@ -857,32 +1084,34 @@ export default function AdminDataVisualization() {
           out.push({
             key: `cmp_M${m.machine_id}_co${co.id}_calloff`,
             label: t('reports.dataViz.machineSeriesCallOff', { label, name: co.label }),
-            color: nextColor(),
-            dash: '2 3',
+            color: co.color,
+            dash: co.dash,
             getValue: (year) => callOffLoadPercent(co.bundle, year, { kind: 'machine', machine: com }),
           });
         }
       }
-      for (const scen of scenarioCompareList) {
-        const scm = scen.contract.machines.find((x) => x.machine_id === m.machine_id);
-        if (showScenarioContract && scm) {
-          out.push({
-            key: `cmp_M${m.machine_id}_scen${scen.id}_scen_contract`,
-            label: `${scen.labelContract} · ${label}`,
-            color: nextColor(),
-            dash: '6 3',
-            getValue: (year) => machineLoadPercent(scm, year),
-          });
-        }
-        const sm = scen.prod.machines.find((x) => x.machine_id === m.machine_id);
-        if (showScenarioProduction && sm) {
-          out.push({
-            key: `cmp_M${m.machine_id}_scen${scen.id}_scen_prod`,
-            label: `${scen.labelProd} · ${label}`,
-            color: nextColor(),
-            dash: '4 2',
-            getValue: (year) => machineLoadPercent(sm, year),
-          });
+      if (rangeMode === 'year') {
+        for (const scen of scenarioCompareList) {
+          const scm = scen.contract.machines.find((x) => x.machine_id === m.machine_id);
+          if (showScenarioContract && scm) {
+            out.push({
+              key: `cmp_M${m.machine_id}_scen${scen.id}_scen_contract`,
+              label: `${scen.labelContract} · ${label}`,
+              color: nextColor(),
+              dash: '6 3',
+              getValue: (year) => machineLoadPercent(scm, year),
+            });
+          }
+          const sm = scen.prod.machines.find((x) => x.machine_id === m.machine_id);
+          if (showScenarioProduction && sm) {
+            out.push({
+              key: `cmp_M${m.machine_id}_scen${scen.id}_scen_prod`,
+              label: `${scen.labelProd} · ${label}`,
+              color: nextColor(),
+              dash: '4 2',
+              getValue: (year) => machineLoadPercent(sm, year),
+            });
+          }
         }
       }
     }
@@ -936,7 +1165,7 @@ export default function AdminDataVisualization() {
     lineChartCombined && selectedLines.size > 0 ? (
       <CapacityTrendChart
         title={`Porównanie linii (${Array.from(selectedLines).join(', ')})`}
-        rows={buildTrendRows(years, combinedLineSeries)}
+        rows={buildTrendRows(chartPeriodIds, combinedLineSeries, periodLabelById)}
         series={combinedLineSeries}
         height={380}
         emptyHint={t('dataViz.emptyLines')}
@@ -951,7 +1180,7 @@ export default function AdminDataVisualization() {
     machineChartCombined && selectedMachineIds.size > 0 ? (
       <CapacityTrendChart
         title={`Porównanie maszyn (${selectedMachineIds.size} wybranych)`}
-        rows={buildTrendRows(years, combinedMachineSeries)}
+        rows={buildTrendRows(chartPeriodIds, combinedMachineSeries, periodLabelById)}
         series={combinedMachineSeries}
         height={380}
         emptyHint={t('dataViz.emptyMachines')}
@@ -1131,7 +1360,7 @@ export default function AdminDataVisualization() {
       <CapacityTrendChart
         key={line}
         title={t('reports.dataViz.lineChartTitle', { line })}
-        rows={buildTrendRows(years, series)}
+        rows={buildTrendRows(chartPeriodIds, series, periodLabelById)}
         series={series}
         emptyHint={t('dataViz.emptyLineMachines')}
         breakdownScope={{ kind: 'line', line, fetchParams: breakdownFetchParams }}
@@ -1160,7 +1389,7 @@ export default function AdminDataVisualization() {
         <CapacityTrendChart
           key={m.machine_id}
           title={t('reports.dataViz.machineTitleWithLine', { label: machineLabel(m), line: lineKey(m.location) })}
-          rows={buildTrendRows(years, series)}
+          rows={buildTrendRows(chartPeriodIds, series, periodLabelById)}
           series={series}
           breakdownScope={{ kind: 'machine', machineId: m.machine_id, fetchParams: breakdownFetchParams }}
           loadAxisRange={loadAxisRange}
@@ -1780,8 +2009,8 @@ export default function AdminDataVisualization() {
             series.push({
               key: `pdf_L${line}_co${co.id}_calloff`,
               label: t('reports.dataViz.lineSeriesCallOff', { line, name: co.label }),
-              color: nextColor(),
-              dash: '2 3',
+              color: co.color,
+              dash: co.dash,
               getValue: (year) => callOffLoadPercent(co.bundle, year, { kind: 'line', line }),
             });
           }
@@ -1811,7 +2040,7 @@ export default function AdminDataVisualization() {
         {
           captureKey: 'line-combined',
           title: t('reports.dataViz.lineCompareTitle', { lines: targetLines.join(', ') }),
-          rows: buildTrendRows(years, series),
+          rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
           series,
         },
       ];
@@ -1828,7 +2057,7 @@ export default function AdminDataVisualization() {
       return {
         captureKey: `line-${line}`,
         title: t('reports.dataViz.lineChartTitle', { line }),
-        rows: buildTrendRows(years, series),
+        rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
         series,
       };
     });
@@ -1868,8 +2097,8 @@ export default function AdminDataVisualization() {
             series.push({
               key: `pdf_M${m.machine_id}_co${co.id}_calloff`,
               label: t('reports.dataViz.machineSeriesCallOff', { label, name: co.label }),
-              color: nextColor(),
-              dash: '2 3',
+              color: co.color,
+              dash: co.dash,
               getValue: (year) => callOffLoadPercent(co.bundle, year, { kind: 'machine', machine: com }),
             });
           }
@@ -1901,7 +2130,7 @@ export default function AdminDataVisualization() {
         {
           captureKey: 'machine-combined',
           title: t('reports.dataViz.machineCompareTitle', { count: targetMachines.length }),
-          rows: buildTrendRows(years, series),
+          rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
           series,
         },
       ];
@@ -1919,7 +2148,7 @@ export default function AdminDataVisualization() {
       return {
         captureKey: `machine-${m.machine_id}`,
         title: t('reports.dataViz.machineTitleWithLine', { label: machineLabel(m), line: lineKey(m.location) }),
-        rows: buildTrendRows(years, series),
+        rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
         series,
       };
     });
@@ -1962,7 +2191,30 @@ export default function AdminDataVisualization() {
       </h1>
 
       <div style={{ ...panelStyle, marginBottom: '1rem' }}>
+        <div style={{ width: '100%', marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t('dataViz.rangeModeTitle')}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px' }}>
+            {(['year', 'month', 'week'] as const).map((mode) => (
+              <label key={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={rangeMode === mode}
+                  onChange={() => {
+                    if (rangeMode !== mode) setRangeModeExclusive(mode);
+                  }}
+                />
+                {mode === 'year'
+                  ? t('dataViz.rangeModeYear')
+                  : mode === 'month'
+                    ? t('dataViz.rangeModeMonth')
+                    : t('dataViz.rangeModeWeek')}
+              </label>
+            ))}
+          </div>
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', alignItems: 'flex-end' }}>
+          {rangeMode === 'year' && (
+            <>
           <label>
             {t('dataViz.yearFrom')}{' '}
             <input
@@ -1985,6 +2237,116 @@ export default function AdminDataVisualization() {
               style={{ width: 72, padding: 4, marginLeft: 4 }}
             />
           </label>
+            </>
+          )}
+          {rangeMode === 'month' && (
+            <>
+              <label>
+                {t('dataViz.monthFrom')}{' '}
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={monthFrom.year}
+                  onChange={(e) =>
+                    setMonthFrom((prev) => ({ ...prev, year: Number(e.target.value) || prev.year }))
+                  }
+                  style={{ width: 72, padding: 4, marginLeft: 4 }}
+                />
+                <select
+                  value={monthFrom.month}
+                  onChange={(e) => setMonthFrom((prev) => ({ ...prev, month: Number(e.target.value) }))}
+                  style={{ padding: 4, marginLeft: 4, minWidth: 120 }}
+                >
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const m = i + 1;
+                    return (
+                      <option key={m} value={m}>
+                        {localizedMonthName(m, locale, 'long')}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <label>
+                {t('dataViz.monthTo')}{' '}
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={monthTo.year}
+                  onChange={(e) => setMonthTo((prev) => ({ ...prev, year: Number(e.target.value) || prev.year }))}
+                  style={{ width: 72, padding: 4, marginLeft: 4 }}
+                />
+                <select
+                  value={monthTo.month}
+                  onChange={(e) => setMonthTo((prev) => ({ ...prev, month: Number(e.target.value) }))}
+                  style={{ padding: 4, marginLeft: 4, minWidth: 120 }}
+                >
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const m = i + 1;
+                    return (
+                      <option key={m} value={m}>
+                        {localizedMonthName(m, locale, 'long')}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            </>
+          )}
+          {rangeMode === 'week' && (
+            <>
+              <label>
+                {t('dataViz.weekFrom')}{' '}
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={weekFromYear}
+                  onChange={(e) =>
+                    setWeekFromKey((prev) => pickWeekKeyForYear(prev, Number(e.target.value) || weekFromYear))
+                  }
+                  style={{ width: 72, padding: 4, marginLeft: 4 }}
+                />
+                <select
+                  value={weekFromKey}
+                  onChange={(e) => setWeekFromKey(e.target.value)}
+                  style={{ padding: 4, marginLeft: 4, minWidth: 160 }}
+                >
+                  {weekFromOptions.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {formatWeekAnchorShortLabel(opt.anchor, locale, t)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t('dataViz.weekTo')}{' '}
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={weekToYear}
+                  onChange={(e) =>
+                    setWeekToKey((prev) => pickWeekKeyForYear(prev, Number(e.target.value) || weekToYear))
+                  }
+                  style={{ width: 72, padding: 4, marginLeft: 4 }}
+                />
+                <select
+                  value={weekToKey}
+                  onChange={(e) => setWeekToKey(e.target.value)}
+                  style={{ padding: 4, marginLeft: 4, minWidth: 160 }}
+                >
+                  {weekToOptions.map((opt) => (
+                    <option key={opt.key} value={opt.key}>
+                      {formatWeekAnchorShortLabel(opt.anchor, locale, t)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
           <label>
             {t('dataViz.machineStatus')}{' '}
             <MultiSelectFilter

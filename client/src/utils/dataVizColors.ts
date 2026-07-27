@@ -96,3 +96,35 @@ export function dataVizColorsFromVisualSettings(v: VisualSettingsColorFields | n
     comparePalette: normalizeComparePalette(v?.data_viz_compare_palette, d.comparePalette),
   };
 }
+
+/** Kolejność kontrastowa dla wielu Call offs — unika sąsiadujących błękitów. */
+const CALL_OFF_COMPARE_COLOR_ORDER = [
+  '#0091EA', // błękit Call offs
+  '#E86A10', // pomarańcz
+  '#8A9300', // zieleń
+  '#7A7B7A', // szary
+  '#B8C400', // limonka
+  '#6A1B9A', // fiolet (mocny kontrast)
+  '#008BC1', // ciemny błękit
+  '#F59B47', // jasny pomarańcz
+  '#C62828', // czerwony
+  '#00695C', // teal
+] as const;
+
+const CALL_OFF_COMPARE_DASHES = ['2 3', '8 3', '1 4', '6 2 2 2', '4 4', '10 3 2 3', '3 6', '2 2 6 2'] as const;
+
+/** Kolor + styl kreski dla n-tego Call offs na wykresie porównawczym. */
+export function callOffCompareSeriesStyle(
+  index: number,
+  colors: Pick<DataVizColors, 'callOff' | 'comparePalette'>
+): { color: string; dash: string } {
+  const dash = CALL_OFF_COMPARE_DASHES[index % CALL_OFF_COMPARE_DASHES.length];
+  if (index === 0) return { color: colors.callOff, dash };
+  const preferred = CALL_OFF_COMPARE_COLOR_ORDER[index % CALL_OFF_COMPARE_COLOR_ORDER.length];
+  // Nie powtarzaj koloru bazowego Call offs przy kolejnych seriach.
+  if (preferred.toLowerCase() === colors.callOff.toLowerCase() && index > 0) {
+    const alt = CALL_OFF_COMPARE_COLOR_ORDER[(index + 1) % CALL_OFF_COMPARE_COLOR_ORDER.length];
+    return { color: alt, dash };
+  }
+  return { color: preferred, dash };
+}

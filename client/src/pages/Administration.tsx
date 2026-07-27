@@ -36,6 +36,13 @@ export default function Administration() {
           </Link>
         )}
 
+        {!limitedAdmin && hasPermission('admin_settings.view') && (
+          <Link to="/administracja/zalaczniki" style={adminHubCardStyle}>
+            <strong style={{ fontSize: '1.1rem' }}>{t('admin.attachments')}</strong>
+            <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('admin.attachmentsDesc')}</p>
+          </Link>
+        )}
+
         {!limitedAdmin && hasAnyPermission(['user_management.view', 'role_management.view']) && (
           <Link to="/administracja/uzytkownicy-i-uprawnienia" style={adminHubCardStyle}>
             <strong style={{ fontSize: '1.1rem' }}>{t('layout.usersAndPermissions')}</strong>

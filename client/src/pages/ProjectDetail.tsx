@@ -107,8 +107,8 @@ export default function ProjectDetail() {
   ];
 
   return (
-    <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-      <div style={{ flex: '0 0 11.16rem', width: '11.16rem', minWidth: 0 }}>
+    <div className="project-detail-layout">
+      <div className="project-detail-nav">
         <div style={{ marginBottom: '1rem' }}>
           <Link to={`/projekty${location.search}`} style={{ color: 'var(--cap-green)', fontSize: 14 }}>
             {t('projectDetail.back')}

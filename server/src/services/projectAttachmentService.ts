@@ -135,3 +135,64 @@ export function deleteProjectAttachment(projectId: number, attachmentId: number)
 export function listAllProjectIds(): number[] {
   return (db.prepare('SELECT id FROM projects ORDER BY id').all() as { id: number }[]).map((r) => Number(r.id));
 }
+
+export type AdminAttachmentListItem = ProjectAttachmentRow & {
+  project_client: string;
+  project_name: string;
+  /** Katalog względem katalogu głównego załączników, np. `shared` lub `project_12`. */
+  relative_dir: string;
+  /** Pełna ścieżka pliku na dysku (gdy magazyn skonfigurowany). */
+  absolute_path: string | null;
+  file_exists: boolean | null;
+};
+
+export function listAllAttachmentsForAdmin(): {
+  storage_configured: boolean;
+  storage_root: string | null;
+  attachments: AdminAttachmentListItem[];
+} {
+  const storageConfigured = isAttachmentsStorageConfigured();
+  let storageRoot: string | null = null;
+  if (storageConfigured) {
+    try {
+      storageRoot = resolveAttachmentsDirectory();
+    } catch {
+      storageRoot = null;
+    }
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT a.*,
+              TRIM(COALESCE(p.client, '')) AS project_client,
+              TRIM(COALESCE(p.name, '')) AS project_name
+       FROM project_attachments a
+       JOIN projects p ON p.id = a.project_id
+       ORDER BY a.uploaded_at DESC, a.id DESC`,
+    )
+    .all() as (ProjectAttachmentRow & { project_client: string; project_name: string })[];
+
+  const attachments: AdminAttachmentListItem[] = rows.map((row) => {
+    const relative_dir = row.is_shared ? SHARED_DIR : `project_${row.project_id}`;
+    let absolute_path: string | null = null;
+    let file_exists: boolean | null = null;
+    if (storageRoot) {
+      absolute_path = path.join(storageRoot, relative_dir, row.stored_filename);
+      try {
+        file_exists = fs.existsSync(absolute_path);
+      } catch {
+        file_exists = null;
+      }
+    }
+    return {
+      ...row,
+      project_client: row.project_client,
+      project_name: row.project_name,
+      relative_dir,
+      absolute_path,
+      file_exists,
+    };
+  });
+
+  return { storage_configured: storageConfigured, storage_root: storageRoot, attachments };
+}
