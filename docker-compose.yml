@@ -1,10 +1,32 @@
-# Autoneum Capacity — uruchomienie produkcyjne w Docker Compose
+# =============================================================================
+# Autoneum Capacity — Docker Compose (produkcja)
+# =============================================================================
 #
+# Uruchomienie:
 #   docker compose up --build -d
-#   docker compose logs -f
+#   docker compose logs -f capacity
 #   docker compose down
 #
-# Aplikacja: http://localhost:3001
+# Aplikacja: http://localhost:${PORT:-3001}
+#
+# Sekrety / SMTP — ustaw w pliku `.env` obok tego compose (nie commituj `.env`):
+#   SESSION_SECRET=...
+#   CAPACITY_DEPLOY_SECRET=...
+#   BOOTSTRAP_ADMIN_LOGIN=admin
+#   BOOTSTRAP_ADMIN_PASSWORD=...   # zmień przy pierwszym wdrożeniu
+#   APP_BASE_URL=https://capacity.example.com
+#   SMTP_PASS=...                  # hasło SMTP (host/user/from w UI lub env)
+#
+# Persystencja pod /data (STORAGE_BASE_DIR):
+#   capacity.db, backups/, attachments/, call-offs/
+#
+# W Ustawieniach administracyjnych (po wdrożeniu) ustaw lokalizacje względne:
+#   backup → backups
+#   załączniki → attachments
+# oraz używaj „Przeglądaj na serwerze” (nie okna Windows).
+#
+# Instrukcja użytkownika (PL/EN/DE): Administracja → Instrukcja obsługi
+# =============================================================================
 
 services:
   capacity:
@@ -18,27 +40,49 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3001"
+      DOCKER: "1"
+
+      # Dane — katalog bazowy i baza SQLite
+      STORAGE_BASE_DIR: /data
       DB_PATH: /data/capacity.db
       CLIENT_DIST: /app/client/dist
-      SESSION_SECRET: ${SESSION_SECRET:-change-me-in-production}
+
+      # Auth / bootstrap pierwszego administratora (tylko gdy baza bez użytkowników)
       AUTH_ENFORCE: ${AUTH_ENFORCE:-1}
       BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin12345}
+
+      # Linki w mailach resetu hasła (musi wskazywać publiczny URL aplikacji)
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3001}
       PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
+
+      # SMTP — hasło z env; host/port/user/from można też skonfigurować w admin_settings
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      DOCKER: "1"
+
+      # Cache kalkulatora / period-breakdown (to samo API, krótszy czas odpowiedzi)
+      CALCULATOR_CACHE: ${CALCULATOR_CACHE:-1}
+      CALCULATOR_CACHE_TTL_MS: ${CALCULATOR_CACHE_TTL_MS:-45000}
+
+      # Sekret HMAC wdrożenia scenariusza (zmień w produkcji)
+      CAPACITY_DEPLOY_SECRET: ${CAPACITY_DEPLOY_SECRET:-change-me-capacity-deploy-secret}
+
+      # Opcjonalnie: legacy actor z USERNAME systemu (domyślnie wyłączone)
+      AUTH_LEGACY_ACTOR: ${AUTH_LEGACY_ACTOR:-0}
+
     volumes:
-      # Baza SQLite (persystencja między restartami)
+      # Cały katalog danych (baza + domyślne podkatalogi)
       - capacity-data:/data
-      # Backupy i załączniki — pod /data (zgodne ze ścieżkami względnymi backups, attachments)
+      # Osobne wolumeny — łatwiejszy backup / przenoszenie
       - capacity-backups:/data/backups
       - capacity-attachments:/data/attachments
+      - capacity-call-offs:/data/call-offs
+
     restart: unless-stopped
+
     healthcheck:
       test:
         [
@@ -49,10 +93,11 @@ services:
         ]
       interval: 30s
       timeout: 10s
-      start_period: 45s
+      start_period: 60s
       retries: 3
 
 volumes:
   capacity-data:
   capacity-backups:
   capacity-attachments:
+  capacity-call-offs:

@@ -435,39 +435,68 @@ capacityRouter.get('/calculator/period-breakdown', (req, res) => {
   const useScenarioCallOffVolumes =
     ctx.scenarioCallOffComparisonId != null && !useContractualVolumes && ctx.scenarioBundle != null;
 
-  const data = useScenarioCallOffVolumes
-    ? getScenarioCallOffPeriodBreakdown(
-        ctx.scenarioCallOffComparisonId!,
-        year,
-        machineIds,
-        ctx.types.length ? ctx.types : undefined,
-        ctx.operationsOverride,
-        ctx.scenarioBundle,
-        ctx.scenarioIncludeRfq,
-        useContractualVolumes,
-        ctx.machineStatus,
-        ctx.dimensionFilters,
-        ctx.settingsProfile
-      )
-    : getMachinePeriodBreakdown(
-        year,
-        machineIds,
-        ctx.types.length ? ctx.types : undefined,
-        ctx.operationsOverride,
-        ctx.scenarioBundle,
-        ctx.scenarioId != null && ctx.scenarioBundle ? ctx.scenarioIncludeRfq : undefined,
-        useContractualVolumes,
-        ctx.machineStatus,
-        ctx.dimensionFilters,
-        ctx.settingsProfile,
-        undefined,
-        {
-          includeAssignedZeroVolumeDetailsInBreakdown: true,
-          ...(ctx.includeRfqOperationIds?.length
-            ? { includeRfqOperationIds: ctx.includeRfqOperationIds }
-            : {}),
-        }
-      );
+  if (!useScenarioCallOffVolumes) {
+    const cacheKey = calculatorCacheKey({
+      kind: 'period-breakdown',
+      year,
+      machineIds: machineIds ?? [],
+      types: ctx.types,
+      scenarioId: ctx.scenarioId ?? null,
+      useContractualVolumes,
+      machineStatus: ctx.machineStatus,
+      dimensionFilters: ctx.dimensionFilters,
+      settingsProfile: ctx.settingsProfile,
+      groupIds: groupIdsParam ?? '',
+      machineIdsParam: machineIdsParam ?? '',
+      includeRfqOperationIds: ctx.includeRfqOperationIds ?? [],
+      v: 2,
+    });
+    const cached = getCalculatorCache<{ year: number; machines: unknown }>(cacheKey);
+    if (cached) {
+      res.set('Cache-Control', 'private, max-age=30');
+      res.set('X-Calculator-Cache', 'HIT');
+      return res.json(cached);
+    }
+
+    const data = getMachinePeriodBreakdown(
+      year,
+      machineIds,
+      ctx.types.length ? ctx.types : undefined,
+      ctx.operationsOverride,
+      ctx.scenarioBundle,
+      ctx.scenarioId != null && ctx.scenarioBundle ? ctx.scenarioIncludeRfq : undefined,
+      useContractualVolumes,
+      ctx.machineStatus,
+      ctx.dimensionFilters,
+      ctx.settingsProfile,
+      undefined,
+      {
+        includeAssignedZeroVolumeDetailsInBreakdown: true,
+        ...(ctx.includeRfqOperationIds?.length
+          ? { includeRfqOperationIds: ctx.includeRfqOperationIds }
+          : {}),
+      }
+    );
+    const payload = { year, machines: data };
+    setCalculatorCache(cacheKey, payload);
+    res.set('Cache-Control', 'private, max-age=30');
+    res.set('X-Calculator-Cache', 'MISS');
+    return res.json(payload);
+  }
+
+  const data = getScenarioCallOffPeriodBreakdown(
+    ctx.scenarioCallOffComparisonId!,
+    year,
+    machineIds,
+    ctx.types.length ? ctx.types : undefined,
+    ctx.operationsOverride,
+    ctx.scenarioBundle,
+    ctx.scenarioIncludeRfq,
+    useContractualVolumes,
+    ctx.machineStatus,
+    ctx.dimensionFilters,
+    ctx.settingsProfile
+  );
   res.set('Cache-Control', 'no-store');
   res.json({ year, machines: data });
 });

@@ -108,6 +108,12 @@ export function browseStorageDirectory(requestedPath: string | undefined, defaul
     : path.resolve(base);
   assertPathWithinStorageBase(current);
 
+  try {
+    fs.mkdirSync(current, { recursive: true });
+  } catch {
+    /* check below */
+  }
+
   let stat: fs.Stats;
   try {
     stat = fs.statSync(current);

@@ -36,10 +36,17 @@ export default function Administration() {
           </Link>
         )}
 
-        {!limitedAdmin && hasPermission('admin_settings.view') && (
+        {!limitedAdmin && hasPermission('admin_attachments.view') && (
           <Link to="/administracja/zalaczniki" style={adminHubCardStyle}>
             <strong style={{ fontSize: '1.1rem' }}>{t('admin.attachments')}</strong>
             <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('admin.attachmentsDesc')}</p>
+          </Link>
+        )}
+
+        {!limitedAdmin && hasPermission('admin_ocu.view') && (
+          <Link to="/administracja/dane-do-ocu" style={adminHubCardStyle}>
+            <strong style={{ fontSize: '1.1rem' }}>{t('admin.ocuData')}</strong>
+            <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('admin.ocuDataDesc')}</p>
           </Link>
         )}
 

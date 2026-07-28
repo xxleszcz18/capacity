@@ -119,6 +119,44 @@ export type MachineDimLookup = Map<
   { width_mm: number | null; depth_mm: number | null; height_mm: number | null; stroke_mm: number | null }
 >;
 
+const DIM_FIELD_MAP = {
+  width: 'width_mm',
+  depth: 'depth_mm',
+  height: 'height_mm',
+  stroke: 'stroke_mm',
+} as const;
+
+/**
+ * Aktywne wymiary filtra, dla których w lookup/maszynach NIE MA żadnej wartości.
+ * Gdy filtr ≥/≤ trafia w puste kolumny kartoteki, wynik jest zawsze 0.
+ */
+export function dimFilterFieldsMissingInData(
+  dims: DimFiltersState,
+  lookup?: MachineDimLookup | null,
+  machines?: MachineDimFields[]
+): (keyof DimFiltersState)[] {
+  if (!hasActiveDimFilters(dims)) return [];
+  const keys = (['width', 'depth', 'height', 'stroke'] as const).filter((k) => dimFilterActive(dims[k]));
+  return keys.filter((key) => {
+    const field = DIM_FIELD_MAP[key];
+    if (lookup && lookup.size > 0) {
+      for (const row of lookup.values()) {
+        const v = row[field];
+        if (v != null && Number.isFinite(Number(v))) return false;
+      }
+      return true;
+    }
+    if (machines?.length) {
+      for (const m of machines) {
+        const v = m[field];
+        if (v != null && Number.isFinite(Number(v))) return false;
+      }
+      return true;
+    }
+    return false;
+  });
+}
+
 /** Merge dimension columns onto calculator rows (when API omits them) and apply active filters. */
 export function filterMachinesByDimensionFilters<T extends { machine_id?: number } & MachineDimFields>(
   machines: T[],

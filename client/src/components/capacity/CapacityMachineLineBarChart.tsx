@@ -50,7 +50,11 @@ type Props = {
   loadAxisRange?: ChartLoadAxisRange;
   metricMode?: ChartMetricMode;
   captureKey?: string;
+  /** Powyżej tej liczby serii legenda jest ukrywana. Domyślnie 12. */
+  legendMaxSeries?: number | null;
 };
+
+const DEFAULT_LEGEND_MAX_SERIES = 12;
 
 export default function CapacityMachineLineBarChart({
   title,
@@ -68,6 +72,7 @@ export default function CapacityMachineLineBarChart({
   loadAxisRange = DEFAULT_LOAD_AXIS_RANGE,
   metricMode = 'load',
   captureKey,
+  legendMaxSeries = DEFAULT_LEGEND_MAX_SERIES,
 }: Props) {
   const { t } = useI18n();
   const vizColors = useDataVizColors();
@@ -160,6 +165,10 @@ export default function CapacityMachineLineBarChart({
     );
 
   const legendOrder = [CONTRACT_KEY, PROD_KEY, ...extraKeys];
+  const visibleSeriesCount =
+    (showContract ? 1 : 0) + (showProduction ? 1 : 0) + extraKeys.length;
+  const showLegend =
+    legendMaxSeries == null || legendMaxSeries <= 0 || visibleSeriesCount <= legendMaxSeries;
 
   const wrapProps = captureKey
     ? { 'data-pdf-chart': captureKey, 'data-pdf-chart-title': title }
@@ -183,6 +192,11 @@ export default function CapacityMachineLineBarChart({
       }}
     >
       <h3 style={{ margin: '0 0 12px', fontSize: '1rem' }}>{title}</h3>
+      {hasData && !showLegend && (
+        <p style={{ margin: '0 0 8px', fontSize: 12, color: '#666', lineHeight: 1.4 }}>
+          {t('dataViz.legendHiddenManySeries', { count: visibleSeriesCount })}
+        </p>
+      )}
       {!hasData ? (
         <p style={{ margin: 0, color: '#888', fontSize: 13 }}>{emptyHint ?? t('dataViz.emptyMachines')}</p>
       ) : (
@@ -224,18 +238,25 @@ export default function CapacityMachineLineBarChart({
                   year,
                 });
               }}
+              itemSorter={(item) => {
+                const key = String(item.dataKey ?? '');
+                const idx = legendOrder.indexOf(key);
+                return idx >= 0 ? idx : 1000;
+              }}
             />
-            <Legend
-              wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
-              content={(props) => (
-                <OrderedLegendContent
-                  {...props}
-                  orderKeys={legendOrder}
-                  hiddenKeys={hiddenKeys}
-                  onItemClick={toggleSeries}
-                />
-              )}
-            />
+            {showLegend && (
+              <Legend
+                wrapperStyle={{ fontSize: 12, cursor: 'pointer' }}
+                content={(props) => (
+                  <OrderedLegendContent
+                    {...props}
+                    orderKeys={legendOrder}
+                    hiddenKeys={hiddenKeys}
+                    onItemClick={toggleSeries}
+                  />
+                )}
+              />
+            )}
             <ReferenceLine
               y={refLineY}
               stroke={refLineColor}

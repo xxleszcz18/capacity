@@ -639,6 +639,7 @@ function CalculatorLegend({
 
   return (
     <section
+      className="calculator-legend"
       style={{
         marginTop: '1.5rem',
         padding: '1rem 1.25rem',
@@ -1351,8 +1352,12 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
   }, []);
 
   useEffect(() => {
+    let lastFetchAt = 0;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastFetchAt < 45_000) return;
+      lastFetchAt = now;
       fetchCalculator()
         .then((res) => setData(res))
         .catch(() => {

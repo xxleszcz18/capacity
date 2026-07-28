@@ -83,6 +83,7 @@ import { getDataVizPdfStrings, localeDateTime } from '../i18n/reportLabels';
 import {
   buildMachineDimLookup,
   buildDimensionApiParams,
+  dimFilterFieldsMissingInData,
   EMPTY_DIM_FILTERS,
   filterMachinesByDimensionFilters,
   hasActiveDimFilters,
@@ -128,7 +129,9 @@ async function fetchCapacityBundle(params: {
   settingsProfile?: 'capacity' | 'ocu';
   includeRfqOperationIds?: number[];
   scenarioId?: number;
+  dimFilters?: DimFiltersState;
 }): Promise<CapacityTrendBundle> {
+  const dimApi = buildDimensionApiParams(params.dimFilters ?? EMPTY_DIM_FILTERS);
   const res = await api.capacity.calculator({
     yearFrom: params.yearFrom,
     yearTo: params.yearTo,
@@ -139,6 +142,7 @@ async function fetchCapacityBundle(params: {
     settingsProfile: params.settingsProfile === 'ocu' ? 'ocu' : undefined,
     includeRfqOperationIds: joinCsvFilter((params.includeRfqOperationIds ?? []).map(String)),
     scenarioId: params.scenarioId,
+    ...dimApi,
   });
   return {
     yearFrom: res.yearFrom,
@@ -511,6 +515,7 @@ export default function AdminDataVisualization() {
       client: clientFilter,
       settingsProfile,
       includeRfqOperationIds: rfqOperationIds,
+      dimFilters,
     };
   }, [
     rangeMode,
@@ -522,6 +527,7 @@ export default function AdminDataVisualization() {
     clientFilter,
     settingsProfile,
     rfqOperationIds,
+    dimFilters,
   ]);
 
   const loadBaseBundles = useCallback(async () => {
@@ -832,6 +838,20 @@ export default function AdminDataVisualization() {
 
   const machinesProd = prod?.machines ?? [];
   const lines = useMemo(() => uniqueLines(machinesProd), [machinesProd]);
+
+  const dimFieldsMissingData = useMemo(
+    () => dimFilterFieldsMissingInData(dimFilters, machineDimLookup),
+    [dimFilters, machineDimLookup]
+  );
+  const dimMissingLabels = useMemo(() => {
+    const labelKeys: Record<string, string> = {
+      width: 'calculator.dimWidth',
+      depth: 'calculator.dimDepth',
+      height: 'calculator.dimHeight',
+      stroke: 'calculator.dimStroke',
+    };
+    return dimFieldsMissingData.map((k) => t(labelKeys[k] ?? k)).join(', ');
+  }, [dimFieldsMissingData, t]);
 
   const dataVizBusy = loading;
 
@@ -2699,6 +2719,37 @@ export default function AdminDataVisualization() {
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 280px) 1fr', gap: '1rem', alignItems: 'start' }}>
           <div style={panelStyle}>
             <strong style={{ fontSize: 14 }}>{t('dataViz.selectLines')}</strong>
+            {hasActiveDimFilters(dimFilters) && (
+              <p style={{ margin: '6px 0 8px', fontSize: 12, color: '#1565c0' }}>
+                {t('dataViz.dimFilterActiveSummary', { count: machinesProd.length })}
+              </p>
+            )}
+            {dimFieldsMissingData.length > 0 && (
+              <div
+                style={{
+                  margin: '0 0 10px',
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  background: '#fff8e1',
+                  border: '1px solid #ffe082',
+                  fontSize: 12,
+                  color: '#6d4c00',
+                  lineHeight: 1.4,
+                }}
+              >
+                <p style={{ margin: '0 0 8px' }}>
+                  {t('dataViz.dimFilterNoDimensionData', { fields: dimMissingLabels })}
+                </p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: '4px 10px' }}
+                  onClick={() => setDimFilters(EMPTY_DIM_FILTERS)}
+                >
+                  {t('dataViz.dimFilterClear')}
+                </button>
+              </div>
+            )}
             <p style={{ margin: '6px 0 10px', fontSize: 12, color: '#777' }}>{t('dataViz.toggleLineChart')}</p>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, cursor: 'pointer' }}>
               <input type="checkbox" checked={lineChartCombined} onChange={(e) => setLineChartCombined(e.target.checked)} />
@@ -2800,6 +2851,32 @@ export default function AdminDataVisualization() {
               <p style={{ margin: '6px 0 8px', fontSize: 12, color: '#1565c0' }}>
                 {t('dataViz.dimFilterActiveSummary', { count: machinesProd.length })}
               </p>
+            )}
+            {dimFieldsMissingData.length > 0 && (
+              <div
+                style={{
+                  margin: '0 0 10px',
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  background: '#fff8e1',
+                  border: '1px solid #ffe082',
+                  fontSize: 12,
+                  color: '#6d4c00',
+                  lineHeight: 1.4,
+                }}
+              >
+                <p style={{ margin: '0 0 8px' }}>
+                  {t('dataViz.dimFilterNoDimensionData', { fields: dimMissingLabels })}
+                </p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: '4px 10px' }}
+                  onClick={() => setDimFilters(EMPTY_DIM_FILTERS)}
+                >
+                  {t('dataViz.dimFilterClear')}
+                </button>
+              </div>
             )}
             <p style={{ margin: '6px 0 10px', fontSize: 12, color: '#777' }}>{t('dataViz.deselectHint')}</p>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, fontSize: 13, cursor: 'pointer' }}>

@@ -38,7 +38,15 @@ type Props = {
   breakdownScope?: ChartBreakdownScope;
   /** Przycisk „Pokaż dane wg lat” — wyłącz np. dla wykresu łączonego. */
   allowDataTable?: boolean;
+  /**
+   * Powyżej tej liczby aktywnych serii legenda jest ukrywana (wykres pozostaje widoczny).
+   * Domyślnie 12. Ustaw null/false, by zawsze pokazywać legendę.
+   */
+  legendMaxSeries?: number | null;
 };
+
+/** Próg: przy wielu liniach/maszynach na jednym wykresie legenda zasłania plot. */
+const DEFAULT_LEGEND_MAX_SERIES = 12;
 
 function fmtLoadPct(value: number | null | undefined): string {
   return value != null ? `${value}%` : '—';
@@ -56,6 +64,7 @@ export default function CapacityTrendChart({
   metricMode = 'load',
   flexPercent = null,
   allowDataTable = true,
+  legendMaxSeries = DEFAULT_LEGEND_MAX_SERIES,
 }: Props) {
   const { t } = useI18n();
   const vizColors = useDataVizColors();
@@ -63,6 +72,8 @@ export default function CapacityTrendChart({
   const [showDataTable, setShowDataTable] = useState(false);
   const activeSeries = series.filter((s) => rows.some((r) => r[s.key] != null));
   const hasData = activeSeries.length > 0 && rows.length > 0;
+  const showLegend =
+    legendMaxSeries == null || legendMaxSeries <= 0 || activeSeries.length <= legendMaxSeries;
   const xDataKey = rows.some((r) => r.periodLabel) ? 'periodLabel' : 'year';
   const canShowDataTable = allowDataTable && !captureKey;
   const showFlex = flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
@@ -134,6 +145,11 @@ export default function CapacityTrendChart({
             </button>
           )}
         </div>
+        {hasData && !showLegend && (
+          <p style={{ margin: '0 0 8px', fontSize: 12, color: '#666', lineHeight: 1.4 }}>
+            {t('dataViz.legendHiddenManySeries', { count: activeSeries.length })}
+          </p>
+        )}
         {!hasData ? (
           <p style={{ margin: 0, color: '#888', fontSize: 14 }}>{emptyHint ?? t('dataViz.emptyChartDefault')}</p>
         ) : (
@@ -158,13 +174,20 @@ export default function CapacityTrendChart({
                     ? String(label)
                     : t('dataViz.tooltipYear', { year: label })
                 }
+                itemSorter={(item) => {
+                  const key = String(item.dataKey ?? item.name ?? '');
+                  const idx = activeSeries.findIndex((s) => s.key === key);
+                  return idx >= 0 ? idx : 1000;
+                }}
               />
-              <Legend
-                wrapperStyle={{ fontSize: 12 }}
-                content={(props) => (
-                  <OrderedLegendContent {...props} orderKeys={activeSeries.map((s) => s.key)} />
-                )}
-              />
+              {showLegend && (
+                <Legend
+                  wrapperStyle={{ fontSize: 12 }}
+                  content={(props) => (
+                    <OrderedLegendContent {...props} orderKeys={activeSeries.map((s) => s.key)} />
+                  )}
+                />
+              )}
               <ReferenceLine
                 y={refLineY}
                 stroke={refLineColor}

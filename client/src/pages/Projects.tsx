@@ -17,6 +17,10 @@ import { useI18n } from '../context/I18nContext';
 import { useAuth } from '../context/AuthContext';
 import { formatSopEop, parseSopEop } from '../utils/sopEopFormat';
 import { normalizeClientName } from '../utils/clientName';
+import {
+  allowedCreateProjectStatuses,
+  canCreateProject,
+} from '../utils/projectPermissions';
 
 type PartToAdd = { type: 'existing'; designation_id: number } | { type: 'new'; sap_number?: string; alias?: string; free_text?: string };
 
@@ -33,9 +37,12 @@ function sopEopToMonthInput(sop: string): string {
 
 export default function Projects() {
   const { t, te } = useI18n();
-  const { hasAnyPermission } = useAuth();
+  const { hasPermission, hasAnyPermission } = useAuth();
   const canChangeStatus = hasAnyPermission(['projects.change_status', 'projects.edit']);
-  const canViewDetails = hasAnyPermission(['projects.details', 'projects.edit']);
+  const canViewDetails = hasAnyPermission(['projects.details', 'projects.edit', 'projects.create_rfq']);
+  const canAddProject = canCreateProject(hasPermission);
+  const createStatuses = allowedCreateProjectStatuses(hasPermission);
+  const rfqOnlyCreate = canAddProject && !hasPermission('projects.edit') && hasPermission('projects.create_rfq');
   const { referenceDisplay } = useReferenceDisplay();
   const [searchParams] = useSearchParams();
   const scenarioFromUrlNum = searchParams.get('scenarioId') != null ? Number(searchParams.get('scenarioId')) : NaN;
@@ -68,7 +75,13 @@ export default function Projects() {
   const [filterCzesci, setFilterCzesci] = useState('');
   const [filterStatuses, setFilterStatuses] = useState<ProjectStatusFilterValue[]>([]);
   const [addModal, setAddModal] = useState(false);
-  const [form, setForm] = useState({ client: '', name: '', sop: '', eop: '', status: 'active' as const });
+  const [form, setForm] = useState({
+    client: '',
+    name: '',
+    sop: '',
+    eop: '',
+    status: 'active' as 'active' | 'inactive' | 'RFQ',
+  });
   const [sopMonth, setSopMonth] = useState('');
   const [eopMonth, setEopMonth] = useState('');
   const [partsToAdd, setPartsToAdd] = useState<PartToAdd[]>([]);
@@ -376,7 +389,18 @@ export default function Projects() {
         </p>
       )}
       <div className="filters-toolbar">
-        <button onClick={() => setAddModal(true)} style={{ padding: '0.5rem 1rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}>{t('projects.add')}</button>
+        {canAddProject && (
+          <button
+            onClick={() => {
+              const defaultStatus = rfqOnlyCreate ? 'RFQ' : 'active';
+              setForm({ client: '', name: '', sop: '', eop: '', status: defaultStatus });
+              setAddModal(true);
+            }}
+            style={{ padding: '0.5rem 1rem', background: 'var(--cap-green)', color: 'white', border: 'none', borderRadius: 4 }}
+          >
+            {t('projects.add')}
+          </button>
+        )}
         <span className="filters-label">{t('common.showOnly')}</span>
         <div style={{ minWidth: 200, maxWidth: 280 }}>
           <StatusMultiFilter selected={statusFilter} onChange={setStatusFilter} />
@@ -598,11 +622,21 @@ export default function Projects() {
               </div>
               <label>
                 {t('projects.status')}{' '}
-                <SearchableSelect value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as any }))} style={{ width: '100%', padding: 6 }}>
-                  <option value="active">{t('common.active')}</option>
-                  <option value="inactive">{t('common.inactive')}</option>
-                  <option value="RFQ">{t('common.rfq')}</option>
+                <SearchableSelect
+                  value={form.status}
+                  onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as 'active' | 'inactive' | 'RFQ' }))}
+                  style={{ width: '100%', padding: 6 }}
+                  disabled={createStatuses.length <= 1}
+                >
+                  {createStatuses.includes('active') && <option value="active">{t('common.active')}</option>}
+                  {createStatuses.includes('inactive') && <option value="inactive">{t('common.inactive')}</option>}
+                  {createStatuses.includes('RFQ') && <option value="RFQ">{t('common.rfq')}</option>}
                 </SearchableSelect>
+                {rfqOnlyCreate && (
+                  <span style={{ display: 'block', marginTop: 4, fontSize: 12, color: '#666' }}>
+                    {t('projects.createRfqOnlyHint')}
+                  </span>
+                )}
               </label>
 
               <div style={{ marginTop: 8, padding: '0.75rem', background: '#f5f5f5', borderRadius: 6 }}>

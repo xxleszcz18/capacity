@@ -78,6 +78,67 @@ export type AuthUser = {
   login: string;
 };
 
+type VisualSettings = {
+  show_alternative_borders: boolean;
+  show_rfq_badge: boolean;
+  colorize_load_cells: boolean;
+  colorize_sum_row: boolean;
+  colorize_avg_row: boolean;
+  reference_display: 'sap' | 'alias' | 'both';
+  machine_display: 'sap' | 'internal' | 'both';
+  data_viz_machine_bar_label: 'sap' | 'internal' | 'both';
+  ok_enabled: boolean;
+  ok_from: number;
+  ok_to: number;
+  ok_color: string;
+  warn_enabled: boolean;
+  warn_from: number;
+  warn_to: number;
+  warn_color: string;
+  danger_enabled: boolean;
+  danger_from: number;
+  danger_to: number;
+  danger_color: string;
+  contractual_calculator_frame_color: string;
+  calculator_page_size: number;
+  load_expansion_direction?: 'horizontal' | 'vertical';
+  show_sop_marker?: boolean;
+  show_eop_marker?: boolean;
+  period_month_header_color?: string;
+  period_month_frame_color?: string;
+  period_week_header_color?: string;
+  period_week_frame_color?: string;
+  data_viz_default_year_from: number;
+  data_viz_default_year_to: number;
+};
+
+const VISUAL_SETTINGS_TTL_MS = 45_000;
+let visualSettingsCache: { expires: number; value: VisualSettings } | null = null;
+let visualSettingsInFlight: Promise<VisualSettings> | null = null;
+
+function invalidateVisualSettingsCache(): void {
+  visualSettingsCache = null;
+  visualSettingsInFlight = null;
+}
+
+function getVisualSettingsCached(): Promise<VisualSettings> {
+  if (visualSettingsCache && Date.now() < visualSettingsCache.expires) {
+    return Promise.resolve(visualSettingsCache.value);
+  }
+  if (visualSettingsInFlight) return visualSettingsInFlight;
+  visualSettingsInFlight = request<VisualSettings>('/settings/visual')
+    .then((value) => {
+      visualSettingsCache = { expires: Date.now() + VISUAL_SETTINGS_TTL_MS, value };
+      visualSettingsInFlight = null;
+      return value;
+    })
+    .catch((err) => {
+      visualSettingsInFlight = null;
+      throw err;
+    });
+  return visualSettingsInFlight;
+}
+
 export const api = {
   auth: {
     login: (body: { login: string; password: string }) =>
@@ -239,6 +300,56 @@ export const api = {
           file_exists: boolean | null;
         }[];
       }>('/admin/attachments'),
+    generateOcuData: async (transition: File, katowice: File) => {
+      const fd = new FormData();
+      fd.append('transition', transition);
+      fd.append('katowice', katowice);
+      let res: Response;
+      try {
+        res = await fetch(`${BASE}/admin/ocu-data/generate`, {
+          method: 'POST',
+          body: fd,
+          credentials: 'include',
+          cache: 'no-store',
+        });
+      } catch (e) {
+        throw mapFetchFailure(e);
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || res.statusText || 'OCU generate failed');
+      }
+      const statsHeader = res.headers.get('X-OCU-Stats');
+      let stats = {
+        pivot_rows: 0,
+        filled_ab: 0,
+        filled_x: 0,
+        filled_ac: 0,
+        filled_ad: 0,
+        filled_ae: 0,
+        unmatched_sonar: 0,
+        unmatched_erp_in_db: 0,
+      };
+      if (statsHeader) {
+        try {
+          stats = { ...stats, ...JSON.parse(statsHeader) };
+        } catch {
+          /* ignore */
+        }
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const matched = /filename="([^"]+)"/i.exec(disposition);
+      a.download = matched?.[1] || 'Dane_do_OCU.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return { stats };
+    },
     startPickLocation: (body: { target: 'backup' | 'attachments' | 'backup-file'; initial_dir?: string }) =>
       request<{ job_id: string }>('/admin/pick-location/start', { method: 'POST', body: JSON.stringify(body) }),
     getPickLocationResult: (jobId: string) =>
@@ -565,40 +676,7 @@ export const api = {
         }>('/settings/ocu/defaults', { method: 'PUT', body: JSON.stringify(body) }),
     },
     visual: {
-      get: () =>
-        request<{
-          show_alternative_borders: boolean;
-          show_rfq_badge: boolean;
-          colorize_load_cells: boolean;
-          colorize_sum_row: boolean;
-          colorize_avg_row: boolean;
-          reference_display: 'sap' | 'alias' | 'both';
-          machine_display: 'sap' | 'internal' | 'both';
-          data_viz_machine_bar_label: 'sap' | 'internal' | 'both';
-          ok_enabled: boolean;
-          ok_from: number;
-          ok_to: number;
-          ok_color: string;
-          warn_enabled: boolean;
-          warn_from: number;
-          warn_to: number;
-          warn_color: string;
-          danger_enabled: boolean;
-          danger_from: number;
-          danger_to: number;
-          danger_color: string;
-          contractual_calculator_frame_color: string;
-          calculator_page_size: number;
-          load_expansion_direction?: 'horizontal' | 'vertical';
-          show_sop_marker?: boolean;
-          show_eop_marker?: boolean;
-          period_month_header_color?: string;
-          period_month_frame_color?: string;
-          period_week_header_color?: string;
-          period_week_frame_color?: string;
-          data_viz_default_year_from: number;
-          data_viz_default_year_to: number;
-        }>('/settings/visual'),
+      get: () => getVisualSettingsCached(),
       update: (body: {
         show_alternative_borders: boolean;
         show_rfq_badge: boolean;
@@ -631,7 +709,11 @@ export const api = {
         period_week_frame_color?: string;
         data_viz_default_year_from: number;
         data_viz_default_year_to: number;
-      }) => request<any>('/settings/visual', { method: 'PUT', body: JSON.stringify(body) }),
+      }) =>
+        request<any>('/settings/visual', { method: 'PUT', body: JSON.stringify(body) }).then((res) => {
+          invalidateVisualSettingsCache();
+          return res;
+        }),
     },
     phases: {
       list: () => request<{ id: number; name: string }[]>('/settings/phases'),

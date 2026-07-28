@@ -17,5 +17,8 @@ dist
 coverage
 *.md
 !README.md
+!docs/**
 agent-transcripts
 assets
+server/call-offs
+call-offs

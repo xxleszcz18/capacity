@@ -9,6 +9,7 @@ import { formatDetailSapAliasLabel, formatSapNumberForDisplay } from '../utils/d
 import { formatMachineSapInternalLabel, machineSelectFilterText } from '../utils/machineLabel';
 import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import { useI18n } from '../context/I18nContext';
+import { useAuth } from '../context/AuthContext';
 import { translateHistoryNote } from '../i18n/historyNotes';
 import SortableTh from '../components/SortableTh';
 import { useTableSort, sortRows } from '../utils/tableSort';
@@ -16,6 +17,7 @@ import { parseYearValuePaste } from '../utils/parseYearValueTable';
 import { formatSopEop, sopEopYearsRange } from '../utils/sopEopFormat';
 import { normalizeClientName } from '../utils/clientName';
 import { isDesignationDuplicateError } from '../utils/designationDuplicate';
+import { canDownloadProjectAttachments, canEditProjectContent } from '../utils/projectPermissions';
 import {
   partHasPositiveVolumeInSopEopRange,
   sopEopYearsLabel,
@@ -2630,10 +2632,14 @@ function ProjectAttachmentsTab({
   project,
   onChanged,
 }: {
-  project: { id: number; client?: string; name?: string };
+  project: { id: number; client?: string; name?: string; status?: string };
   onChanged: () => void;
 }) {
   const { t, te } = useI18n();
+  const { hasPermission } = useAuth();
+  const canDownload = canDownloadProjectAttachments(hasPermission);
+  const canUpload = canEditProjectContent(hasPermission, project.status);
+  const canDelete = hasPermission('projects.delete');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -2748,6 +2754,7 @@ function ProjectAttachmentsTab({
         <p style={{ margin: '0 0 1rem', padding: '0.75rem 1rem', background: '#ffebee', color: '#c62828', borderRadius: 8 }}>{error}</p>
       )}
 
+      {canUpload && (
       <div
         style={{
           marginBottom: '1rem',
@@ -2810,6 +2817,7 @@ function ProjectAttachmentsTab({
           {uploading ? t('projectDetailExtra.attachmentUploading') : t('projectDetailExtra.attachmentAddBtn')}
         </button>
       </div>
+      )}
 
       {loading ? (
         <p>{t('common.loading')}</p>
@@ -2853,21 +2861,32 @@ function ProjectAttachmentsTab({
                 <td style={{ padding: '0.75rem' }}>{a.uploaded_by || '—'}</td>
                 <td style={{ padding: '0.75rem', whiteSpace: 'nowrap' }}>{formatAttachmentSize(Number(a.size_bytes))}</td>
                 <td style={{ padding: '0.75rem', whiteSpace: 'nowrap' }}>
-                  <a
-                    href={api.projects.attachmentDownloadUrl(project.id, a.id)}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ marginRight: 10, color: 'var(--cap-green)' }}
-                  >
-                    {t('projectDetailExtra.attachmentDownload')}
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(a)}
-                    style={{ padding: '2px 8px', fontSize: 12, background: '#c62828', color: 'white', border: 'none', borderRadius: 4 }}
-                  >
-                    {t('projectDetailExtra.attachmentDelete')}
-                  </button>
+                  {canDownload ? (
+                    <a
+                      href={api.projects.attachmentDownloadUrl(project.id, a.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ marginRight: 10, color: 'var(--cap-green)' }}
+                    >
+                      {t('projectDetailExtra.attachmentDownload')}
+                    </a>
+                  ) : (
+                    <span
+                      style={{ marginRight: 10, color: '#999', fontSize: 12 }}
+                      title={t('projectDetailExtra.attachmentDownloadDenied')}
+                    >
+                      {t('projectDetailExtra.attachmentDownloadDeniedShort')}
+                    </span>
+                  )}
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(a)}
+                      style={{ padding: '2px 8px', fontSize: 12, background: '#c62828', color: 'white', border: 'none', borderRadius: 4 }}
+                    >
+                      {t('projectDetailExtra.attachmentDelete')}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

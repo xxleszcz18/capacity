@@ -491,22 +491,33 @@ header nav a:not(.active):hover {
   border-width: 2px;
 }
 
-.calculator-table-block .calc-sop-marker,
-.calculator-table-block .calc-eop-marker {
+.calc-sop-marker,
+.calc-eop-marker {
+  display: inline-block;
   padding: 1px 3px;
   border-radius: 4px;
   font-size: 8px;
   line-height: 1.1;
   font-weight: 700;
   color: #fff;
+  vertical-align: middle;
 }
 
-.calculator-table-block .calc-sop-marker {
-  background: #008BC1;
+.calc-sop-marker {
+  background: #008bc1;
 }
 
-.calculator-table-block .calc-eop-marker {
-  background: #E86A10;
+.calc-eop-marker {
+  background: #e86a10;
+}
+
+/* Legenda kalkulatora — czytelniejszy rozmiar, te same kolory co w komórkach */
+.calculator-legend .calc-sop-marker,
+.calculator-legend .calc-eop-marker {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .calculator-table-block .calc-period-expand-btn {

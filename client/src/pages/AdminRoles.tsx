@@ -21,23 +21,38 @@ import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
 import { useTableSort, sortRows } from '../utils/tableSort';
 
-type PermAction = 'view' | 'details' | 'change_status' | 'edit' | 'delete' | 'download';
+type PermAction = 'view' | 'details' | 'change_status' | 'edit' | 'delete' | 'download' | 'create_rfq';
 
 const PERMISSION_RESOURCES: { key: string; labelKey: string; actions: PermAction[] }[] = [
   { key: 'calculator', labelKey: 'auth.permCalculator', actions: ['view', 'download'] },
   { key: 'machines', labelKey: 'auth.permMachines', actions: ['view', 'details', 'change_status', 'edit', 'delete', 'download'] },
-  { key: 'projects', labelKey: 'auth.permProjects', actions: ['view', 'details', 'change_status', 'edit', 'delete', 'download'] },
+  {
+    key: 'projects',
+    labelKey: 'auth.permProjects',
+    actions: ['view', 'details', 'change_status', 'edit', 'delete', 'create_rfq'],
+  },
   { key: 'designations', labelKey: 'auth.permDesignations', actions: ['view', 'edit', 'delete', 'download'] },
   { key: 'scenarios', labelKey: 'auth.permScenarios', actions: ['view', 'edit', 'delete', 'download'] },
+  { key: 'call_offs', labelKey: 'auth.permCallOffs', actions: ['view', 'edit', 'delete', 'download'] },
   { key: 'admin_database', labelKey: 'auth.permAdminDatabase', actions: ['view', 'edit', 'download'] },
   { key: 'admin_settings', labelKey: 'auth.permAdminSettings', actions: ['view', 'edit', 'download'] },
   { key: 'admin_data_viz', labelKey: 'auth.permAdminDataViz', actions: ['view', 'edit', 'download'] },
+  { key: 'admin_ocu', labelKey: 'auth.permAdminOcu', actions: ['view', 'edit'] },
+  { key: 'admin_attachments', labelKey: 'auth.permAdminAttachments', actions: ['view', 'download'] },
   { key: 'change_history', labelKey: 'auth.permChangeHistory', actions: ['view', 'download'] },
   { key: 'user_management', labelKey: 'auth.permUserManagement', actions: ['view', 'edit', 'delete'] },
   { key: 'role_management', labelKey: 'auth.permRoleManagement', actions: ['view', 'edit', 'delete'] },
 ];
 
-const ACTION_COLUMNS: PermAction[] = ['view', 'details', 'change_status', 'edit', 'delete', 'download'];
+const ACTION_COLUMNS: PermAction[] = [
+  'view',
+  'details',
+  'change_status',
+  'edit',
+  'delete',
+  'download',
+  'create_rfq',
+];
 
 export function PermissionMatrix({
   value,
@@ -53,8 +68,13 @@ export function PermissionMatrix({
   const toggle = (perm: string) => {
     if (disabled) return;
     const next = new Set(set);
-    if (next.has(perm)) next.delete(perm);
-    else next.add(perm);
+    if (next.has(perm)) {
+      next.delete(perm);
+      // Wyłączenie obsługi załączników = też brak pobierania plików
+      if (perm === 'admin_attachments.view') next.delete('admin_attachments.download');
+    } else {
+      next.add(perm);
+    }
     onChange([...next].sort());
   };
   const actionLabel = (action: PermAction) => {
@@ -63,6 +83,7 @@ export function PermissionMatrix({
     if (action === 'change_status') return t('auth.permChangeStatus');
     if (action === 'edit') return t('auth.permEdit');
     if (action === 'delete') return t('auth.permDelete');
+    if (action === 'create_rfq') return t('auth.permCreateRfq');
     return t('auth.permDownload');
   };
   return (
@@ -99,6 +120,9 @@ export function PermissionMatrix({
           ))}
         </tbody>
       </table>
+      <p style={{ margin: '8px 0 0', fontSize: 12, color: '#666', lineHeight: 1.45 }}>{t('auth.permCreateRfqHint')}</p>
+      <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666', lineHeight: 1.45 }}>{t('auth.permAttachmentsDownloadHint')}</p>
+      <p style={{ margin: '4px 0 0', fontSize: 12, color: '#666', lineHeight: 1.45 }}>{t('auth.permCallOffsDownloadHint')}</p>
     </div>
   );
 }
@@ -152,7 +176,9 @@ export default function AdminRoles() {
     setName(r.name);
     setDescription(r.description ?? '');
     setLoginRequired(r.login_required !== 0);
-    setPerms(r.permissions ?? []);
+    const next = new Set(r.permissions ?? []);
+    if (!next.has('admin_attachments.view')) next.delete('admin_attachments.download');
+    setPerms([...next].sort());
     setError(null);
     setModal(r.id);
   };

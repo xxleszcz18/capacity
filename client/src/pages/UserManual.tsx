@@ -16,14 +16,19 @@ type SectionDef = {
 const SECTIONS: SectionDef[] = [
   {
     id: 'overview',
-    paragraphs: ['p1', 'p2', 'p3'],
+    paragraphs: ['p1', 'p2', 'p3', 'p4'],
     steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
   },
   {
     id: 'auth',
-    paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3'],
-    list: ['role1', 'role2', 'role3'],
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4'],
+    list: ['role1', 'role2', 'role3', 'permMatrix'],
+    subsections: [
+      { titleKey: 'rbacTitle', bodyKey: 'rbac' },
+      { titleKey: 'rfqPermTitle', bodyKey: 'rfqPerm' },
+      { titleKey: 'downloadPermTitle', bodyKey: 'downloadPerm' },
+    ],
   },
   {
     id: 'header',
@@ -40,46 +45,60 @@ const SECTIONS: SectionDef[] = [
   {
     id: 'dataModel',
     diagram: 'dataModel',
-    paragraphs: ['p1', 'p2'],
-    list: ['dep1', 'dep2', 'dep3', 'dep4', 'dep5'],
+    paragraphs: ['p1', 'p2', 'p3'],
+    list: ['dep1', 'dep2', 'dep3', 'dep4', 'dep5', 'dep6'],
   },
   {
     id: 'calculator',
     diagram: 'calculation',
-    paragraphs: ['p1', 'p2', 'p3', 'p4'],
-    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+    paragraphs: ['p1', 'p2', 'p3', 'p4', 'p5'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5', 'step6'],
     subsections: [
       { titleKey: 'summaryTitle', bodyKey: 'summary' },
       { titleKey: 'allocTitle', bodyKey: 'alloc' },
+      { titleKey: 'allocModesTitle', bodyKey: 'allocModes' },
       { titleKey: 'filtersTitle', bodyKey: 'filters' },
+      { titleKey: 'exportTitle', bodyKey: 'export' },
     ],
   },
   {
     id: 'machines',
-    paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3'],
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4'],
+    subsections: [
+      { titleKey: 'usageTitle', bodyKey: 'usage' },
+      { titleKey: 'nestsTitle', bodyKey: 'nests' },
+    ],
   },
   {
     id: 'projects',
     diagram: 'projectFlow',
-    paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5', 'step6'],
+    subsections: [
+      { titleKey: 'volumesTitle', bodyKey: 'volumes' },
+      { titleKey: 'attachmentsTitle', bodyKey: 'attachments' },
+    ],
   },
   {
     id: 'details',
-    paragraphs: ['p1', 'p2'],
+    paragraphs: ['p1', 'p2', 'p3'],
   },
   {
     id: 'scenarios',
     diagram: 'scenario',
-    paragraphs: ['p1', 'p2', 'p3'],
+    paragraphs: ['p1', 'p2', 'p3', 'p4'],
     steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
   },
   {
     id: 'callOffs',
     diagram: 'callOffs',
-    paragraphs: ['p1', 'p2'],
-    steps: ['step1', 'step2', 'step3', 'step4'],
+    paragraphs: ['p1', 'p2', 'p3'],
+    steps: ['step1', 'step2', 'step3', 'step4', 'step5'],
+    subsections: [
+      { titleKey: 'matchTitle', bodyKey: 'match' },
+      { titleKey: 'downloadTitle', bodyKey: 'download' },
+    ],
   },
   {
     id: 'dataViz',
@@ -95,10 +114,15 @@ const SECTIONS: SectionDef[] = [
   {
     id: 'admin',
     diagram: 'adminMap',
-    paragraphs: ['p1'],
+    paragraphs: ['p1', 'p2'],
     subsections: [
       { titleKey: 'dbTitle', bodyKey: 'db' },
+      { titleKey: 'visualTitle', bodyKey: 'visual' },
       { titleKey: 'admTitle', bodyKey: 'adm' },
+      { titleKey: 'pathsTitle', bodyKey: 'paths' },
+      { titleKey: 'importTitle', bodyKey: 'import' },
+      { titleKey: 'ocuDataTitle', bodyKey: 'ocuData' },
+      { titleKey: 'attachAdminTitle', bodyKey: 'attachAdmin' },
       { titleKey: 'usersTitle', bodyKey: 'users' },
       { titleKey: 'histTitle', bodyKey: 'hist' },
     ],
@@ -106,8 +130,76 @@ const SECTIONS: SectionDef[] = [
   {
     id: 'formulas',
     diagram: 'dependencies',
+    paragraphs: ['p1', 'p2', 'p3'],
+    list: [
+      'avail',
+      'oee',
+      'usage',
+      'weekly',
+      'volPriority',
+      'required',
+      'load',
+      'sop',
+      'period',
+      'maxType',
+      'isoWeek',
+      'altCycle',
+      'contractual',
+    ],
+  },
+  {
+    id: 'faq',
     paragraphs: ['p1'],
-    list: ['avail', 'weekly', 'required', 'load', 'sop', 'maxType', 'isoWeek'],
+    subsections: [
+      { titleKey: 'q01', bodyKey: 'a01' },
+      { titleKey: 'q02', bodyKey: 'a02' },
+      { titleKey: 'q03', bodyKey: 'a03' },
+      { titleKey: 'q04', bodyKey: 'a04' },
+      { titleKey: 'q05', bodyKey: 'a05' },
+      { titleKey: 'q06', bodyKey: 'a06' },
+      { titleKey: 'q07', bodyKey: 'a07' },
+      { titleKey: 'q08', bodyKey: 'a08' },
+      { titleKey: 'q09', bodyKey: 'a09' },
+      { titleKey: 'q10', bodyKey: 'a10' },
+      { titleKey: 'q11', bodyKey: 'a11' },
+      { titleKey: 'q12', bodyKey: 'a12' },
+      { titleKey: 'q13', bodyKey: 'a13' },
+      { titleKey: 'q14', bodyKey: 'a14' },
+      { titleKey: 'q15', bodyKey: 'a15' },
+      { titleKey: 'q16', bodyKey: 'a16' },
+      { titleKey: 'q17', bodyKey: 'a17' },
+      { titleKey: 'q18', bodyKey: 'a18' },
+      { titleKey: 'q19', bodyKey: 'a19' },
+      { titleKey: 'q20', bodyKey: 'a20' },
+      { titleKey: 'q21', bodyKey: 'a21' },
+      { titleKey: 'q22', bodyKey: 'a22' },
+      { titleKey: 'q23', bodyKey: 'a23' },
+      { titleKey: 'q24', bodyKey: 'a24' },
+      { titleKey: 'q25', bodyKey: 'a25' },
+      { titleKey: 'q26', bodyKey: 'a26' },
+      { titleKey: 'q27', bodyKey: 'a27' },
+      { titleKey: 'q28', bodyKey: 'a28' },
+      { titleKey: 'q29', bodyKey: 'a29' },
+      { titleKey: 'q30', bodyKey: 'a30' },
+      { titleKey: 'q31', bodyKey: 'a31' },
+      { titleKey: 'q32', bodyKey: 'a32' },
+      { titleKey: 'q33', bodyKey: 'a33' },
+      { titleKey: 'q34', bodyKey: 'a34' },
+      { titleKey: 'q35', bodyKey: 'a35' },
+      { titleKey: 'q36', bodyKey: 'a36' },
+      { titleKey: 'q37', bodyKey: 'a37' },
+      { titleKey: 'q38', bodyKey: 'a38' },
+      { titleKey: 'q39', bodyKey: 'a39' },
+      { titleKey: 'q40', bodyKey: 'a40' },
+      { titleKey: 'q41', bodyKey: 'a41' },
+      { titleKey: 'q42', bodyKey: 'a42' },
+      { titleKey: 'q43', bodyKey: 'a43' },
+      { titleKey: 'q44', bodyKey: 'a44' },
+      { titleKey: 'q45', bodyKey: 'a45' },
+      { titleKey: 'q46', bodyKey: 'a46' },
+      { titleKey: 'q47', bodyKey: 'a47' },
+      { titleKey: 'q48', bodyKey: 'a48' },
+    ],
   },
 ];
 
@@ -150,7 +242,14 @@ function ManualSection({
 
       {section.subsections?.map((sub) => (
         <div key={sub.titleKey} style={{ margin: '1rem 0' }}>
-          <h3 style={{ margin: '0 0 0.35rem', fontSize: '1rem', color: 'var(--cap-green)' }}>
+          <h3
+            style={{
+              margin: '0 0 0.35rem',
+              fontSize: section.id === 'faq' ? '0.98rem' : '1rem',
+              color: section.id === 'faq' ? '#333' : 'var(--cap-green)',
+              fontWeight: section.id === 'faq' ? 600 : 600,
+            }}
+          >
             {t(`${base}.${sub.titleKey}`)}
           </h3>
           <p style={{ margin: 0, lineHeight: 1.6, color: '#444' }}>{t(`${base}.${sub.bodyKey}`)}</p>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { useI18n } from '../context/I18nContext';
 import { useScenarioMode } from '../context/ScenarioModeContext';
 import {
@@ -53,8 +54,10 @@ export default function CallOffView() {
   const { id } = useParams();
   const comparisonId = Number(id);
   const { t } = useI18n();
+  const { hasPermission } = useAuth();
   const { setAppSection } = useScenarioMode();
   const fileRef = useRef<HTMLInputElement>(null);
+  const canDownloadCallOffFiles = hasPermission('call_offs.download');
 
   const [importing, setImporting] = useState(false);
   const [downloadingSource, setDownloadingSource] = useState(false);
@@ -202,14 +205,16 @@ export default function CallOffView() {
               <span style={{ fontSize: 14 }}>
                 <strong>{t('callOffs.uploadedFileLabel')}</strong> {meta?.source_filename || '—'}
               </span>
-              <button
-                type="button"
-                onClick={() => void downloadSource()}
-                disabled={!sourceFileAvailable || downloadingSource}
-                style={archiveButtonStyle(importPanel, !sourceFileAvailable || downloadingSource)}
-              >
-                {downloadingSource ? t('common.loading') : t('callOffs.downloadSourceFile')}
-              </button>
+              {canDownloadCallOffFiles && (
+                <button
+                  type="button"
+                  onClick={() => void downloadSource()}
+                  disabled={!sourceFileAvailable || downloadingSource}
+                  style={archiveButtonStyle(importPanel, !sourceFileAvailable || downloadingSource)}
+                >
+                  {downloadingSource ? t('common.loading') : t('callOffs.downloadSourceFile')}
+                </button>
+              )}
               {!sourceFileAvailable && meta?.source_filename && (
                 <span style={{ fontSize: 12, color: '#888' }}>{t('callOffs.sourceFileUnavailable')}</span>
               )}
@@ -219,14 +224,16 @@ export default function CallOffView() {
               <span style={{ fontSize: 14 }}>
                 <strong>{t('callOffs.unmatchedReportTitle')}</strong>
               </span>
-              <button
-                type="button"
-                onClick={() => void downloadReport()}
-                disabled={!reportAvailable || downloadingReport}
-                style={archiveButtonStyle(importPanel, !reportAvailable || downloadingReport)}
-              >
-                {downloadingReport ? t('common.loading') : t('callOffs.downloadUnmatchedReport')}
-              </button>
+              {canDownloadCallOffFiles && (
+                <button
+                  type="button"
+                  onClick={() => void downloadReport()}
+                  disabled={!reportAvailable || downloadingReport}
+                  style={archiveButtonStyle(importPanel, !reportAvailable || downloadingReport)}
+                >
+                  {downloadingReport ? t('common.loading') : t('callOffs.downloadUnmatchedReport')}
+                </button>
+              )}
             </div>
           </div>
         )}

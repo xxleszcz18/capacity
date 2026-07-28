@@ -18,7 +18,7 @@ export default function AdminSettings() {
     backup_enabled: false,
     backup_frequency_days: 1,
     backup_output_dir: 'backups',
-    project_attachments_output_dir: '',
+    project_attachments_output_dir: 'attachments',
     volumes_autosave_enabled: true,
     ocu_enabled: false,
   });
@@ -29,7 +29,6 @@ export default function AdminSettings() {
   const [attachmentsPathWritable, setAttachmentsPathWritable] = useState<boolean | null>(null);
   const [pickLocationAvailable, setPickLocationAvailable] = useState(true);
   const [storageBaseDir, setStorageBaseDir] = useState('');
-  const [isDocker, setIsDocker] = useState(false);
   const [storageBrowse, setStorageBrowse] = useState<{ kind: 'backup' | 'attachments'; initialPath?: string } | null>(
     null
   );
@@ -99,7 +98,7 @@ export default function AdminSettings() {
           backup_enabled: !!cfg.backup_enabled,
           backup_frequency_days: Number(cfg.backup_frequency_days || 0),
           backup_output_dir: cfg.backup_output_dir || 'backups',
-          project_attachments_output_dir: cfg.project_attachments_output_dir || '',
+          project_attachments_output_dir: cfg.project_attachments_output_dir || 'attachments',
           volumes_autosave_enabled: cfg.volumes_autosave_enabled !== false,
           ocu_enabled: cfg.ocu_enabled === true,
         });
@@ -107,7 +106,6 @@ export default function AdminSettings() {
         setAbsoluteAttachmentsDir(cfg.absolute_attachments_output_dir || '');
         setPickLocationAvailable(cfg.pick_location_available !== false);
         setStorageBaseDir(cfg.storage_base_dir || '');
-        setIsDocker(cfg.is_docker === true);
         setLastBackupAt(cfg.last_backup_at || '');
         setLastBackupFile(cfg.last_backup_file || '');
         loadBackupFiles();
@@ -970,37 +968,33 @@ export default function AdminSettings() {
 
         <label style={{ display: 'block', marginBottom: 10 }}>
           {t('adminSettingsExtra.backupLocation')}
-          {isDocker && (
-            <p style={{ margin: '6px 0 0', fontSize: 13, color: '#666', lineHeight: 1.5, fontWeight: 400 }}>
-              {t('adminSettingsExtra.serverPathHint', { base: storageBaseDir || '/data' })}
-            </p>
-          )}
+          <p style={{ margin: '6px 0 0', fontSize: 13, color: '#666', lineHeight: 1.5, fontWeight: 400 }}>
+            {t('adminSettingsExtra.serverPathHint', { base: storageBaseDir || t('adminSettingsExtra.storageBaseFallback') })}
+          </p>
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
             <input
               type="text"
               value={form.backup_output_dir}
               onChange={(e) => setForm((prev) => ({ ...prev, backup_output_dir: e.target.value }))}
               style={{ width: '70%', minWidth: 260, padding: 4 }}
-              placeholder={
-                isDocker ? t('adminSettingsExtra.serverPathPlaceholderBackup') : t('adminSettingsExtra.backupPathPlaceholder')
-              }
+              placeholder={t('adminSettingsExtra.serverPathPlaceholderBackup')}
             />
-            {pickLocationAvailable ? (
+            <button
+              type="button"
+              onClick={() => setStorageBrowse({ kind: 'backup', initialPath: form.backup_output_dir })}
+              style={{ padding: '0.5rem 0.75rem', background: '#455a64', color: 'white', border: 'none', borderRadius: 4 }}
+            >
+              {t('adminSettingsExtra.browseServer')}
+            </button>
+            {pickLocationAvailable && (
               <button
                 type="button"
                 onClick={pickLocation}
                 disabled={pickingBackupDir}
+                title={t('adminSettingsExtra.pickLocationLocalOnlyHint')}
                 style={{ padding: '0.5rem 0.75rem', background: '#607d8b', color: 'white', border: 'none', borderRadius: 4 }}
               >
                 {pickingBackupDir ? t('adminSettingsExtra.pickingLocation') : t('adminSettingsExtra.pickLocation')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setStorageBrowse({ kind: 'backup', initialPath: form.backup_output_dir })}
-                style={{ padding: '0.5rem 0.75rem', background: '#455a64', color: 'white', border: 'none', borderRadius: 4 }}
-              >
-                {t('adminSettingsExtra.browseServer')}
               </button>
             )}
           </div>
@@ -1110,10 +1104,15 @@ export default function AdminSettings() {
         <h2 style={{ margin: '0 0 8px', fontSize: '1.15rem' }}>{t('adminSettingsExtra.attachmentsTitle')}</h2>
         <p style={{ margin: '0 0 12px', fontSize: 14, color: '#555', lineHeight: 1.55 }}>{t('adminSettingsExtra.attachmentsIntro')}</p>
         <p style={{ margin: '0 0 12px', fontSize: 13, color: '#666', lineHeight: 1.5 }}>
-          {pickLocationAvailable
-            ? t('adminSettingsExtra.attachmentsManualHint')
-            : t('adminSettingsExtra.attachmentsServerHint', { base: storageBaseDir || '/data' })}
+          {t('adminSettingsExtra.attachmentsServerHint', {
+            base: storageBaseDir || t('adminSettingsExtra.storageBaseFallback'),
+          })}
         </p>
+        {pickLocationAvailable && (
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#666', lineHeight: 1.5 }}>
+            {t('adminSettingsExtra.attachmentsManualHint')}
+          </p>
+        )}
         <label style={{ display: 'block', marginBottom: 10 }}>
           {t('adminSettingsExtra.attachmentsLocation')}
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
@@ -1122,28 +1121,24 @@ export default function AdminSettings() {
               value={form.project_attachments_output_dir}
               onChange={(e) => setForm((prev) => ({ ...prev, project_attachments_output_dir: e.target.value }))}
               style={{ width: '70%', minWidth: 260, padding: 4 }}
-              placeholder={
-                isDocker
-                  ? t('adminSettingsExtra.serverPathPlaceholderAttachments')
-                  : t('adminSettingsExtra.attachmentsPathPlaceholder')
-              }
+              placeholder={t('adminSettingsExtra.serverPathPlaceholderAttachments')}
             />
-            {pickLocationAvailable ? (
+            <button
+              type="button"
+              onClick={() => setStorageBrowse({ kind: 'attachments', initialPath: form.project_attachments_output_dir })}
+              style={{ padding: '0.5rem 0.75rem', background: '#455a64', color: 'white', border: 'none', borderRadius: 4 }}
+            >
+              {t('adminSettingsExtra.browseServer')}
+            </button>
+            {pickLocationAvailable && (
               <button
                 type="button"
                 onClick={pickAttachmentsLocation}
                 disabled={pickingAttachmentsDir}
+                title={t('adminSettingsExtra.pickLocationLocalOnlyHint')}
                 style={{ padding: '0.5rem 0.75rem', background: '#607d8b', color: 'white', border: 'none', borderRadius: 4 }}
               >
                 {pickingAttachmentsDir ? t('adminSettingsExtra.pickingLocation') : t('adminSettingsExtra.pickLocation')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setStorageBrowse({ kind: 'attachments', initialPath: form.project_attachments_output_dir })}
-                style={{ padding: '0.5rem 0.75rem', background: '#455a64', color: 'white', border: 'none', borderRadius: 4 }}
-              >
-                {t('adminSettingsExtra.browseServer')}
               </button>
             )}
           </div>

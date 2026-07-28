@@ -9,6 +9,14 @@ type Props = {
   onClose: () => void;
 };
 
+function joinServerPath(parent: string, child: string): string {
+  const name = child.trim().replace(/[\\/]+/g, '');
+  if (!name) return parent;
+  if (!parent) return name;
+  const sep = parent.includes('\\') ? '\\' : '/';
+  return `${parent.replace(/[\\/]+$/, '')}${sep}${name}`;
+}
+
 export default function ServerStorageBrowser({ kind, initialPath, onSelect, onClose }: Props) {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
@@ -17,6 +25,7 @@ export default function ServerStorageBrowser({ kind, initialPath, onSelect, onCl
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<{ name: string; path: string; setting_value: string }[]>([]);
   const [selectedValue, setSelectedValue] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
 
   const load = useCallback(
     (path?: string) => {
@@ -39,6 +48,13 @@ export default function ServerStorageBrowser({ kind, initialPath, onSelect, onCl
   useEffect(() => {
     load(initialPath?.trim() || undefined);
   }, [initialPath, load]);
+
+  const createFolder = () => {
+    const name = newFolderName.trim();
+    if (!name || loading) return;
+    setNewFolderName('');
+    load(joinServerPath(currentPath, name));
+  };
 
   return (
     <div
@@ -126,6 +142,35 @@ export default function ServerStorageBrowser({ kind, initialPath, onSelect, onCl
                   ))
                 )}
               </ul>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      createFolder();
+                    }
+                  }}
+                  placeholder={t('adminSettingsExtra.storageBrowseNewFolderPlaceholder')}
+                  style={{ flex: 1, minWidth: 160, padding: '0.4rem 0.5rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={createFolder}
+                  disabled={!newFolderName.trim() || loading}
+                  style={{
+                    padding: '0.4rem 0.75rem',
+                    border: '1px solid #ccc',
+                    borderRadius: 4,
+                    background: '#fafafa',
+                    cursor: newFolderName.trim() ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {t('adminSettingsExtra.storageBrowseCreateFolder')}
+                </button>
+              </div>
             </>
           )}
         </div>

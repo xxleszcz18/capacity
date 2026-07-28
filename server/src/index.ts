@@ -1,11 +1,11 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import fs from 'fs';
 import path from 'path';
-import zlib from 'zlib';
 import { initDb, saveDb } from './db/connection.js';
 import { bootstrapAuthIfEmpty } from './auth/userService.js';
-import { optionalAuth, requireAuth, requirePermissionForResource, requireAdminAccess } from './middleware/auth.js';
+import { optionalAuth, requireAuth, requirePermissionForResource, requireAdminAccess, enforceProjectMutationScope } from './middleware/auth.js';
 import { authRouter } from './routes/auth.js';
 import { usersAdminRouter, rolesAdminRouter } from './routes/usersAdmin.js';
 import { settingsRouter, phasesRouter, designationsRouter, machineTypesRouter } from './routes/settings.js';
@@ -28,26 +28,8 @@ app.use(
     exposedHeaders: ['Content-Disposition', 'X-Capacity-Data-Import-Schema'],
   }),
 );
+app.use(compression({ threshold: 1024 }));
 app.use(express.json());
-
-/** Kompresja gzip dla dużych odpowiedzi JSON (kalkulator). */
-app.use((req, res, next) => {
-  const accept = req.headers['accept-encoding'];
-  if (typeof accept !== 'string' || !accept.includes('gzip')) return next();
-  const originalJson = res.json.bind(res);
-  res.json = (body: unknown) => {
-    const payload = JSON.stringify(body);
-    if (payload.length < 2048) return originalJson(body);
-    zlib.gzip(payload, (err, compressed) => {
-      if (err) return originalJson(body);
-      res.setHeader('Content-Encoding', 'gzip');
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.end(compressed);
-    });
-    return res;
-  };
-  next();
-});
 
 app.use(optionalAuth);
 
@@ -63,7 +45,7 @@ app.use('/api/machines', requireAuth, requirePermissionForResource('machines'), 
 app.use('/api/machine-groups', requireAuth, requirePermissionForResource('machines'), machineGroupsRouter);
 app.use('/api/nests', requireAuth, requirePermissionForResource('machines'), nestsRouter);
 app.use('/api/alternatives', requireAuth, requirePermissionForResource('machines'), alternativesRouter);
-app.use('/api/projects', requireAuth, requirePermissionForResource('projects'), projectsRouter);
+app.use('/api/projects', requireAuth, requirePermissionForResource('projects'), enforceProjectMutationScope, projectsRouter);
 app.use('/api/capacity', requireAuth, requirePermissionForResource('calculator'), capacityRouter);
 app.use('/api/allocation', requireAuth, requirePermissionForResource('projects'), allocationRouter);
 app.use('/api/scenarios', requireAuth, requirePermissionForResource('scenarios'), scenariosRouter);
@@ -82,9 +64,32 @@ function mountClientStatic(): void {
   const clientDist = resolveClientDist();
   if (!clientDist) return;
   console.log(`[capacity] Serving static UI from ${clientDist}`);
-  app.use(express.static(clientDist, { index: false, maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0 }));
+  const isProd = process.env.NODE_ENV === 'production';
+  app.use(
+    '/assets',
+    express.static(path.join(clientDist, 'assets'), {
+      maxAge: isProd ? '1y' : 0,
+      immutable: isProd,
+      etag: true,
+      lastModified: true,
+    })
+  );
+  app.use(
+    express.static(clientDist, {
+      index: false,
+      maxAge: isProd ? '1h' : 0,
+      etag: true,
+      lastModified: true,
+      setHeaders(res, filePath) {
+        if (path.basename(filePath) === 'index.html') {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    })
+  );
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(clientDist, 'index.html'), (err) => {
       if (err) next(err);
     });

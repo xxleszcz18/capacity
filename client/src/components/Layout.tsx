@@ -149,8 +149,13 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     loadVisualPrefs();
+    let lastAt = 0;
     const onVisible = () => {
-      if (document.visibilityState === 'visible') loadVisualPrefs();
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastAt < 45_000) return;
+      lastAt = now;
+      loadVisualPrefs();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -352,6 +357,8 @@ export default function Layout({ children }: { children: ReactNode }) {
     hasAnyPermission([
       'admin_database.view',
       'admin_settings.view',
+      'admin_ocu.view',
+      'admin_attachments.view',
       'change_history.view',
       'user_management.view',
       'role_management.view',

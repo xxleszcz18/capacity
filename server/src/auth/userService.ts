@@ -1,5 +1,5 @@
 import { db } from '../db/connection.js';
-import { ALL_PERMISSION_KEYS } from './permissions.js';
+import { ALL_PERMISSION_KEYS, isValidPermissionKey } from './permissions.js';
 import { hashPassword } from './password.js';
 
 export type UserRoleRef = { id: number; name: string };
@@ -182,9 +182,14 @@ export function setUserRoles(userId: number, roleIds: number[]): void {
 }
 
 export function setRolePermissions(roleId: number, keys: string[]): void {
+  const normalized = new Set(keys.filter((k) => isValidPermissionKey(k)));
+  // Bez podglądu załączników nie ma pobierania plików załączników
+  if (!normalized.has('admin_attachments.view')) {
+    normalized.delete('admin_attachments.download');
+  }
   db.prepare('DELETE FROM role_permissions WHERE role_id = ?').run(roleId);
   const ins = db.prepare('INSERT INTO role_permissions (role_id, permission_key) VALUES (?, ?)');
-  for (const key of keys) ins.run(roleId, key);
+  for (const key of normalized) ins.run(roleId, key);
 }
 
 export function grantAllPermissionsToRole(roleId: number): void {

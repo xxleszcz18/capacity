@@ -31,6 +31,7 @@ import {
   importMachinesFromBuffer,
   MACHINES_IMPORT_CONFIRM,
 } from '../services/machineImportService.js';
+import { generateOcuKatowiceWorkbook } from '../services/ocuDataExportService.js';
 
 export const adminRouter = Router();
 
@@ -199,30 +200,53 @@ adminRouter.get('/attachments', (_req, res) => {
 
 adminRouter.put('/backup-settings', (req, res) => {
   const body = req.body as any;
-  const enabled = body.backup_enabled === true || body.backup_enabled === 1 || body.backup_enabled === '1';
-  const freqDays = Math.max(0, Number(body.backup_frequency_days ?? body.backup_frequency_minutes ?? 0) || 0);
-  const outputDir = String(body.backup_output_dir ?? '').trim() || DEFAULT_BACKUP_DIR;
-  const attachmentsOutputDir = String(body.project_attachments_output_dir ?? '').trim();
-  if (/^https?:\/\//i.test(outputDir)) {
-    return res.status(400).json({ error: 'Lokalizacja backupu musi być ścieżką folderu (lokalną, UNC lub file://), nie adresem http/https.' });
+
+  if (body.backup_output_dir !== undefined) {
+    const outputDir = String(body.backup_output_dir ?? '').trim() || DEFAULT_BACKUP_DIR;
+    if (/^https?:\/\//i.test(outputDir)) {
+      return res.status(400).json({
+        error: 'Lokalizacja backupu musi być ścieżką folderu (lokalną, UNC lub file://), nie adresem http/https.',
+      });
+    }
+    try {
+      checkStoragePath(outputDir, DEFAULT_BACKUP_DIR);
+    } catch (e: any) {
+      return res.status(400).json({ error: e?.message || 'Nieprawidłowa ścieżka magazynu.' });
+    }
+    setSetting('backup_output_dir', outputDir);
   }
-  if (attachmentsOutputDir && /^https?:\/\//i.test(attachmentsOutputDir)) {
-    return res.status(400).json({ error: 'Lokalizacja załączników musi być ścieżką folderu (lokalną, UNC lub file://), nie adresem http/https.' });
+
+  if (body.backup_enabled !== undefined) {
+    const enabled = body.backup_enabled === true || body.backup_enabled === 1 || body.backup_enabled === '1';
+    setSetting('backup_enabled', enabled ? '1' : '0');
   }
-  try {
-    checkStoragePath(outputDir, DEFAULT_BACKUP_DIR);
-    if (attachmentsOutputDir) checkStoragePath(attachmentsOutputDir, 'attachments');
-  } catch (e: any) {
-    return res.status(400).json({ error: e?.message || 'Nieprawidłowa ścieżka magazynu.' });
+
+  if (body.backup_frequency_days !== undefined || body.backup_frequency_minutes !== undefined) {
+    const freqDays =
+      body.backup_frequency_days !== undefined
+        ? Math.max(0, Number(body.backup_frequency_days) || 0)
+        : Math.max(0, Math.round((Number(body.backup_frequency_minutes) || 0) / 1440));
+    setSetting('backup_frequency_days', String(Math.round(freqDays)));
+    setSetting('backup_frequency_minutes', String(Math.round(freqDays * 1440)));
   }
-  setSetting('backup_enabled', enabled ? '1' : '0');
-  setSetting('backup_frequency_days', String(Math.round(freqDays)));
-  // Legacy key retained for compatibility with older code paths.
-  setSetting('backup_frequency_minutes', String(Math.round(freqDays * 1440)));
-  setSetting('backup_output_dir', outputDir);
+
   if (body.project_attachments_output_dir !== undefined) {
+    const attachmentsOutputDir = String(body.project_attachments_output_dir ?? '').trim();
+    if (attachmentsOutputDir && /^https?:\/\//i.test(attachmentsOutputDir)) {
+      return res.status(400).json({
+        error: 'Lokalizacja załączników musi być ścieżką folderu (lokalną, UNC lub file://), nie adresem http/https.',
+      });
+    }
+    if (attachmentsOutputDir) {
+      try {
+        checkStoragePath(attachmentsOutputDir, 'attachments');
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.message || 'Nieprawidłowa ścieżka magazynu.' });
+      }
+    }
     setSetting('project_attachments_output_dir', attachmentsOutputDir);
   }
+
   if (body.volumes_autosave_enabled !== undefined) {
     const autosave = body.volumes_autosave_enabled === true || body.volumes_autosave_enabled === 1 || body.volumes_autosave_enabled === '1';
     setSetting('volumes_autosave_enabled', autosave ? '1' : '0');
@@ -581,3 +605,43 @@ adminRouter.post('/machines-import', capacityUpload.single('file'), (req, res) =
   if (!result.ok) return res.status(400).json({ error: result.error });
   res.json({ ...result, backup_file: backupBefore.filePath, backup_at: backupBefore.at });
 });
+
+const ocuUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 80 * 1024 * 1024 },
+});
+
+/**
+ * Generuje uzupełniony Katowice_Data (kolumny X, AB, AC, AD, AE).
+ * multipart: transition (Tabela przejścia), katowice (Katowice_Data .xlsx/.xlsm)
+ */
+adminRouter.post(
+  '/ocu-data/generate',
+  ocuUpload.fields([
+    { name: 'transition', maxCount: 1 },
+    { name: 'katowice', maxCount: 1 },
+  ]),
+  (req, res) => {
+    void (async () => {
+      try {
+        const files = req.files as { transition?: Express.Multer.File[]; katowice?: Express.Multer.File[] } | undefined;
+        const transition = files?.transition?.[0];
+        const katowice = files?.katowice?.[0];
+        if (!transition?.buffer?.length) {
+          return res.status(400).json({ error: 'Brak pliku Tabeli przejścia (pole: transition).' });
+        }
+        if (!katowice?.buffer?.length) {
+          return res.status(400).json({ error: 'Brak pliku Katowice_Data (pole: katowice).' });
+        }
+        const result = await generateOcuKatowiceWorkbook(transition.buffer, katowice.buffer);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+        res.setHeader('X-OCU-Stats', JSON.stringify(result.stats));
+        res.setHeader('Access-Control-Expose-Headers', 'X-OCU-Stats, Content-Disposition');
+        res.send(result.buffer);
+      } catch (e: any) {
+        return res.status(400).json({ error: e?.message || 'Nie udało się wygenerować pliku OCU.' });
+      }
+    })();
+  }
+);

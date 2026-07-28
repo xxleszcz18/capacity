@@ -3,7 +3,7 @@
 Aplikacja Autoneum do planowania i analizy obciążenia linii oraz maszyn.  
 Stack: **React (TypeScript)** + **Express (TypeScript)** + **SQLite (sql.js)**.
 
-Pełna instrukcja w aplikacji: **Administracja → Instrukcja obsługi** (PL / EN / DE).
+Pełna instrukcja w aplikacji: **Administracja → Instrukcja obsługi** (PL / EN / DE) — funkcje, dokładna logika obliczeń oraz **FAQ** (sekcja 14).
 
 ## Funkcje (przegląd)
 
@@ -63,6 +63,19 @@ npm start
 
 Serwer serwuje UI z `client/dist`. Po aktualizacji kodu na drugim komputerze: `git pull` → `npm run build` → restart `npm start` → twarde odświeżenie (Ctrl+F5).
 
+### Docker (produkcja)
+
+```bash
+docker compose up --build -d
+```
+
+- Aplikacja: `http://localhost:3001` (lub `PORT` z `.env`)
+- Dane: wolumen `/data` (`capacity.db`, `backups/`, `attachments/`, `call-offs/`)
+- Po starcie w **Ustawieniach administracyjnych** ustaw lokalizacje `backups` i `attachments` (ścieżki względne / „Przeglądaj na serwerze”)
+- Zmień hasło bootstrap (`BOOTSTRAP_ADMIN_PASSWORD`) oraz `CAPACITY_DEPLOY_SECRET` w `.env`
+
+Szczegóły: `Dockerfile`, `docker-compose.yml`.
+
 ## Przepływy (skrót)
 
 1. **Master data** → słowniki i maszyny → projekty z operacjami i wolumenami → Kalkulator.  
@@ -71,7 +84,7 @@ Serwer serwuje UI z `client/dist`. Po aktualizacji kodu na drugim komputerze: `g
 4. **Call offs** → plik SalesFcst → mapowanie SAP → kalkulator dualny / serie na wykresach.  
 5. **Wizualizacja** → serie bazowe + Call offs + multi-scenariusze → Flex → eksport.
 
-Szczegóły wzorów (dostępność, wolumen tygodniowy, obciążenie, SOP/EOP, max wg typu): instrukcja w aplikacji, sekcja „Wzory obliczeniowe”, oraz `server/CAPACITY_LOGIC.md`.
+Szczegóły wzorów (dostępność, usage, gniazda, wolumen tygodniowy, obciążenie, SOP/EOP, max wg typu, Call offs): instrukcja w aplikacji — sekcje **„Wzory obliczeniowe”** i **„FAQ”**, oraz `server/CAPACITY_LOGIC.md`.
 
 ## API (skrót)
 

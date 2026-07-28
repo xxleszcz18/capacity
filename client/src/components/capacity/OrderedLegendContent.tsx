@@ -1,5 +1,32 @@
 import { DefaultLegendContent } from 'recharts';
 
+/** Sortuje payload legendy/tooltipu według `orderKeys` (reszta na końcu). */
+export function sortChartPayloadByOrderKeys<T extends { dataKey?: unknown; value?: unknown }>(
+  payload: T[] | undefined,
+  orderKeys: string[]
+): T[] {
+  const items = Array.isArray(payload) ? payload : [];
+  const byKey = new Map<string, T>();
+  for (const item of items) {
+    const key = String(item.dataKey ?? item.value ?? '');
+    if (key) byKey.set(key, item);
+  }
+  const ordered: T[] = [];
+  const used = new Set<string>();
+  for (const key of orderKeys) {
+    const item = byKey.get(key);
+    if (item) {
+      ordered.push(item);
+      used.add(key);
+    }
+  }
+  for (const item of items) {
+    const key = String(item.dataKey ?? item.value ?? '');
+    if (!used.has(key)) ordered.push(item);
+  }
+  return ordered;
+}
+
 /**
  * Legenda w zadanej kolejności dataKey (Recharts często odwraca kolejność serii).
  * Opcjonalnie: klik przełącza widoczność (hiddenKeys + onItemClick).
@@ -19,26 +46,10 @@ export function OrderedLegendContent(props: {
     value?: unknown;
     inactive?: boolean;
   }>;
-  const byKey = new Map<string, (typeof items)[number]>();
-  for (const item of items) {
+  const ordered = sortChartPayloadByOrderKeys(items, orderKeys).map((item) => {
     const key = String(item.dataKey ?? item.value ?? '');
-    if (key) byKey.set(key, item);
-  }
-  const ordered: typeof items = [];
-  const used = new Set<string>();
-  for (const key of orderKeys) {
-    const item = byKey.get(key);
-    if (item) {
-      ordered.push({ ...item, inactive: hidden.has(key) || Boolean(item.inactive) });
-      used.add(key);
-    }
-  }
-  for (const item of items) {
-    const key = String(item.dataKey ?? item.value ?? '');
-    if (!used.has(key)) {
-      ordered.push({ ...item, inactive: hidden.has(key) || Boolean(item.inactive) });
-    }
-  }
+    return { ...item, inactive: hidden.has(key) || Boolean(item.inactive) };
+  });
   return (
     <DefaultLegendContent
       {...(rest as object)}

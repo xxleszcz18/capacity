@@ -13,6 +13,7 @@ import {
   userLoginLabel,
   type AuthUserRow,
 } from '../auth/userService.js';
+import { db } from '../db/connection.js';
 
 export type AuthenticatedUser = AuthUserRow & {
   login: string;
@@ -155,12 +156,21 @@ function resolveResourcePermission(req: Request, resource: PermissionResource): 
       ) {
         return 'projects.view';
       }
-      if (/^\/\d+(\/|$)/.test(path)) return ['projects.details', 'projects.edit'];
+      if (/\/attachments\/\d+\/download$/.test(path)) return 'admin_attachments.download';
+      // create_rfq: podgląd szczegółów (żeby zarządzać RFQ po utworzeniu)
+      if (/^\/\d+(\/|$)/.test(path)) return ['projects.details', 'projects.edit', 'projects.create_rfq'];
     }
     if (method === 'PUT' && /^\/\d+$/.test(path)) {
-      return isStatusOnlyBody(req.body) ? ['projects.change_status', 'projects.edit'] : 'projects.edit';
+      if (isStatusOnlyBody(req.body)) {
+        return ['projects.change_status', 'projects.edit'];
+      }
+      return ['projects.edit', 'projects.create_rfq'];
     }
-    if (method === 'POST') return 'projects.edit';
+    if (method === 'POST' && (path === '/' || path === '')) {
+      return ['projects.edit', 'projects.create_rfq'];
+    }
+    if (method === 'POST') return ['projects.edit', 'projects.create_rfq'];
+    if (method === 'PUT' || method === 'PATCH') return ['projects.edit', 'projects.create_rfq'];
     if (method === 'DELETE') return 'projects.delete';
   }
 
@@ -177,6 +187,83 @@ function resolveResourcePermission(req: Request, resource: PermissionResource): 
   }
 
   return null;
+}
+
+/**
+ * Dla użytkowników z projects.create_rfq (bez projects.edit):
+ * - tworzenie tylko status=RFQ
+ * - mutacje tylko na projektach RFQ
+ * - bez DELETE i bez zmiany statusu na non-RFQ
+ */
+export function enforceProjectMutationScope(req: Request, res: Response, next: NextFunction): void {
+  if (!isAuthEnforced()) {
+    next();
+    return;
+  }
+  if (!req.user) {
+    res.status(401).json({ error: 'Wymagane logowanie' });
+    return;
+  }
+  const perms = req.user.permissions;
+  if (perms.includes('projects.edit')) {
+    next();
+    return;
+  }
+  if (!perms.includes('projects.create_rfq')) {
+    next();
+    return;
+  }
+
+  const method = req.method.toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    next();
+    return;
+  }
+  if (method === 'DELETE') {
+    res.status(403).json({ error: 'Brak uprawnień do usuwania (uprawnienie RFQ nie obejmuje usuwania).' });
+    return;
+  }
+
+  const path = req.path || '/';
+  if (method === 'POST' && (path === '/' || path === '')) {
+    const status = req.body?.status === 'RFQ' ? 'RFQ' : req.body?.status === 'inactive' ? 'inactive' : 'active';
+    if (status !== 'RFQ') {
+      res.status(403).json({ error: 'Możesz tworzyć tylko projekty o statusie RFQ.' });
+      return;
+    }
+    next();
+    return;
+  }
+
+  const idMatch = path.match(/^\/(\d+)(?:\/|$)/);
+  if (!idMatch) {
+    next();
+    return;
+  }
+  const projectId = Number(idMatch[1]);
+  const project = db.prepare('SELECT status FROM projects WHERE id = ?').get(projectId) as
+    | { status: string }
+    | undefined;
+  if (!project) {
+    next();
+    return;
+  }
+  if (project.status !== 'RFQ') {
+    res.status(403).json({
+      error: 'Przy uprawnieniu „Tworzenie RFQ” możesz edytować tylko projekty o statusie RFQ.',
+    });
+    return;
+  }
+
+  if (method === 'PUT' && /^\/\d+$/.test(path) && req.body && typeof req.body === 'object') {
+    const nextStatus = (req.body as { status?: unknown }).status;
+    if (nextStatus != null && nextStatus !== 'RFQ') {
+      res.status(403).json({ error: 'Nie możesz zmieniać statusu projektu RFQ na inny przy tym uprawnieniu.' });
+      return;
+    }
+  }
+
+  next();
 }
 
 export function requireAnyPermission(permissionKeys: string[]) {
@@ -199,5 +286,15 @@ export function requireAnyPermission(permissionKeys: string[]) {
 
 export function requireAdminAccess(req: Request, res: Response, next: NextFunction): void {
   const action = actionForHttpMethod(req.method);
+  const path = req.path || '';
+
+  if (path.startsWith('/ocu-data')) {
+    const key = action === 'view' ? 'admin_ocu.view' : 'admin_ocu.edit';
+    return requirePermission(key)(req, res, next);
+  }
+  if (path.startsWith('/attachments')) {
+    return requirePermission('admin_attachments.view')(req, res, next);
+  }
+
   return requireAnyPermission([`admin_settings.${action}`, `admin_database.${action}`])(req, res, next);
 }
