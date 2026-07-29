@@ -25,6 +25,10 @@ type BreakdownSeries = NonNullable<BreakdownResponse['series'][CapacityBreakdown
 type BreakdownClient = BreakdownSeries['clients'][number];
 type BreakdownProject = BreakdownClient['projects'][number];
 type BreakdownDetail = BreakdownProject['details'][number];
+type BreakdownYearData = {
+  common?: BreakdownResponse;
+  callOffById: Map<number, BreakdownResponse>;
+};
 
 function fmtMetricPct(value: number | null | undefined, mode: ChartMetricMode): string {
   const v = applyChartMetric(value, mode);
@@ -38,6 +42,13 @@ export function seriesBreakdownKey(seriesKey: string): CapacityBreakdownSeriesKe
   if (seriesKey.endsWith('_contract') || seriesKey.endsWith('_kon')) return 'contract';
   if (seriesKey.endsWith('_prod')) return 'production';
   return null;
+}
+
+function callOffIdFromSeriesKey(seriesKey: string): number | null {
+  const m = /_co(\d+)_calloff$/i.exec(seriesKey);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
 }
 
 function findClient(series: BreakdownSeries | undefined, client: string): BreakdownClient | undefined {
@@ -57,27 +68,29 @@ function findDetail(
   return findProject(series, client, projectId)?.details.find((d) => d.detail_label === detailLabel);
 }
 
-function unionClients(breakdown: BreakdownResponse): BreakdownClient[] {
+function unionClientsFromBreakdowns(breakdowns: BreakdownResponse[]): BreakdownClient[] {
   const byClient = new Map<string, BreakdownClient>();
-  for (const series of Object.values(breakdown.series)) {
-    for (const client of series?.clients ?? []) {
-      const existing = byClient.get(client.client);
-      if (!existing) {
-        byClient.set(client.client, {
-          ...client,
-          projects: client.projects.map((p) => ({ ...p, details: [...p.details] })),
-        });
-        continue;
-      }
-      for (const project of client.projects) {
-        const existingProject = existing.projects.find((p) => p.project_id === project.project_id);
-        if (!existingProject) {
-          existing.projects.push({ ...project, details: [...project.details] });
+  for (const breakdown of breakdowns) {
+    for (const series of Object.values(breakdown.series)) {
+      for (const client of series?.clients ?? []) {
+        const existing = byClient.get(client.client);
+        if (!existing) {
+          byClient.set(client.client, {
+            ...client,
+            projects: client.projects.map((p) => ({ ...p, details: [...p.details] })),
+          });
           continue;
         }
-        for (const detail of project.details) {
-          if (!existingProject.details.some((d) => d.detail_label === detail.detail_label)) {
-            existingProject.details.push(detail);
+        for (const project of client.projects) {
+          const existingProject = existing.projects.find((p) => p.project_id === project.project_id);
+          if (!existingProject) {
+            existing.projects.push({ ...project, details: [...project.details] });
+            continue;
+          }
+          for (const detail of project.details) {
+            if (!existingProject.details.some((d) => d.detail_label === detail.detail_label)) {
+              existingProject.details.push(detail);
+            }
           }
         }
       }
@@ -214,7 +227,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
   const [expandedYears, setExpandedYears] = useState<Set<number>>(() => new Set());
   const [expandedClients, setExpandedClients] = useState<Set<string>>(() => new Set());
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => new Set());
-  const [breakdownCache, setBreakdownCache] = useState<Map<number, BreakdownResponse>>(() => new Map());
+  const [breakdownCache, setBreakdownCache] = useState<Map<number, BreakdownYearData>>(() => new Map());
   const [loadingYears, setLoadingYears] = useState<Set<number>>(() => new Set());
   const [errorYears, setErrorYears] = useState<Map<number, string>>(() => new Map());
 
@@ -223,9 +236,13 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
       activeSeries.map((s) => seriesBreakdownKey(s.key)).filter((k): k is CapacityBreakdownSeriesKey => k != null)
     ),
   ];
+  const callOffSeriesIds = [
+    ...new Set(activeSeries.map((s) => callOffIdFromSeriesKey(s.key)).filter((id): id is number => id != null)),
+  ];
   const uniqueSeriesKey = uniqueSeriesKeys.slice().sort().join(',');
+  const callOffSeriesIdsKey = callOffSeriesIds.slice().sort((a, b) => a - b).join(',');
   const fetchParamsKey = JSON.stringify(breakdownScope?.fetchParams ?? null);
-  const cacheScopeKey = `${uniqueSeriesKey}|${fetchParamsKey}`;
+  const cacheScopeKey = `${uniqueSeriesKey}|${callOffSeriesIdsKey}|${fetchParamsKey}`;
 
   useEffect(() => {
     setBreakdownCache(new Map());
@@ -243,14 +260,37 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
         return next;
       });
       try {
-        const res = await api.capacity.breakdown({
+        const baseQuery = {
           year,
-          series: uniqueSeriesKeys.join(','),
           line: breakdownScope.kind === 'line' ? breakdownScope.line : undefined,
           machineId: breakdownScope.kind === 'machine' ? breakdownScope.machineId : undefined,
           ...breakdownFetchParamsToApi(breakdownScope.fetchParams),
-        });
-        setBreakdownCache((prev) => new Map(prev).set(year, res));
+        };
+        const sharedSeries = uniqueSeriesKeys.filter((k) => k !== 'call_off');
+        const [common, callOffEntries] = await Promise.all([
+          sharedSeries.length > 0
+            ? api.capacity.breakdown({
+                ...baseQuery,
+                series: sharedSeries.join(','),
+              })
+            : Promise.resolve(undefined),
+          Promise.all(
+            callOffSeriesIds.map(async (callOffId) => [
+              callOffId,
+              await api.capacity.breakdown({
+                ...baseQuery,
+                series: 'call_off',
+                callOffComparisonId: callOffId,
+              }),
+            ] as const)
+          ),
+        ]);
+        setBreakdownCache((prev) =>
+          new Map(prev).set(year, {
+            common,
+            callOffById: new Map(callOffEntries),
+          })
+        );
       } catch (e) {
         setErrorYears((prev) => new Map(prev).set(year, e instanceof Error ? e.message : String(e)));
       } finally {
@@ -261,7 +301,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
         });
       }
     },
-    [breakdownScope, uniqueSeriesKeys, breakdownCache]
+    [breakdownScope, uniqueSeriesKeys, callOffSeriesIds, breakdownCache]
   );
 
   const toggleYear = (year: number) => {
@@ -298,8 +338,9 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
 
   const chevron = (open: boolean) => (open ? '▾' : '▸');
 
-  const renderBreakdownRows = (breakdown: BreakdownResponse, year: number) => {
-    const clients = unionClients(breakdown);
+  const renderBreakdownRows = (yearData: BreakdownYearData, year: number) => {
+    const allBreakdowns = [...(yearData.common ? [yearData.common] : []), ...Array.from(yearData.callOffById.values())];
+    const clients = unionClientsFromBreakdowns(allBreakdowns);
     if (!clients.length) {
       return (
         <tr>
@@ -311,6 +352,14 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
     }
 
     return clients.flatMap((clientNode) => {
+      const breakdownForSeries = (seriesKey: string): BreakdownResponse | undefined => {
+        const bk = seriesBreakdownKey(seriesKey);
+        if (!bk) return undefined;
+        if (bk !== 'call_off') return yearData.common;
+        const callOffId = callOffIdFromSeriesKey(seriesKey);
+        if (callOffId != null) return yearData.callOffById.get(callOffId);
+        return yearData.common;
+      };
       const clientKey = `${year}|${clientNode.client}`;
       const clientOpen = expandedClients.has(clientKey);
       const clientBg = '#fafafa';
@@ -328,7 +377,8 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
           </TreeLabelCell>
           {activeSeries.map((s) => {
             const bk = seriesBreakdownKey(s.key);
-            const node = bk ? findClient(breakdown.series[bk], clientNode.client) : undefined;
+            const seriesBreakdown = breakdownForSeries(s.key);
+            const node = bk && seriesBreakdown ? findClient(seriesBreakdown.series[bk], clientNode.client) : undefined;
             return <SeriesValueCell key={s.key} series={s} value={node?.load_percent} background={clientBg} metricMode={metricMode} />;
           })}
         </tr>,
@@ -354,7 +404,11 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
             </TreeLabelCell>
             {activeSeries.map((s) => {
               const bk = seriesBreakdownKey(s.key);
-              const node = bk ? findProject(breakdown.series[bk], clientNode.client, projectNode.project_id) : undefined;
+              const seriesBreakdown = breakdownForSeries(s.key);
+              const node =
+                bk && seriesBreakdown
+                  ? findProject(seriesBreakdown.series[bk], clientNode.client, projectNode.project_id)
+                  : undefined;
               return <SeriesValueCell key={s.key} series={s} value={node?.load_percent} background={projectBg} metricMode={metricMode} />;
             })}
           </tr>
@@ -375,8 +429,10 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
                 </TreeLabelCell>
                 {activeSeries.map((s) => {
                   const bk = seriesBreakdownKey(s.key);
+                  const seriesBreakdown = breakdownForSeries(s.key);
                   const node = bk
-                    ? findDetail(breakdown.series[bk], clientNode.client, projectNode.project_id, detailNode.detail_label)
+                    && seriesBreakdown
+                    ? findDetail(seriesBreakdown.series[bk], clientNode.client, projectNode.project_id, detailNode.detail_label)
                     : undefined;
                   return <SeriesValueCell key={s.key} series={s} value={node?.load_percent} background={detailBg} metricMode={metricMode} />;
                 })}
