@@ -97,7 +97,7 @@ export const manualPl: TranslationTree = {
         p2:
           'Obciążenie % maszyny = wymagany czas operacji / efektywna dostępność × 100 (szczegóły w sekcji wzorów). Efektywna dostępność uwzględnia machine usage. W trybie Call offs komórki pokazują dualnie: baza + Call offs.',
         p3:
-          'Na dole tabeli: Suma obciążeń, Średnia obciążeń oraz Max średnia wg typu (najwyższa średnia wśród typów maszyn w bieżącym filtrze — np. średnia MC vs WJ vs HL).',
+          'Na dole tabeli: Suma obciążeń, Średnia obciążeń oraz Max średnia wg typu (najwyższa średnia wśród typów maszyn w bieżącym filtrze — np. średnia MC vs WJ vs HL). Wykresy w Wizualizacji danych agregują linie tą samą regułą. Wartość roku (produkcja/scenariusz) = średnia miesięcy; Call offs = średnia w zakresie danych SAP.',
         p4:
           'Ten sam kalkulator działa w produkcji, scenariuszu i Call offs — źródło danych wybierasz w nagłówku / nawigacji.',
         p5:
@@ -260,7 +260,7 @@ export const manualPl: TranslationTree = {
           'Import maszyn / pakietu capacity / danych wejściowych jest w Ustawieniach administracyjnych. Używaj szablonów zgodnych z wersją aplikacji; po imporcie sprawdź Kalkulator i Historie zmian.',
         ocuDataTitle: 'Dane do OCU',
         ocuData:
-          'Moduł uzupełnia arkusz Input w Katowice_Data (kolumny X, AB, AC, AD, AE) na podstawie Tabeli przejścia i bazy Capacity. Wgraj oba pliki → Generuj i pobierz ZIP (źródła bez filtrów + wynik). Wymaga admin_ocu.view / .edit.',
+          'Moduł uzupełnia arkusz Input w Katowice_Data (kolumny X, AB, AC, AD, AE) na podstawie Tabeli przejścia i bazy Capacity. Wgraj oba pliki → Generuj i pobierz ZIP (źródła bez filtrów + wynik). Wymaga admin_ocu.view / .edit. Osobny moduł Administracja → Data preparation uzupełnia S2102/S1619 z routing.txt (BFS, bez nadpisywania CR/AF).',
         attachAdminTitle: 'Załączniki (administracja)',
         attachAdmin:
           'Globalna lista załączników z lokalizacją na dysku i statusem „plik istnieje”. Podgląd = admin_attachments.view; pobieranie plików w projekcie = admin_attachments.download (wyłączenie view wyłącza też download).',
@@ -296,9 +296,9 @@ export const manualPl: TranslationTree = {
         sop:
           'SOP/EOP w formacie MM.YYYY; ułamki roku/miesiąca/tygodnia ograniczają wolumen w okresach ramp-up/down. Poza zakresem = 0, chyba że include_in_calculator_after_eop lub ręczne nadpisanie (manual_year).',
         period:
-          'Rozwinięcie okresu: rok → miesiące → tygodnie. Wolumen miesięczny/tygodniowy skalowany ułamkiem produkcji w danym okresie (SOP/EOP, origin default vs manual_year).',
+          'Rozwinięcie okresu: rok → miesiące → tygodnie. Produkcja/scenariusz: komórka roku = średnia 12 miesięcy; komórka miesiąca = średnia tygodni. Call offs: rok = średnia miesięcy w zakresie danych SAP w pliku; miesiąc = średnia tygodni w zakresie SAP w tym miesiącu. Zera wewnątrz zakresu SAP wchodzą do średniej; zera poza zakresem są pomijane. Wolumen skalowany ułamkiem produkcji (SOP/EOP, origin default vs manual_year).',
         maxType:
-          'Max średnia wg typu = max po typach ze (średnia load_% maszyn typu t). Ta sama agregacja w wierszu kalkulatora i na wykresach linii / wielu maszyn w Data Viz.',
+          'Max średnia wg typu = max po typach ze (średnia load_% maszyn typu t). Ta sama agregacja w wierszu kalkulatora i na wszystkich wykresach linii / wielu maszyn / zakładu w Data Viz.',
         isoWeek:
           'Tygodnie w rozwinięciu okresów: ISO 8601, poniedziałek–niedziela.',
         altCycle:
@@ -450,10 +450,13 @@ export const manualPl: TranslationTree = {
           'Flaga na wolumenie roku: pozwala nadal liczyć wolumen w kalkulatorze po dacie EOP detalu/projektu. Bez niej po EOP wolumen = 0.',
         q47: 'Jak czytać dualne komórki w Call offs?',
         a47:
-          'Komórka pokazuje obciążenie bazy (produkcja lub kontrakt) oraz obciążenie wynikające z wolumenów Call offs dla zmapowanych pozycji — do porównania forecast vs plan.',
+          'Komórka pokazuje obciążenie bazy (produkcja lub kontrakt) oraz obciążenie wynikające z wolumenów Call offs dla zmapowanych pozycji — do porównania forecast vs plan. Wartość Call offs to średnia w zakresie dat SAP (nie peak).',
         q48: 'Gdzie szukać dalszej pomocy?',
         a48:
           'Sekcje 1–13 tej instrukcji, diagramy, Historia zmian, CAPACITY_LOGIC.md po stronie serwera oraz administrator aplikacji (role, ścieżki, backup).',
+        q49: 'Jak liczona jest wartość roku / miesiąca w Kalkulatorze?',
+        a49:
+          'Produkcja i scenariusze: rok = średnia 12 miesięcy (np. 6×182% + 6×0% → 91%); miesiąc = średnia tygodni. Call offs: rok = średnia miesięcy od pierwszego do ostatniego miesiąca z danymi SAP; miesiąc = średnia tygodni w zakresie SAP. Zera w środku zakresu liczą się, poza zakresem — nie. Wykresy używają wiersza „Max średnia wg typu”.',
       },
     },
     diagrams: {

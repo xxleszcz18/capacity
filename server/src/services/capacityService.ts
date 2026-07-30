@@ -25,6 +25,11 @@ import {
   collectProjectPartIdsFromOperations,
   lookupEffectiveVolumeForPartPreferContract,
 } from './volumePrefetch.js';
+import {
+  getSapMonthRangeForYear,
+  getSapWeekRangeForMonth,
+  averageLoadPercent,
+} from './callOffService.js';
 
 function indexOperationsByMachine(operations: any[]): Map<number, any[]> {
   const map = new Map<number, any[]>();
@@ -2063,6 +2068,31 @@ export function getMachineCapacityByYears(
       undefined,
       calculationOptions
     );
+
+    /**
+     * Produkcja / scenariusz / kontrakt (bez Call offs): obciążenie roczne = średnia z 12 miesięcy
+     * (zera po EOP też wchodzą do średniej — np. 6×182 + 6×0 → 91).
+     * Call offs nadpisuje load w callOffCapacityService / scenarioCallOffCapacityService
+     * (średnia miesięcy w zakresie danych SAP).
+     */
+    const monthlyByMachine =
+      callOffVolumes == null
+        ? getMachineMonthlyLoadsByMonth(
+            y,
+            machineIds,
+            machineType,
+            operationsOverride,
+            scenarioSnapshot ?? null,
+            scenarioIncludeRfqProjects,
+            useContractualVolumes,
+            machineStatusFilter,
+            dimensionFilters,
+            settingsProfile,
+            null,
+            calculationOptions
+          )
+        : null;
+
     for (const r of rows) {
       if (!machineMap.has(r.machine_id)) {
         machineMap.set(r.machine_id, {
@@ -2079,8 +2109,16 @@ export function getMachineCapacityByYears(
         });
       }
       const ent = machineMap.get(r.machine_id)!;
+      let loadPercent = r.load_percent;
+      if (monthlyByMachine) {
+        const months = monthlyByMachine.get(r.machine_id);
+        const vals: number[] = [];
+        for (let m = 1; m <= 12; m++) vals.push(months?.get(m)?.load_percent ?? 0);
+        const sum = vals.reduce((a, b) => a + b, 0);
+        loadPercent = Math.round(sum / 12);
+      }
       ent.years[r.year] = {
-        load_percent: r.load_percent,
+        load_percent: loadPercent,
         capacity_pcs_per_week: r.capacity_pcs_per_week,
         required_sec_per_week: r.required_sec_per_week,
         availability_sec_per_week: r.availability_sec_per_week,
@@ -2243,7 +2281,7 @@ export function getMachineSopEopMarkersByYears(
 }
 
 export type MachinePeriodBreakdownOptions = {
-  /** Domyślnie true. false = tylko miesiące (bez tygodni) — szybka ścieżka pod peak roczny Call offs. */
+  /** Domyślnie true. false = tylko miesiące (bez tygodni) — szybka ścieżka pod średnią roczną Call offs. */
   includeWeeks?: boolean;
   /** Call offs: pokaż przypisane detale z 0% (bez placeholderów alokacji na inny rok). */
   includeAssignedZeroVolumeDetailsInBreakdown?: boolean;
@@ -2267,8 +2305,9 @@ type MonthPeakDetail = {
 
 /**
  * Obciążenie miesięczne (1–12) dla wszystkich maszyn.
- * Przy Call offs: miesiąc = max(tygodni w miesiącu), spójnie z rozwinięciem T1…Tn.
- * Używane przy komórkach rocznych Call offs (peak / wyrównanie miesiąca).
+ * Produkcja / scenariusz: obciążenie z wolumenu miesięcznego (rok = średnia 12 miesięcy).
+ * Call offs: miesiąc = średnia tygodni w zakresie danych SAP (zera w zakresie liczą się).
+ * Bez tygodni SAP → obciążenie z wolumenu miesięcznego.
  */
 export function getMachineMonthlyLoadsByMonth(
   year: number,
@@ -2293,43 +2332,59 @@ export function getMachineMonthlyLoadsByMonth(
     calculationOptions?.includeRfqOperationIds
   );
   const byMachine = new Map<number, Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }>>();
-  const useWeeklyPeak = callOffVolumes != null;
 
   for (let month = 1; month <= 12; month++) {
-    if (useWeeklyPeak) {
-      const weekCount = getWeekCountInMonth(year, month);
-      for (let w = 1; w <= weekCount; w++) {
-        const weekRows = getMachineCapacitiesForYear(
-          year,
-          machineIds,
-          machineType,
-          operationsOverride,
-          scenarioSnapshot,
-          scenarioIncludeRfqProjects,
-          useContractualVolumes,
-          machineStatusFilter,
-          dimensionFilters,
-          settingsProfile,
-          month,
-          shared,
-          callOffVolumes,
-          'weekly',
-          calculationOptions,
-          w
-        );
-        for (const row of weekRows) {
-          if (!byMachine.has(row.machine_id)) byMachine.set(row.machine_id, new Map());
-          const prev = byMachine.get(row.machine_id)!.get(month);
-          const load = row.load_percent ?? 0;
-          if (!prev || load > prev.load_percent) {
-            byMachine.get(row.machine_id)!.set(month, {
-              load_percent: load,
-              detail_breakdown: (row.detail_breakdown ?? []) as MonthPeakDetail,
-            });
+    if (callOffVolumes) {
+      const weekRange = getSapWeekRangeForMonth(callOffVolumes, year, month);
+      if (weekRange) {
+        const weekLoads = new Map<number, { loads: number[]; details: MonthPeakDetail[] }>();
+        for (let w = weekRange.from; w <= weekRange.to; w++) {
+          const weekRows = getMachineCapacitiesForYear(
+            year,
+            machineIds,
+            machineType,
+            operationsOverride,
+            scenarioSnapshot,
+            scenarioIncludeRfqProjects,
+            useContractualVolumes,
+            machineStatusFilter,
+            dimensionFilters,
+            settingsProfile,
+            month,
+            shared,
+            callOffVolumes,
+            'weekly',
+            calculationOptions,
+            w
+          );
+          for (const row of weekRows) {
+            if (!weekLoads.has(row.machine_id)) {
+              weekLoads.set(row.machine_id, { loads: [], details: [] });
+            }
+            const bucket = weekLoads.get(row.machine_id)!;
+            bucket.loads.push(row.load_percent ?? 0);
+            bucket.details.push((row.detail_breakdown ?? []) as MonthPeakDetail);
           }
         }
+        for (const [machineId, bucket] of weekLoads) {
+          if (!byMachine.has(machineId)) byMachine.set(machineId, new Map());
+          const avg = averageLoadPercent(bucket.loads);
+          let bestDetail: MonthPeakDetail = bucket.details[0] ?? [];
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (let i = 0; i < bucket.loads.length; i++) {
+            const dist = Math.abs(bucket.loads[i]! - avg);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestDetail = bucket.details[i] ?? [];
+            }
+          }
+          byMachine.get(machineId)!.set(month, {
+            load_percent: avg,
+            detail_breakdown: bestDetail,
+          });
+        }
+        continue;
       }
-      continue;
     }
 
     const monthRows = getMachineCapacitiesForYear(
@@ -2362,10 +2417,10 @@ export function getMachineMonthlyLoadsByMonth(
 }
 
 /**
- * Peak miesięczny obciążenia w roku dla wszystkich maszyn (bez tygodni).
- * Używane przy komórkach rocznych Call offs / scenariuszy z Call offs — zamiast pełnego period-breakdown.
+ * Średnie obciążenie w roku z miesięcy (produkcja: 1–12; Call offs: zakres miesięcy z danymi SAP).
+ * Używane przy komórkach rocznych Call offs / scenariuszy z Call offs.
  */
-export function getMachineMonthlyPeakLoads(
+export function getMachineMonthlyAverageLoads(
   year: number,
   machineIds?: number[],
   machineType?: string | string[],
@@ -2391,15 +2446,71 @@ export function getMachineMonthlyPeakLoads(
     settingsProfile,
     callOffVolumes
   );
-  const peaks = new Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }>();
-  for (const [machineId, months] of byMonth) {
-    let best = { load_percent: 0, detail_breakdown: [] as MonthPeakDetail };
-    for (const md of months.values()) {
-      if (md.load_percent > best.load_percent) best = md;
+  const sapMonthRange = callOffVolumes ? getSapMonthRangeForYear(callOffVolumes, year) : { from: 1, to: 12 };
+  const monthFrom = sapMonthRange?.from ?? null;
+  const monthTo = sapMonthRange?.to ?? null;
+  const averages = new Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }>();
+  if (monthFrom == null || monthTo == null) {
+    for (const machineId of byMonth.keys()) {
+      averages.set(machineId, { load_percent: 0, detail_breakdown: [] });
     }
-    peaks.set(machineId, best);
+    return averages;
   }
-  return peaks;
+  for (const [machineId, months] of byMonth) {
+    const vals: number[] = [];
+    let bestDetail: MonthPeakDetail = [];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let m = monthFrom; m <= monthTo; m++) {
+      const md = months.get(m) ?? { load_percent: 0, detail_breakdown: [] as MonthPeakDetail };
+      vals.push(md.load_percent);
+    }
+    const avg = averageLoadPercent(vals);
+    for (let m = monthFrom; m <= monthTo; m++) {
+      const md = months.get(m) ?? { load_percent: 0, detail_breakdown: [] as MonthPeakDetail };
+      const dist = Math.abs(md.load_percent - avg);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestDetail = md.detail_breakdown ?? [];
+      }
+    }
+    averages.set(machineId, { load_percent: avg, detail_breakdown: bestDetail });
+  }
+  // Maszyny bez wpisu w byMonth (brak load w zakresie) — 0%.
+  if (machineIds?.length) {
+    for (const id of machineIds) {
+      if (!averages.has(id)) averages.set(id, { load_percent: 0, detail_breakdown: [] });
+    }
+  }
+  return averages;
+}
+
+/** @deprecated Użyj getMachineMonthlyAverageLoads — zachowane dla kompatybilności importów. */
+export function getMachineMonthlyPeakLoads(
+  year: number,
+  machineIds?: number[],
+  machineType?: string | string[],
+  operationsOverride?: any[],
+  scenarioSnapshot?: ScenarioBundle | null,
+  scenarioIncludeRfqProjects?: boolean,
+  useContractualVolumes?: boolean,
+  machineStatusFilter?: MachineStatusFilterInput,
+  dimensionFilters?: MachineDimensionFilter[],
+  settingsProfile?: CalculationSettingsProfile,
+  callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null
+): Map<number, { load_percent: number; detail_breakdown: MonthPeakDetail }> {
+  return getMachineMonthlyAverageLoads(
+    year,
+    machineIds,
+    machineType,
+    operationsOverride,
+    scenarioSnapshot,
+    scenarioIncludeRfqProjects,
+    useContractualVolumes,
+    machineStatusFilter,
+    dimensionFilters,
+    settingsProfile,
+    callOffVolumes
+  );
 }
 
 /** Rozbicie obciążenia maszyn na miesiące i tygodnie w jednym roku (SOP/EOP per operacja). */
@@ -2566,17 +2677,41 @@ export function getMachinePeriodBreakdown(
       const monthMarker = yearMarkers.months[month] ?? { has_sop: false, has_eop: false };
       let monthLoad = md.load_percent;
       let monthDetail = md.detail_breakdown ?? [];
-      // Miesiąc = max(tygodni), gdy liczymy prawdziwe tygodnie (Call offs) albo gdy tygodnie są rozwinięte.
+      // Miesiąc = średnia tygodni w okresie (produkcja: wszystkie tygodnie; Call offs: zakres SAP).
       if (includeWeeks) {
-        const weekEntries = Object.values(weeks);
-        if (weekEntries.length > 0) {
-          let peak = weekEntries[0]!;
-          for (let i = 1; i < weekEntries.length; i++) {
-            const wd = weekEntries[i]!;
-            if (wd.load_percent > peak.load_percent) peak = wd;
+        const weekCount = getWeekCountInMonth(year, month);
+        let from = 1;
+        let to = weekCount;
+        if (callOffVolumes) {
+          const wr = getSapWeekRangeForMonth(callOffVolumes, year, month);
+          if (wr) {
+            from = wr.from;
+            to = wr.to;
+          } else {
+            // Brak tygodni SAP — zostaw obciążenie miesięczne z wolumenu miesięcznego.
+            from = 0;
+            to = -1;
           }
-          monthLoad = peak.load_percent;
-          monthDetail = peak.detail_breakdown ?? [];
+        }
+        if (from <= to) {
+          const vals: number[] = [];
+          const details: MonthPeakDetail[] = [];
+          for (let w = from; w <= to; w++) {
+            const wd = weeks[w];
+            vals.push(wd?.load_percent ?? 0);
+            details.push((wd?.detail_breakdown ?? []) as MonthPeakDetail);
+          }
+          monthLoad = averageLoadPercent(vals);
+          let bestDetail: MonthPeakDetail = details[0] ?? [];
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (let i = 0; i < vals.length; i++) {
+            const dist = Math.abs(vals[i]! - monthLoad);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestDetail = details[i] ?? [];
+            }
+          }
+          monthDetail = bestDetail;
         }
       }
       months[month] = {

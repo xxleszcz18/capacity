@@ -1,5 +1,5 @@
 import type { ScenarioBundle } from './scenarioSnapshotService.js';
-import { getMachineCapacityByYears, getMachineMonthlyPeakLoads, getMachinePeriodBreakdown } from './capacityService.js';
+import { getMachineCapacityByYears, getMachineMonthlyAverageLoads, getMachinePeriodBreakdown } from './capacityService.js';
 import type { MachineDimensionFilter } from '../utils/machineDimensionFilter.js';
 import type { MachineStatusFilterInput, CalculationSettingsProfile } from './capacityService.js';
 import { loadCallOffVolumeMaps } from './callOffService.js';
@@ -45,9 +45,9 @@ export function getScenarioCallOffCalculator(
     null
   );
 
-  const yearPeakByMachine = new Map<number, Map<number, { load_percent: number; detail_breakdown: DetailBreakdownRow }>>();
+  const yearAvgByMachine = new Map<number, Map<number, { load_percent: number; detail_breakdown: DetailBreakdownRow }>>();
   for (let y = yearFrom; y <= yearTo; y++) {
-    const peaks = getMachineMonthlyPeakLoads(
+    const averages = getMachineMonthlyAverageLoads(
       y,
       machineIds,
       machineType,
@@ -60,22 +60,22 @@ export function getScenarioCallOffCalculator(
       settingsProfile,
       callOffVolumes
     );
-    for (const [machineId, peak] of peaks) {
-      if (!yearPeakByMachine.has(machineId)) yearPeakByMachine.set(machineId, new Map());
-      yearPeakByMachine.get(machineId)!.set(y, peak);
+    for (const [machineId, avg] of averages) {
+      if (!yearAvgByMachine.has(machineId)) yearAvgByMachine.set(machineId, new Map());
+      yearAvgByMachine.get(machineId)!.set(y, avg);
     }
   }
 
   return baseMachines.map((m) => {
-    const peaksByYear = yearPeakByMachine.get(m.machine_id);
+    const avgsByYear = yearAvgByMachine.get(m.machine_id);
     const years: typeof m.years = {};
     for (const [yearKey, yData] of Object.entries(m.years)) {
       const year = Number(yearKey);
-      const peak = peaksByYear?.get(year);
+      const avg = avgsByYear?.get(year);
       years[year] = {
         ...yData,
-        load_percent: peak?.load_percent ?? 0,
-        detail_breakdown: peak?.detail_breakdown ?? [],
+        load_percent: avg?.load_percent ?? 0,
+        detail_breakdown: avg?.detail_breakdown ?? [],
       };
     }
     return { ...m, years };

@@ -512,7 +512,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
                 </td>
                 {activeSeries.map((s) => {
                   // Wartość roku zawsze z serii wykresu — breakdown tylko w wierszach rozwijanych.
-                  // Dzięki temu punkt na wykresie i komórka roku nie rozjeżdżają się (Call offs peak vs annual).
+                  // Dzięki temu punkt na wykresie i komórka roku są spójne (średnia w zakresie SAP).
                   const yearValue = row[s.key] as number | null | undefined;
                   return (
                     <td key={s.key} style={{ padding: '8px 10px', verticalAlign: 'middle' }}>

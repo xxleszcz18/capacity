@@ -409,3 +409,58 @@ export function getCallOffVolumeYears(comparisonId: number): number[] {
     .map((r) => Number(r.year))
     .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100);
 }
+
+/** Zakres miesięcy (1–12) z danymi SAP w danym roku — min…max po wszystkich detalach. */
+export function getSapMonthRangeForYear(
+  volumes: CallOffVolumeMaps,
+  year: number
+): { from: number; to: number } | null {
+  let from = 13;
+  let to = 0;
+  for (const byYear of volumes.monthly.values()) {
+    const mMap = byYear.get(year);
+    if (!mMap) continue;
+    for (const [month, qty] of mMap) {
+      const m = Number(month);
+      if (!Number.isFinite(m) || m < 1 || m > 12) continue;
+      if (!(Number(qty) > 0)) continue;
+      if (m < from) from = m;
+      if (m > to) to = m;
+    }
+  }
+  if (from > to) return null;
+  return { from, to };
+}
+
+/** Zakres tygodni w miesiącu z danymi SAP — min…max. */
+export function getSapWeekRangeForMonth(
+  volumes: CallOffVolumeMaps,
+  year: number,
+  month: number
+): { from: number; to: number } | null {
+  let from = 99;
+  let to = 0;
+  for (const byYear of volumes.weekly.values()) {
+    const byMonth = byYear.get(year);
+    if (!byMonth) continue;
+    const byWeek = byMonth.get(month);
+    if (!byWeek) continue;
+    for (const [week, qty] of byWeek) {
+      const w = Number(week);
+      if (!Number.isFinite(w) || w < 1) continue;
+      if (!(Number(qty) > 0)) continue;
+      if (w < from) from = w;
+      if (w > to) to = w;
+    }
+  }
+  if (from > to) return null;
+  return { from, to };
+}
+
+/** Średnia arytmetyczna % (zaokrąglenie jak load_percent). */
+export function averageLoadPercent(values: number[]): number {
+  if (!values.length) return 0;
+  let sum = 0;
+  for (const v of values) sum += Number.isFinite(v) ? v : 0;
+  return Math.round(sum / values.length);
+}

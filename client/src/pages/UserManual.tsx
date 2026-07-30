@@ -199,6 +199,7 @@ const SECTIONS: SectionDef[] = [
       { titleKey: 'q46', bodyKey: 'a46' },
       { titleKey: 'q47', bodyKey: 'a47' },
       { titleKey: 'q48', bodyKey: 'a48' },
+      { titleKey: 'q49', bodyKey: 'a49' },
     ],
   },
 ];

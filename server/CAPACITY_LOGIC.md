@@ -75,13 +75,24 @@ load_percent = round( (Σ required_sec) / effective_availability × 100 )
 
 - **Suma** = suma % widocznych maszyn.
 - **Średnia** = suma / liczba maszyn.
-- **Max średnia wg typu** = `max` po typach ze średnich % w typie (używane też przy agregacji linii w Wizualizacji danych).
+- **Max średnia wg typu** = `max` po typach ze średnich % w typie (używane przy agregacji linii / wielu maszyn / zakładu na **wszystkich** wykresach w Wizualizacji danych).
+
+### Wartość w komórce okresu
+
+| Źródło | Rok | Miesiąc |
+|--------|-----|---------|
+| Produkcja / scenariusz | średnia z **12 miesięcy** (zera po EOP też wchodzą, np. 6×182 + 6×0 → 91) | średnia z tygodni w miesiącu |
+| Call offs | średnia miesięcy od **pierwszego do ostatniego** miesiąca z danymi SAP w pliku | średnia tygodni w zakresie SAP w miesiącu |
+
+W Call offs: zera **wewnątrz** zakresu SAP liczą się do średniej; zera **poza** zakresem są pomijane.
 
 ## 8. Call offs (mapowanie SAP)
 
 1. Dopasowanie **dokładne** znormalizowanego `sap_number`,
 2. inaczej dopasowanie **po obcięciu 2 ostatnich znaków**,
 3. niedopasowane → raport CSV.
+
+Zakres dat / miesięcy z wolumenem w pliku ogranicza, które okresy wchodzą do średniej Call offs (oraz które lata mają punkty na wykresach).
 
 ## Uwagi operacyjne
 

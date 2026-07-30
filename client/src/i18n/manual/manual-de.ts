@@ -309,9 +309,9 @@ export const manualDe: TranslationTree = {
         sop:
           'SOP/EOP im Format MM.YYYY begrenzen Produktionsmonate im Jahr. Außerhalb des Fensters: Wochenvolumen 0 (außer count_after_eop / include_in_calculator_after_eop für Jahre nach EOP). default_all_years: Wochenvolumen × (ProdMonate/12). manual_year in Teiljahren: Jahreswert kann als Volumen nur für aktive Monate interpretiert werden.',
         period:
-          'Monats-/Wochenaufschlüsselung: Operationen außerhalb des SOP/EOP-Monats entfallen. Periodensplits in operation_volume_by_year (effective_from_month/week, volume_value_before) steuern Ratenwechsel innerhalb des Jahres. Monats-% bei Wochenberechnung = Max. der Wochen-% im Monat.',
+          'Monats-/Wochenaufschlüsselung: Produktion/Szenario — Jahreszelle = Mittelwert der 12 Monate; Monatszelle = Mittelwert der Wochen. Call offs — Jahr = Mittelwert der Monate vom ersten bis letzten Monat mit SAP-Daten in der Datei; Monat = Mittelwert der Wochen im SAP-Wochenbereich. Nullen innerhalb des SAP-Bereichs zählen mit; Nullen außerhalb nicht. Operationen außerhalb des SOP/EOP-Monats entfallen. Periodensplits (effective_from) steuern Ratenwechsel innerhalb des Jahres.',
         maxType:
-          'Max. Mittel nach Typ (Rechner-Fußzeile und Data-Viz-Aggregation) = max über Typen t von (Mittelwert load_% der Maschinen vom Typ t). Clientseitig aus den Maschinen-%.',
+          'Max. Mittel nach Typ (Rechner-Fußzeile und alle Data-Viz-Diagramme) = max über Typen t von (Mittelwert load_% der Maschinen vom Typ t). Clientseitig aus den Maschinen-%.',
         isoWeek:
           'Aufgeklappte Kalenderwochen: ISO-Wochen Montag–Sonntag; Teilwochen an Monatsrändern werden mitgezählt.',
         altCycle:
@@ -467,6 +467,9 @@ export const manualDe: TranslationTree = {
         q48: 'Auslastung 0 trotz Volumen — typische Ursachen?',
         a48:
           'Außerhalb SOP/EOP; Operation nicht auf der Maschine; Filter blendet die Maschine aus; Vertragsmodus ohne Daten und Fallback unerwartet; Call-offs-Jahr außerhalb Dateibereich; Status inaktiv; fehlende Arbeitstage/Verfügbarkeit 0 bei gleichzeitigem Sonderfall — prüfen Sie SOP/EOP, Status, Filter, Volumenquelle und Profil (Capacity/OCU).',
+        q49: 'Wie wird der Jahres-/Monatswert im Rechner berechnet?',
+        a49:
+          'Produktion und Szenarien: Jahr = Mittelwert der 12 Monate (z. B. 6×182% + 6×0% → 91%); Monat = Mittelwert der Wochen. Call offs: Jahr = Mittelwert der Monate vom ersten bis letzten Monat mit SAP-Daten; Monat = Mittelwert der Wochen im SAP-Bereich. Nullen innerhalb des Bereichs zählen mit, außerhalb nicht. Diagramme nutzen die Zeile „Max. Mittel nach Typ“.',
       },
     },
     diagrams: {

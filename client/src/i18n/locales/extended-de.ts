@@ -1305,6 +1305,7 @@ export const extendedDe: TranslationTree = {
     permAdminSettings: 'Admin-Einstellungen',
     permAdminDataViz: 'Datenvisualisierung',
     permAdminOcu: 'Daten für OCU',
+    permAdminDataPrep: 'Data preparation',
     permAdminAttachments: 'Anhänge (Administration)',
     permChangeHistory: 'Änderungshistorie',
     permUserManagement: 'Benutzerverwaltung',

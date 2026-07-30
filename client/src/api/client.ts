@@ -300,10 +300,11 @@ export const api = {
           file_exists: boolean | null;
         }[];
       }>('/admin/attachments'),
-    generateOcuData: async (transition: File, katowice: File) => {
+    generateOcuData: async (transition: File, katowice: File, routing: File) => {
       const fd = new FormData();
       fd.append('transition', transition);
       fd.append('katowice', katowice);
+      fd.append('routing', routing);
       let res: Response;
       try {
         res = await fetch(`${BASE}/admin/ocu-data/generate`, {
@@ -327,8 +328,13 @@ export const api = {
         filled_ac: 0,
         filled_ad: 0,
         filled_ae: 0,
+        filled_s1619: 0,
+        filled_s2102_large: 0,
+        filled_s2102_small: 0,
         unmatched_sonar: 0,
         unmatched_erp_in_db: 0,
+        unmatched_routing: 0,
+        routing_finished_goods: 0,
       };
       if (statsHeader) {
         try {
@@ -344,6 +350,50 @@ export const api = {
       const disposition = res.headers.get('Content-Disposition') || '';
       const matched = /filename="([^"]+)"/i.exec(disposition);
       a.download = matched?.[1] || 'Dane_do_OCU.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return { stats };
+    },
+    generateDataPreparation: async (katowice: File, routing: File, transition: File) => {
+      const fd = new FormData();
+      fd.append('katowice', katowice);
+      fd.append('routing', routing);
+      fd.append('transition', transition);
+      let res: Response;
+      try {
+        res = await fetch(`${BASE}/admin/data-preparation/generate`, {
+          method: 'POST',
+          body: fd,
+          credentials: 'include',
+          cache: 'no-store',
+        });
+      } catch (e) {
+        throw mapFetchFailure(e);
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(
+          (data as { error?: string }).error || res.statusText || 'Data preparation failed'
+        );
+      }
+      const statsHeader = res.headers.get('X-Data-Prep-Stats');
+      let stats: Record<string, number | string> = {};
+      if (statsHeader) {
+        try {
+          stats = JSON.parse(statsHeader) as Record<string, number | string>;
+        } catch {
+          /* ignore */
+        }
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const matched = /filename="([^"]+)"/i.exec(disposition);
+      a.download = matched?.[1] || 'Data_preparation_S2102_S1619.zip';
       document.body.appendChild(a);
       a.click();
       a.remove();

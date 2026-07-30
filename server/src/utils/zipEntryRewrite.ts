@@ -228,12 +228,25 @@ function buildLocalRecord(
 
 /** Podmienia wskazane pliki w ZIP; pozostałe wpisy kopiowane bitowo (Excel-safe). */
 export function rewriteZipEntries(input: Buffer, replacements: Map<string, Buffer>): Buffer {
+  return rewriteZipEntriesFiltered(input, replacements);
+}
+
+/**
+ * Podmienia wskazane pliki i opcjonalnie usuwa wpisy (keepEntry === false).
+ * Pozostałe kopiowane bitowo — bezpieczne dla Excela.
+ */
+export function rewriteZipEntriesFiltered(
+  input: Buffer,
+  replacements: Map<string, Buffer>,
+  keepEntry?: (name: string) => boolean
+): Buffer {
   const { entries, comment } = readZipEntries(input);
   const localParts: Buffer[] = [];
   const updated: ZipCdEntry[] = [];
   let offset = 0;
 
   for (const entry of entries) {
+    if (keepEntry && !keepEntry(entry.name)) continue;
     const repl = replacements.get(entry.name);
     let next: ZipCdEntry;
     if (repl) {

@@ -1,7 +1,21 @@
 import * as XLSX from 'xlsx';
 import { db } from '../db/connection.js';
 import { getProductionMonthsInYear } from '../utils/sopEopFormat.js';
-import { inflateZipEntry, readZipEntries, rewriteZipEntries } from '../utils/zipEntryRewrite.js';
+import {
+  inflateZipEntry,
+  readZipEntries,
+  rewriteZipEntries,
+  rewriteZipEntriesFiltered,
+} from '../utils/zipEntryRewrite.js';
+import {
+  baseQtyForMaterial,
+  componentsWithCode,
+  materialCellValue,
+  parseSapRoutingBuffer,
+  splitS2102ByFormatka,
+  type SapRoutingComponent,
+  type SapRoutingIndex,
+} from './sapRoutingParser.js';
 
 /** Excel 1-based letters → 0-based index. */
 export function excelColIndex(letter: string): number {
@@ -176,13 +190,18 @@ function findInputSheetMatrix(buffer: Buffer): { rows: unknown[][]; headerRowNum
 type DbDetailProfile = {
   /** nests dla AC: pojedyncza liczba lub lista składowych setu */
   nestsParts: number[];
-  /** AE — suma gniazd */
-  nestsTotal: number;
+  /** AE — liczba gniazd (nie suma AC; np. AC „2+2” → AE 2) */
+  nestsCount: number;
   /** max cykl [s] ze wszystkich operacji detalu */
   maxCycleSeconds: number | null;
   /** linia (machines.location) → „waga” w roku (miesiące produkcji / wolumen) */
   lineWeightByYear: Map<number, Map<string, number>>;
 };
+
+function nestsCountFromParts(parts: number[]): number {
+  if (!parts.length) return 0;
+  return Math.max(...parts.map((n) => Number(n) || 0));
+}
 
 function loadDetailProfilesBySap(yearsNeeded: number[]): Map<string, DbDetailProfile> {
   const years = yearsNeeded.length ? [...new Set(yearsNeeded)].sort((a, b) => a - b) : [];
@@ -262,7 +281,7 @@ function loadDetailProfilesBySap(yearsNeeded: number[]): Map<string, DbDetailPro
     if (!p) {
       p = {
         nestsParts: [],
-        nestsTotal: 0,
+        nestsCount: 0,
         maxCycleSeconds: null,
         lineWeightByYear: new Map(),
       };
@@ -303,18 +322,18 @@ function loadDetailProfilesBySap(yearsNeeded: number[]): Map<string, DbDetailPro
       const parts = membersByOp.get(op.operation_id);
       if (parts?.length && p.nestsParts.length === 0) {
         p.nestsParts = [...parts];
-        p.nestsTotal = parts.reduce((a, b) => a + b, 0);
+        p.nestsCount = nestsCountFromParts(parts);
       }
     } else if (p.nestsParts.length === 0) {
       const n = Number(op.nests_count) || 1;
       p.nestsParts = [n];
-      p.nestsTotal = n;
+      p.nestsCount = n;
     } else {
       // wiele operacji tego samego SAP — bierz max gniazd / zachowaj pierwszą listę
       const n = Number(op.nests_count) || 1;
       if (p.nestsParts.length === 1 && n > p.nestsParts[0]) {
         p.nestsParts = [n];
-        p.nestsTotal = n;
+        p.nestsCount = n;
       }
     }
 
@@ -340,7 +359,7 @@ function loadDetailProfilesBySap(yearsNeeded: number[]): Map<string, DbDetailPro
       if (p.nestsParts.length === 0) {
         const parts = membersByOp.get(opId) ?? [Number(op.nests_count) || 1];
         p.nestsParts = [...parts];
-        p.nestsTotal = parts.reduce((a, b) => a + b, 0);
+        p.nestsCount = nestsCountFromParts(parts);
       }
       const line = normKey(op.line_number);
       for (const year of years) {
@@ -387,6 +406,67 @@ function pickLineForYear(profile: DbDetailProfile | undefined, year: number | nu
   return best;
 }
 
+/** Kolumny bloku S2102 w Input (ERP No + wymiary + Base Qty). */
+const S2102_BLOCK_COLS = {
+  large: {
+    erpNo: 'CW',
+    unitPerHour: 'CY', // Base Qty
+    length: 'DB',
+    width: 'DC',
+  },
+  small: {
+    erpNo: 'DI',
+    unitPerHour: 'DK', // Base Qty
+    length: 'DN',
+    width: 'DO',
+  },
+} as const;
+
+/** S1619 — tylko numer materiału w AK. */
+const S1619_ERP_COL = 'AK';
+
+function writeRoutingErpNo(
+  cellUpdates: Map<string, string | number>,
+  excelRow: number,
+  colLetter: string,
+  materials: { materialNumber: string }[]
+): number {
+  const mat = materials[0];
+  if (mat?.materialNumber) {
+    cellUpdates.set(`${colLetter}${excelRow}`, materialCellValue(mat.materialNumber));
+    return 1;
+  }
+  cellUpdates.set(`${colLetter}${excelRow}`, 0);
+  return 0;
+}
+
+/**
+ * CW/DI + wymiary formatki (DB/DC lub DN/DO) + Base Qty (CY lub DK).
+ * Base Qty z bloku Material danego S2102 w routing.txt.
+ */
+function writeS2102Block(
+  cellUpdates: Map<string, string | number>,
+  excelRow: number,
+  block: { erpNo: string; unitPerHour: string; length: string; width: string },
+  materials: SapRoutingComponent[],
+  routingIndex: SapRoutingIndex
+): number {
+  const mat = materials[0];
+  if (!mat?.materialNumber) {
+    cellUpdates.set(`${block.erpNo}${excelRow}`, 0);
+    cellUpdates.set(`${block.unitPerHour}${excelRow}`, 0);
+    cellUpdates.set(`${block.length}${excelRow}`, 0);
+    cellUpdates.set(`${block.width}${excelRow}`, 0);
+    return 0;
+  }
+  cellUpdates.set(`${block.erpNo}${excelRow}`, materialCellValue(mat.materialNumber));
+  const baseQty = baseQtyForMaterial(routingIndex, mat.materialNumber);
+  cellUpdates.set(`${block.unitPerHour}${excelRow}`, baseQty ?? 0);
+  cellUpdates.set(`${block.length}${excelRow}`, mat.length ?? 0);
+  cellUpdates.set(`${block.width}${excelRow}`, mat.width ?? 0);
+  return 1;
+}
+
 export type OcuDataGenerateResult = {
   buffer: Buffer;
   filename: string;
@@ -397,8 +477,13 @@ export type OcuDataGenerateResult = {
     filled_ac: number;
     filled_ad: number;
     filled_ae: number;
+    filled_s1619: number;
+    filled_s2102_large: number;
+    filled_s2102_small: number;
     unmatched_sonar: number;
     unmatched_erp_in_db: number;
+    unmatched_routing: number;
+    routing_finished_goods: number;
   };
 };
 
@@ -495,30 +580,14 @@ function clearFiltersAndUnhideInXml(xml: string, opts: { isTable?: boolean }): s
   return out;
 }
 
-function workbookHasMacros(buffer: Buffer): boolean {
-  try {
-    const { entries } = readZipEntries(buffer);
-    return entries.some((e) => /vbaProject/i.test(e.name));
-  } catch {
-    return false;
-  }
-}
-
-function katowiceOutputExt(buffer: Buffer): '.xlsm' | '.xlsx' {
-  return workbookHasMacros(buffer) ? '.xlsm' : '.xlsx';
-}
-
-/**
- * Mutuje skoroszyt OOXML bez JSZip.generate (copy-through ZIP) —
- * Excel nie otwierał plików po pełnym przepisaniu dużego .xlsm.
- */
-function mutateKatowicePackage(
-  buffer: Buffer,
-  cellUpdates: Map<string, string | number>
-): { cleaned: Buffer; filled: Buffer } {
+function resolveWorkbookInputPath(buffer: Buffer): {
+  inputPath: string;
+  inputRid: string;
+  wbXml: string;
+  relsXml: string;
+} {
   const { entries } = readZipEntries(buffer);
   const byName = new Map(entries.map((e) => [e.name, e]));
-
   const wbEntry = byName.get('xl/workbook.xml');
   const relsEntry = byName.get('xl/_rels/workbook.xml.rels');
   if (!wbEntry || !relsEntry) throw new Error('Katowice_Data: brak workbook.xml / rels.');
@@ -542,19 +611,258 @@ function mutateKatowicePackage(
   let inputPath = target.replace(/\\/g, '/');
   if (inputPath.startsWith('/')) inputPath = inputPath.slice(1);
   if (!inputPath.startsWith('xl/')) inputPath = `xl/${inputPath}`;
+  return { inputPath, inputRid: rid, wbXml, relsXml };
+}
+
+function resolveXlPath(fromDir: string, target: string): string {
+  let path = target.replace(/\\/g, '/');
+  if (path.startsWith('/')) path = path.slice(1);
+  if (path.startsWith('xl/')) return path;
+  // Target jest względny względem katalogu pliku .rels (np. xl/worksheets/_rels → ../tables/…)
+  const baseParts = fromDir.split('/').filter(Boolean);
+  const targetParts = path.split('/');
+  for (const part of targetParts) {
+    if (part === '.' || part === '') continue;
+    if (part === '..') baseParts.pop();
+    else baseParts.push(part);
+  }
+  return baseParts.join('/');
+}
+
+function collectRelationshipTargets(relsXml: string, fromDir: string): string[] {
+  const out: string[] = [];
+  const re = /<Relationship\b[^>]*\bTarget="([^"]+)"[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(relsXml))) {
+    out.push(resolveXlPath(fromDir, m[1]));
+  }
+  const re2 = /<Relationship\b[^>]*\bTarget='([^']+)'[^>]*>/gi;
+  while ((m = re2.exec(relsXml))) {
+    out.push(resolveXlPath(fromDir, m[1]));
+  }
+  return out;
+}
+
+/** Usuwa VBA/makra i ustawia ContentType zwykłego .xlsx (arkusze bez zmian). */
+function stripMacrosToXlsx(buffer: Buffer): Buffer {
+  try {
+    const { entries } = readZipEntries(buffer);
+    if (!entries.some((e) => /vbaProject/i.test(e.name))) {
+      // mimo braku VBA — ContentType może być macroEnabled
+      const ct = entries.find((e) => e.name === '[Content_Types].xml');
+      if (!ct) return buffer;
+      let ctXml = inflateZipEntry(ct).toString('utf8');
+      const next = ctXml.replace(
+        /ContentType="application\/vnd\.ms-excel\.sheet\.macroEnabled\.main\+xml"/gi,
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"'
+      );
+      if (next === ctXml) return buffer;
+      return rewriteZipEntries(buffer, new Map([['[Content_Types].xml', Buffer.from(next, 'utf8')]]));
+    }
+
+    const byName = new Map(entries.map((e) => [e.name, e]));
+    const replacements = new Map<string, Buffer>();
+
+    const relsEntry = byName.get('xl/_rels/workbook.xml.rels');
+    if (relsEntry) {
+      let relsXml = inflateZipEntry(relsEntry).toString('utf8');
+      relsXml = relsXml.replace(/<Relationship\b[^>]*(?:vbaProject|macrosheet|control)[^>]*\/?>/gi, '');
+      replacements.set('xl/_rels/workbook.xml.rels', Buffer.from(relsXml, 'utf8'));
+    }
+
+    const ctEntry = byName.get('[Content_Types].xml');
+    if (ctEntry) {
+      let ctXml = inflateZipEntry(ctEntry).toString('utf8');
+      ctXml = ctXml.replace(
+        /ContentType="application\/vnd\.ms-excel\.sheet\.macroEnabled\.main\+xml"/gi,
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"'
+      );
+      ctXml = ctXml.replace(/<Override\b[^>]*vbaProject[^>]*\/>/gi, '');
+      replacements.set('[Content_Types].xml', Buffer.from(ctXml, 'utf8'));
+    }
+
+    return rewriteZipEntriesFiltered(buffer, replacements, (name) => !/vbaProject/i.test(name));
+  } catch {
+    return buffer;
+  }
+}
+
+/** Usuwa makra i wszystkie arkusze poza Input; zachowuje XML Input (wiersze/kolumny/style). */
+function stripToInputOnlyNoMacros(buffer: Buffer): Buffer {
+  const { entries } = readZipEntries(buffer);
+  const byName = new Map(entries.map((e) => [e.name, e]));
+  const { inputPath, inputRid, wbXml, relsXml } = resolveWorkbookInputPath(buffer);
+
+  const keep = new Set<string>([
+    '[Content_Types].xml',
+    '_rels/.rels',
+    'xl/workbook.xml',
+    'xl/_rels/workbook.xml.rels',
+    inputPath,
+  ]);
+
+  // stałe części skoroszytu
+  for (const name of entries.map((e) => e.name)) {
+    if (
+      name === 'xl/styles.xml' ||
+      name === 'xl/sharedStrings.xml' ||
+      name.startsWith('xl/theme/') ||
+      name.startsWith('docProps/')
+    ) {
+      keep.add(name);
+    }
+  }
+
+  // relacje arkusza Input (tabele, rysunki, …)
+  const sheetBase = inputPath.replace(/^xl\/worksheets\//i, '');
+  const sheetRelsPath = `xl/worksheets/_rels/${sheetBase}.rels`;
+  const sheetRelsEntry = byName.get(sheetRelsPath);
+  if (sheetRelsEntry) {
+    keep.add(sheetRelsPath);
+    const sheetRelsXml = inflateZipEntry(sheetRelsEntry).toString('utf8');
+    for (const target of collectRelationshipTargets(sheetRelsXml, 'xl/worksheets')) {
+      keep.add(target);
+      // relacje rysunków / wykresów
+      if (/^xl\/drawings\/drawing\d+\.xml$/i.test(target)) {
+        const dRels = target.replace(/^xl\/drawings\//i, 'xl/drawings/_rels/') + '.rels';
+        if (byName.has(dRels)) {
+          keep.add(dRels);
+          const dXml = inflateZipEntry(byName.get(dRels)!).toString('utf8');
+          for (const t of collectRelationshipTargets(dXml, 'xl/drawings')) keep.add(t);
+        }
+      }
+    }
+  }
+
+  // workbook.xml — tylko arkusz Input
+  const sheetsBlock = wbXml.match(/<(?:\w+:)?sheets\b[^>]*>[\s\S]*?<\/(?:\w+:)?sheets>/i)?.[0];
+  if (!sheetsBlock) throw new Error('Katowice_Data: brak sekcji sheets w workbook.xml.');
+  const inputSheetTag =
+    sheetsBlock.match(/<(?:\w+:)?sheet\b[^>]*\bname="Input"[^>]*\/?>/i)?.[0] ??
+    sheetsBlock.match(/<(?:\w+:)?sheet\b[^>]*\bname='Input'[^>]*\/?>/i)?.[0];
+  if (!inputSheetTag) throw new Error('Katowice_Data: brak tagu sheet Input.');
+  const normalizedSheet = inputSheetTag
+    .replace(/\bsheetId="[^"]*"/i, 'sheetId="1"')
+    .replace(/\bsheetId='[^']*'/i, "sheetId='1'");
+  const sheetsOpen = sheetsBlock.match(/^<(?:\w+:)?sheets\b[^>]*>/i)?.[0] ?? '<sheets>';
+  const sheetsClose = sheetsBlock.match(/<\/(?:\w+:)?sheets>$/i)?.[0] ?? '</sheets>';
+  const newWbXml = wbXml.replace(sheetsBlock, `${sheetsOpen}${normalizedSheet}${sheetsClose}`);
+
+  // workbook rels — Input + style/theme/sharedStrings (bez innych sheetów i VBA)
+  const relTags = [...relsXml.matchAll(/<Relationship\b[^>]*\/?>/gi)].map((m) => m[0]);
+  const keptRels: string[] = [];
+  for (const tag of relTags) {
+    const id = tag.match(/\bId="([^"]+)"/i)?.[1] ?? tag.match(/\bId='([^']+)'/i)?.[1] ?? '';
+    const type = tag.match(/\bType="([^"]+)"/i)?.[1] ?? tag.match(/\bType='([^']+)'/i)?.[1] ?? '';
+    const target = tag.match(/\bTarget="([^"]+)"/i)?.[1] ?? tag.match(/\bTarget='([^']+)'/i)?.[1] ?? '';
+    const typeL = type.toLowerCase();
+    const targetL = target.toLowerCase();
+    if (/vba|macrosheet|control/i.test(typeL) || /vbaproject/i.test(targetL)) continue;
+    if (/\/worksheet$/i.test(typeL) || /worksheets\//i.test(targetL)) {
+      if (id === inputRid) keptRels.push(tag);
+      continue;
+    }
+    keptRels.push(tag);
+    const abs = resolveXlPath('xl', target);
+    if (byName.has(abs)) keep.add(abs);
+  }
+  const relsBody = keptRels.join('');
+  const newRelsXml = relsXml.replace(
+    /(<Relationships\b[^>]*>)[\s\S]*?(<\/Relationships>)/i,
+    `$1${relsBody}$2`
+  );
+
+  // Content_Types — bez makr i bez usuniętych części
+  const ctEntry = byName.get('[Content_Types].xml');
+  if (!ctEntry) throw new Error('Katowice_Data: brak [Content_Types].xml.');
+  let ctXml = inflateZipEntry(ctEntry).toString('utf8');
+  ctXml = ctXml.replace(
+    /ContentType="application\/vnd\.ms-excel\.sheet\.macroEnabled\.main\+xml"/gi,
+    'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"'
+  );
+  ctXml = ctXml.replace(/<Override\b[^>]*PartName="\/([^"]+)"[^>]*\/>/gi, (full, part) => {
+    const name = String(part);
+    if (/vbaProject/i.test(name)) return '';
+    if (name.startsWith('xl/worksheets/') && !name.includes('/_rels/')) {
+      return name === inputPath ? full : '';
+    }
+    if (
+      name === 'xl/workbook.xml' ||
+      name === 'xl/styles.xml' ||
+      name === 'xl/sharedStrings.xml' ||
+      name.startsWith('xl/theme/') ||
+      name.startsWith('docProps/')
+    ) {
+      return full;
+    }
+    return keep.has(name) ? full : '';
+  });
+  ctXml = ctXml.replace(/<Override\b[^>]*PartName='\/([^']+)'[^>]*\/>/gi, (full, part) => {
+    const name = String(part);
+    if (/vbaProject/i.test(name)) return '';
+    if (name.startsWith('xl/worksheets/') && !name.includes('/_rels/')) {
+      return name === inputPath ? full : '';
+    }
+    if (
+      name === 'xl/workbook.xml' ||
+      name === 'xl/styles.xml' ||
+      name === 'xl/sharedStrings.xml' ||
+      name.startsWith('xl/theme/') ||
+      name.startsWith('docProps/')
+    ) {
+      return full;
+    }
+    return keep.has(name) ? full : '';
+  });
+
+  const replacements = new Map<string, Buffer>();
+  replacements.set('xl/workbook.xml', Buffer.from(newWbXml, 'utf8'));
+  replacements.set('xl/_rels/workbook.xml.rels', Buffer.from(newRelsXml, 'utf8'));
+  replacements.set('[Content_Types].xml', Buffer.from(ctXml, 'utf8'));
+
+  return rewriteZipEntriesFiltered(buffer, replacements, (name) => {
+    if (/vbaProject/i.test(name)) return false;
+    if (/^xl\/worksheets\/[^/]+\.xml$/i.test(name)) return name === inputPath;
+    if (/^xl\/worksheets\/_rels\//i.test(name)) return name === sheetRelsPath;
+    if (keep.has(name)) return true;
+    if (
+      name.startsWith('xl/media/') ||
+      name.startsWith('xl/charts/') ||
+      name.startsWith('xl/tables/') ||
+      name.startsWith('xl/drawings/') ||
+      name.startsWith('xl/printerSettings/')
+    ) {
+      return false;
+    }
+    // poza xl/ (np. customXml, docProps już w keep) — zostaw
+    if (!name.startsWith('xl/')) return true;
+    return false;
+  });
+}
+
+/**
+ * Mutuje skoroszyt OOXML bez JSZip.generate (copy-through ZIP) —
+ * Excel nie otwierał plików po pełnym przepisaniu dużego .xlsm.
+ */
+function mutateKatowicePackage(
+  buffer: Buffer,
+  cellUpdates: Map<string, string | number>
+): { cleaned: Buffer; filled: Buffer } {
+  const { entries } = readZipEntries(buffer);
+  const byName = new Map(entries.map((e) => [e.name, e]));
+  const { inputPath } = resolveWorkbookInputPath(buffer);
 
   const cleanedReplacements = new Map<string, Buffer>();
   const filledReplacements = new Map<string, Buffer>();
 
   for (const entry of entries) {
-    if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(entry.name)) {
+    if (/^xl\/worksheets\/sheet\d+\.xml$/i.test(entry.name) || entry.name === inputPath) {
       const xml0 = inflateZipEntry(entry).toString('utf8');
       const cleared = clearFiltersAndUnhideInXml(xml0, { isTable: false });
       if (cleared !== xml0) cleanedReplacements.set(entry.name, Buffer.from(cleared, 'utf8'));
 
       if (entry.name === inputPath || entry.name.replace(/^\/+/, '') === inputPath) {
-        const base = cleared;
-        const patched = applyCellUpdatesToSheetXml(base, cellUpdates);
+        const patched = applyCellUpdatesToSheetXml(cleared, cellUpdates);
         filledReplacements.set(entry.name, Buffer.from(patched, 'utf8'));
       } else if (cleared !== xml0) {
         filledReplacements.set(entry.name, Buffer.from(cleared, 'utf8'));
@@ -574,7 +882,7 @@ function mutateKatowicePackage(
   }
 
   // Input sheet musi trafić do filled nawet gdy nie było filtrów/ukryć, ale są cellUpdates
-  if (cellUpdates.size && !filledReplacements.has(inputPath)) {
+  if (!filledReplacements.has(inputPath)) {
     const entry = byName.get(inputPath);
     if (!entry) throw new Error(`Katowice_Data: brak pliku arkusza ${inputPath}`);
     const xml0 = inflateZipEntry(entry).toString('utf8');
@@ -613,19 +921,21 @@ async function clearWorkbookFiltersAndUnhide(buffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Uzupełnia arkusz Input (Katowice_Data): wyłącznie X, AB, AC, AD, AE.
- * Filtry wyłączane + wiersze odkrywane przed uzupełnieniem.
- * Pakiet OOXML przepisywany copy-through (bez JSZip.generate) — plik otwiera się w Excelu.
- * Zwraca ZIP: Tabela_przejscia + Katowice bez filtrów + Katowice OCU (.xlsx/.xlsm).
+ * Uzupełnia arkusz Input (Katowice_Data):
+ * - X, AB, AC, AD, AE z bazy Capacity + tabela przejścia
+ * - AK (S1619); CW + DB/DC + CY oraz DI + DN/DO + DK (S2102) z routingu SAP
+ * Filtry wyłączane + wiersze odkrywane; wynik OCU: .xlsx bez makr, tylko Input.
+ * Brak dopasowania → 0 (nadpisuje wcześniejsze wartości).
  */
 export async function generateOcuKatowiceWorkbook(
   transitionBuffer: Buffer,
-  katowiceBuffer: Buffer
+  katowiceBuffer: Buffer,
+  routingBuffer: Buffer
 ): Promise<OcuDataGenerateResult> {
   const JSZip = (await import('jszip')).default;
-  const ext = katowiceOutputExt(katowiceBuffer);
 
   const transitionNoFilter = await clearWorkbookFiltersAndUnhide(transitionBuffer);
+  const routingIndex: SapRoutingIndex = parseSapRoutingBuffer(routingBuffer);
 
   const transition = parseTransitionSheet(transitionNoFilter);
   const erpBySonarYear = new Map<string, string>();
@@ -633,7 +943,6 @@ export async function generateOcuKatowiceWorkbook(
     erpBySonarYear.set(`${row.sonar}|${row.year}`, row.erp);
   }
 
-  // Odczyt wartości z oryginału (ukryte wiersze też są w XML / XLSX)
   const { rows, headerRowNum, cols } = findInputSheetMatrix(katowiceBuffer);
   const yearsNeeded: number[] = transition.map((t) => t.year);
   for (let i = headerRowNum; i < rows.length; i++) {
@@ -649,11 +958,22 @@ export async function generateOcuKatowiceWorkbook(
     filled_ac: 0,
     filled_ad: 0,
     filled_ae: 0,
+    filled_s1619: 0,
+    filled_s2102_large: 0,
+    filled_s2102_small: 0,
     unmatched_sonar: 0,
     unmatched_erp_in_db: 0,
+    unmatched_routing: 0,
+    routing_finished_goods: routingIndex.finishedGoods,
   };
 
   const cellUpdates = new Map<string, string | number>();
+  const colX = colLetterFrom1(cols.x);
+  const colAb = colLetterFrom1(cols.ab);
+  const colAc = colLetterFrom1(cols.ac);
+  const colAd = colLetterFrom1(cols.ad);
+  const colAe = colLetterFrom1(cols.ae);
+  // Numery materiałów SAP → wyłącznie kolumny ERP No (AK / CW / DI), nie Machinegroup (AF/CR/DD).
 
   for (let i = headerRowNum; i < rows.length; i++) {
     const excelRow = i + 1;
@@ -663,60 +983,103 @@ export async function generateOcuKatowiceWorkbook(
     if (!sonar) continue;
     stats.pivot_rows++;
 
+    let abValue: string | number = 0;
+    let xValue: string | number = 0;
+    let acValue: string | number = 0;
+    let adValue: string | number = 0;
+    let aeValue: string | number = 0;
+    let s1619: SapRoutingComponent[] = [];
+    let s2102Large: SapRoutingComponent[] = [];
+    let s2102Small: SapRoutingComponent[] = [];
+
     const erp = year != null ? erpBySonarYear.get(`${sonar}|${year}`) : undefined;
     if (erp == null || erp === '') {
       stats.unmatched_sonar++;
-      continue;
+    } else {
+      const erpNum = Number(erp);
+      abValue =
+        Number.isFinite(erpNum) && String(Math.trunc(erpNum)) === erp ? erpNum : erp;
+      stats.filled_ab++;
+
+      if (!erp || erp === '0') {
+        stats.unmatched_erp_in_db++;
+      } else {
+        const profile = profiles.get(normSapKey(erp));
+        if (!profile) {
+          stats.unmatched_erp_in_db++;
+        } else {
+          const line = pickLineForYear(profile, year);
+          if (line) {
+            xValue = `L${line}`;
+            stats.filled_x++;
+          }
+
+          if (profile.nestsParts.length) {
+            acValue = profile.nestsParts.join('+');
+            stats.filled_ac++;
+          }
+
+          if (profile.maxCycleSeconds != null && profile.maxCycleSeconds > 0) {
+            adValue = Math.round(3600 / profile.maxCycleSeconds);
+            stats.filled_ad++;
+          }
+
+          if (profile.nestsCount > 0) {
+            aeValue = profile.nestsCount;
+            stats.filled_ae++;
+          }
+        }
+
+        // Routing SAP — komponenty powiązane z wyrobem (ERP = Material w routingu)
+        const fgKey = normSapKey(erp);
+        const hasFg = routingIndex.byFinishedGood.has(fgKey);
+        if (!hasFg) {
+          stats.unmatched_routing++;
+        } else {
+          s1619 = componentsWithCode(routingIndex, fgKey, 'S1619');
+          const s2102All = componentsWithCode(routingIndex, fgKey, 'S2102');
+          const split = splitS2102ByFormatka(s2102All);
+          s2102Large = split.large;
+          s2102Small = split.small;
+        }
+      }
     }
 
-    const erpNum = Number(erp);
-    const abValue: string | number =
-      Number.isFinite(erpNum) && String(Math.trunc(erpNum)) === erp ? erpNum : erp;
-    cellUpdates.set(`${colLetterFrom1(cols.ab)}${excelRow}`, abValue);
-    stats.filled_ab++;
+    cellUpdates.set(`${colAb}${excelRow}`, abValue);
+    cellUpdates.set(`${colX}${excelRow}`, xValue);
+    cellUpdates.set(`${colAc}${excelRow}`, acValue);
+    cellUpdates.set(`${colAd}${excelRow}`, adValue);
+    cellUpdates.set(`${colAe}${excelRow}`, aeValue);
 
-    if (!erp || erp === '0') {
-      stats.unmatched_erp_in_db++;
-      continue;
-    }
-
-    const profile = profiles.get(normSapKey(erp));
-    if (!profile) {
-      stats.unmatched_erp_in_db++;
-      continue;
-    }
-
-    const line = pickLineForYear(profile, year);
-    if (line) {
-      cellUpdates.set(`${colLetterFrom1(cols.x)}${excelRow}`, `L${line}`);
-      stats.filled_x++;
-    }
-
-    if (profile.nestsParts.length) {
-      cellUpdates.set(`${colLetterFrom1(cols.ac)}${excelRow}`, profile.nestsParts.join('+'));
-      stats.filled_ac++;
-    }
-
-    if (profile.maxCycleSeconds != null && profile.maxCycleSeconds > 0) {
-      cellUpdates.set(`${colLetterFrom1(cols.ad)}${excelRow}`, Math.round(3600 / profile.maxCycleSeconds));
-      stats.filled_ad++;
-    }
-
-    if (profile.nestsTotal > 0) {
-      cellUpdates.set(`${colLetterFrom1(cols.ae)}${excelRow}`, profile.nestsTotal);
-      stats.filled_ae++;
-    }
+    stats.filled_s1619 += writeRoutingErpNo(cellUpdates, excelRow, S1619_ERP_COL, s1619);
+    stats.filled_s2102_large += writeS2102Block(
+      cellUpdates,
+      excelRow,
+      S2102_BLOCK_COLS.large,
+      s2102Large,
+      routingIndex
+    );
+    stats.filled_s2102_small += writeS2102Block(
+      cellUpdates,
+      excelRow,
+      S2102_BLOCK_COLS.small,
+      s2102Small,
+      routingIndex
+    );
   }
 
-  const { cleaned: katowiceNoFilter, filled: katowiceOcu } = mutateKatowicePackage(
+  const { cleaned: katowiceNoFilterRaw, filled: katowiceFilled } = mutateKatowicePackage(
     katowiceBuffer,
     cellUpdates
   );
+  const katowiceNoFilter = stripMacrosToXlsx(katowiceNoFilterRaw);
+  const katowiceOcu = stripToInputOnlyNoMacros(katowiceFilled);
 
   const outZip = new JSZip();
   outZip.file('Tabela_przejscia.xlsx', transitionNoFilter);
-  outZip.file(`Katowice_Data_bez_filtrow${ext}`, katowiceNoFilter);
-  outZip.file(`Katowice_Data_OCU${ext}`, katowiceOcu);
+  outZip.file('Katowice_Data_bez_filtrow.xlsx', katowiceNoFilter);
+  outZip.file('Katowice_Data_OCU.xlsx', katowiceOcu);
+  outZip.file('routing.txt', routingBuffer);
   const zipBuffer = await outZip.generateAsync({
     type: 'nodebuffer',
     compression: 'DEFLATE',

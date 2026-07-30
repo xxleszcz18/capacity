@@ -18,24 +18,34 @@ const fileBoxStyle: React.CSSProperties = {
   marginBottom: '1rem',
 };
 
+type OcuStats = {
+  pivot_rows: number;
+  filled_ab: number;
+  filled_x: number;
+  filled_ac: number;
+  filled_ad: number;
+  filled_ae: number;
+  filled_s1619: number;
+  filled_s2102_large: number;
+  filled_s2102_small: number;
+  unmatched_sonar: number;
+  unmatched_erp_in_db: number;
+  unmatched_routing: number;
+  routing_finished_goods: number;
+};
+
 export default function AdminOcuData() {
   const { t, te } = useI18n();
   const { hasPermission } = useAuth();
   const canGenerate = hasPermission('admin_ocu.edit');
   const [transitionFile, setTransitionFile] = useState<File | null>(null);
   const [katowiceFile, setKatowiceFile] = useState<File | null>(null);
+  const [routingFile, setRoutingFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [stats, setStats] = useState<{
-    pivot_rows: number;
-    filled_ab: number;
-    filled_x: number;
-    filled_ac: number;
-    filled_ad: number;
-    filled_ae: number;
-    unmatched_sonar: number;
-    unmatched_erp_in_db: number;
-  } | null>(null);
+  const [stats, setStats] = useState<OcuStats | null>(null);
+
+  const ready = Boolean(transitionFile && katowiceFile && routingFile);
 
   const onGenerate = async () => {
     setError('');
@@ -48,9 +58,13 @@ export default function AdminOcuData() {
       setError(t('admin.ocuDataNeedKatowice'));
       return;
     }
+    if (!routingFile) {
+      setError(t('admin.ocuDataNeedRouting'));
+      return;
+    }
     setBusy(true);
     try {
-      const result = await api.admin.generateOcuData(transitionFile, katowiceFile);
+      const result = await api.admin.generateOcuData(transitionFile, katowiceFile, routingFile);
       setStats(result.stats);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '';
@@ -100,11 +114,26 @@ export default function AdminOcuData() {
         )}
       </div>
 
+      <div style={fileBoxStyle}>
+        <strong style={{ display: 'block', marginBottom: 8 }}>{t('admin.ocuDataRoutingTitle')}</strong>
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: '#555' }}>{t('admin.ocuDataRoutingHelp')}</p>
+        <input
+          type="file"
+          accept=".txt,text/plain"
+          onChange={(e) => setRoutingFile(e.target.files?.[0] ?? null)}
+        />
+        {routingFile && (
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: '#33691e' }}>
+            {routingFile.name} ({(routingFile.size / (1024 * 1024)).toFixed(1)} MB)
+          </p>
+        )}
+      </div>
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: '1rem' }}>
         {canGenerate ? (
           <button
             type="button"
-            disabled={busy || !transitionFile || !katowiceFile}
+            disabled={busy || !ready}
             onClick={() => void onGenerate()}
             style={{
               padding: '0.55rem 1.1rem',
@@ -112,8 +141,8 @@ export default function AdminOcuData() {
               color: '#fff',
               border: 'none',
               borderRadius: 4,
-              opacity: busy || !transitionFile || !katowiceFile ? 0.65 : 1,
-              cursor: busy || !transitionFile || !katowiceFile ? 'not-allowed' : 'pointer',
+              opacity: busy || !ready ? 0.65 : 1,
+              cursor: busy || !ready ? 'not-allowed' : 'pointer',
             }}
           >
             {busy ? t('admin.ocuDataGenerating') : t('admin.ocuDataGenerate')}
@@ -135,8 +164,13 @@ export default function AdminOcuData() {
             <li>{t('admin.ocuDataStatsAc', { count: stats.filled_ac })}</li>
             <li>{t('admin.ocuDataStatsAd', { count: stats.filled_ad })}</li>
             <li>{t('admin.ocuDataStatsAe', { count: stats.filled_ae })}</li>
+            <li>{t('admin.ocuDataStatsS1619', { count: stats.filled_s1619 })}</li>
+            <li>{t('admin.ocuDataStatsS2102Large', { count: stats.filled_s2102_large })}</li>
+            <li>{t('admin.ocuDataStatsS2102Small', { count: stats.filled_s2102_small })}</li>
             <li>{t('admin.ocuDataStatsUnmatchedSonar', { count: stats.unmatched_sonar })}</li>
             <li>{t('admin.ocuDataStatsUnmatchedErp', { count: stats.unmatched_erp_in_db })}</li>
+            <li>{t('admin.ocuDataStatsUnmatchedRouting', { count: stats.unmatched_routing })}</li>
+            <li>{t('admin.ocuDataStatsRoutingFg', { count: stats.routing_finished_goods })}</li>
           </ul>
         </div>
       )}

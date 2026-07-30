@@ -38,6 +38,7 @@ const PERMISSION_RESOURCES: { key: string; labelKey: string; actions: PermAction
   { key: 'admin_settings', labelKey: 'auth.permAdminSettings', actions: ['view', 'edit', 'download'] },
   { key: 'admin_data_viz', labelKey: 'auth.permAdminDataViz', actions: ['view', 'edit', 'download'] },
   { key: 'admin_ocu', labelKey: 'auth.permAdminOcu', actions: ['view', 'edit'] },
+  { key: 'admin_data_preparation', labelKey: 'auth.permAdminDataPrep', actions: ['view', 'edit'] },
   { key: 'admin_attachments', labelKey: 'auth.permAdminAttachments', actions: ['view', 'download'] },
   { key: 'change_history', labelKey: 'auth.permChangeHistory', actions: ['view', 'download'] },
   { key: 'user_management', labelKey: 'auth.permUserManagement', actions: ['view', 'edit', 'delete'] },

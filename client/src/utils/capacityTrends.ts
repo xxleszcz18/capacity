@@ -177,9 +177,10 @@ function barSeriesValuesForYear(
 
 /**
  * Mapuje odpowiedź kalkulatora Call offs na bundle trendów:
- * load_percent = jak produkcja (req/avail), tylko miesiące z danymi SAP (call_off_annual_*),
+ * load_percent = średnia miesięcy w zakresie danych SAP (call_off_annual_* = call_off_load_percent),
  * required_sec / availability do agregacji linii.
  * Punkty tylko w latach z wolumenem w pliku (`volumeYears`) — poza nimi null.
+ * Agregacja linii / zakładu: Max średnia wg typu (jak w Kalkulatorze).
  */
 export function callOffCalculatorToTrendBundle(res: {
   yearFrom: number;
@@ -213,14 +214,14 @@ export function callOffCalculatorToTrendBundle(res: {
       .filter((y) => Number.isFinite(y) && y >= 2000 && y <= 2100)
   );
 
-  // Fallback: jeśli API nie podało volumeYears, wywnioskuj z lat z dodatnim obciążeniem SAP (roczne lub peak).
+  // Fallback: jeśli API nie podało volumeYears, wywnioskuj z lat z dodatnim obciążeniem SAP.
   if (volumeYearSet.size === 0) {
     for (const m of res.machines ?? []) {
       for (const [yearKey, yd] of Object.entries(m.years ?? {})) {
         const year = Number(yearKey);
         const annual = Number(yd.call_off_annual_load_percent ?? 0);
-        const peak = Number(yd.call_off_load_percent ?? 0);
-        const pct = annual > 0 ? annual : peak;
+        const avg = Number(yd.call_off_load_percent ?? 0);
+        const pct = annual > 0 ? annual : avg;
         if (Number.isFinite(year) && Number.isFinite(pct) && pct > 0) volumeYearSet.add(year);
       }
     }

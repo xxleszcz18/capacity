@@ -296,9 +296,9 @@ export const manualEn: TranslationTree = {
         sop:
           'SOP/EOP format MM.YYYY. Outside the production window weekly volume is 0 unless include_in_calculator_after_eop / manual year rules apply. Year/month/week fractions scale volume during ramp-up and ramp-down.',
         period:
-          'Expanding a year shows months then ISO weeks. Mid-year allocation can start from a month/week (effective_from) so earlier weeks stay on the source machine and later weeks move — weekly rate is not simply re-averaged across the whole year.',
+          'Expanding a year shows months then ISO weeks. Production/scenario: year cell = average of 12 months; month cell = average of weeks. Call offs: year = average of months from first to last month with SAP data in the file; month = average of weeks in the SAP week range. Zeros inside the SAP range count toward the average; zeros outside the range are ignored. Mid-year allocation (effective_from) can still move volume between machines within those periods.',
         maxType:
-          'Max average by type (Calculator footer + Data Viz aggregation) = max over types of (average load_% of machines of that type in the current filter).',
+          'Max average by type (Calculator footer + all Data Viz charts) = max over types of (average load_% of machines of that type in the current filter).',
         isoWeek:
           'Expanded calendar weeks use ISO weeks (Monday–Sunday).',
         altCycle:
@@ -406,6 +406,9 @@ export const manualEn: TranslationTree = {
         a47: 'Monday–Sunday (ISO). Shown when you expand years to weeks in the Calculator.',
         q48: 'Where are formulas documented for engineers?',
         a48: 'Section 13 of this manual matches server capacityService logic; server/CAPACITY_LOGIC.md is a short companion for developers.',
+        q49: 'How is the year / month load value calculated?',
+        a49:
+          'Production and scenarios: year = average of 12 months (e.g. 6×182% + 6×0% → 91%); month = average of weeks. Call offs: year = average of months from first to last month with SAP data; month = average of weeks in the SAP range. Zeros inside the range count; zeros outside do not. Charts use the “Max average by type” row.',
       },
     },
     diagrams: {

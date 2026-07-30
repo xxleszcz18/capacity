@@ -30,6 +30,7 @@ const Administration = lazy(() => import('./pages/Administration'));
 const AdminSettings = lazy(() => import('./pages/AdminSettings'));
 const AdminAttachments = lazy(() => import('./pages/AdminAttachments'));
 const AdminOcuData = lazy(() => import('./pages/AdminOcuData'));
+const AdminDataPreparation = lazy(() => import('./pages/AdminDataPreparation'));
 const AdminDataVisualization = lazy(() => import('./pages/AdminDataVisualization'));
 const AdminUsers = lazy(() => import('./pages/AdminUsers'));
 const AdminRoles = lazy(() => import('./pages/AdminRoles'));
@@ -265,6 +266,14 @@ function AppShell() {
                       element={
                         <ProtectedRoute permission="admin_ocu.view">
                           <AdminOcuData />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/administracja/data-preparation"
+                      element={
+                        <ProtectedRoute permission="admin_data_preparation.view">
+                          <AdminDataPreparation />
                         </ProtectedRoute>
                       }
                     />

@@ -3229,7 +3229,7 @@ export default function Calculator({ callOffComparisonId }: CalculatorProps = {}
                     ? getTimelineCallOffBreakdown(col, cell, monthsData)
                     : undefined;
                   const volumePeriod = callOffMode && isYearCell ? 'monthly' : timelineVolumePeriod(col);
-                  /** SAP: miesiąc/rok = peak tygodnia → ilości w breakdown są tygodniowe. */
+                  /** SAP: miesiąc/rok = średnia w zakresie danych → ilości w breakdown odpowiadają tygodniowi najbliższemu średniej. */
                   const callOffVolumePeriod =
                     callOffMode && (isYearCell || col.kind === 'month') ? 'weekly' : volumePeriod;
                   const canAllocPeriod = tableCanAllocate && !callOffMode;

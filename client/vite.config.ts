@@ -17,6 +17,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true, // dostęp z sieci LAN / zdalnie (nie tylko localhost)
     port: 5173,
     proxy: {
       '/api': {

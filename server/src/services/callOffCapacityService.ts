@@ -1,7 +1,6 @@
 import {
   getMachineCapacityByYears,
-  getMachineCapacitiesForYear,
-  getMachineMonthlyLoadsByMonth,
+  getMachineMonthlyAverageLoads,
   getMachinePeriodBreakdown,
   type CapacityCalculationOptions,
 } from './capacityService.js';
@@ -24,10 +23,10 @@ export type CallOffCalculatorMachine = {
     number,
     {
       load_percent: number;
-      /** Peak miesięczny SAP — dolny pasek w komórce roku w Kalkulatorze. */
+      /** Średnia miesięcy w zakresie danych SAP — dolny pasek w komórce roku w Kalkulatorze. */
       call_off_load_percent: number;
       /**
-       * Data Viz: jak produkcja/kontrakt (suma req / suma avail), ale tylko miesiące z danymi SAP (bez zer).
+       * Data Viz: ta sama średnia co call_off_load_percent (zakres SAP, zera w zakresie liczą się).
        */
       call_off_annual_load_percent?: number;
       call_off_annual_required_sec_per_week?: number;
@@ -136,87 +135,6 @@ function mergeAssignedDetailsIntoCallOffBreakdown(
   return co.sort((a, b) => b.contribution_percent - a.contribution_percent);
 }
 
-type MonthLoad = { load_percent: number; detail_breakdown: DetailBreakdownRow };
-
-function findPeakSapMonth(months: Map<number, MonthLoad>): { month: number; sap: MonthLoad } {
-  let bestMonth = 1;
-  let best: MonthLoad = { load_percent: 0, detail_breakdown: [] };
-  for (let m = 1; m <= 12; m++) {
-    const row = months.get(m) ?? { load_percent: 0, detail_breakdown: [] };
-    if (row.load_percent > best.load_percent) {
-      best = row;
-      bestMonth = m;
-    }
-  }
-  return { month: bestMonth, sap: best };
-}
-
-type VizAgg = {
-  required_sec: number;
-  availability_sec: number;
-  load_percent: number;
-};
-
-/**
- * Jak produkcja/kontrakt: obciążenie = suma wymaganego czasu / suma dostępności,
- * ale tylko z miesięcy z danymi SAP (load/req > 0) — bez rozcieńczania zerami.
- */
-function aggregateCallOffMonthsSkippingZeros(
-  year: number,
-  machineIds: number[] | undefined,
-  machineType: string | string[] | undefined,
-  useContractualVolumes: boolean | undefined,
-  machineStatusFilter: MachineStatusFilterInput | undefined,
-  dimensionFilters: MachineDimensionFilter[] | undefined,
-  settingsProfile: CalculationSettingsProfile | undefined,
-  callOffVolumes: NonNullable<ReturnType<typeof loadCallOffVolumeMaps>>
-): Map<number, VizAgg> {
-  const agg = new Map<number, { required_sec: number; availability_sec: number }>();
-
-  for (let month = 1; month <= 12; month++) {
-    const monthRows = getMachineCapacitiesForYear(
-      year,
-      machineIds,
-      machineType,
-      undefined,
-      null,
-      undefined,
-      useContractualVolumes,
-      machineStatusFilter,
-      dimensionFilters,
-      settingsProfile,
-      month,
-      undefined,
-      callOffVolumes,
-      'monthly',
-      CALL_OFF_PROD_OPTIONS
-    );
-    for (const row of monthRows) {
-      const req = Number(row.required_sec_per_week ?? 0);
-      const avail = Number(row.availability_sec_per_week ?? 0);
-      const load = Number(row.load_percent ?? 0);
-      if (load <= 1e-9 && req <= 1e-9) continue;
-      if (avail <= 0) continue;
-      const prev = agg.get(row.machine_id) ?? { required_sec: 0, availability_sec: 0 };
-      prev.required_sec += req;
-      prev.availability_sec += avail;
-      agg.set(row.machine_id, prev);
-    }
-  }
-
-  const out = new Map<number, VizAgg>();
-  for (const [machineId, v] of agg) {
-    const load_percent =
-      v.availability_sec > 0 ? Math.round((v.required_sec / v.availability_sec) * 100) : 0;
-    out.set(machineId, {
-      required_sec: Math.round(v.required_sec),
-      availability_sec: Math.round(v.availability_sec),
-      load_percent,
-    });
-  }
-  return out;
-}
-
 export function getCallOffComparisonCalculator(
   comparisonId: number,
   yearFrom: number,
@@ -246,39 +164,22 @@ export function getCallOffComparisonCalculator(
     CALL_OFF_PROD_OPTIONS
   );
 
-  /** Rok → maszyna → peak (Kalkulator) oraz agregacja bez zer (Data Viz). */
-  const sapPeakByYear = new Map<number, Map<number, MonthLoad>>();
-  const sapVizByYear = new Map<number, Map<number, VizAgg>>();
+  /** Rok → maszyna → średnia w zakresie miesięcy SAP. */
+  const sapAvgByYear = new Map<
+    number,
+    Map<number, { load_percent: number; detail_breakdown: DetailBreakdownRow }>
+  >();
 
   for (let y = yearFrom; y <= yearTo; y++) {
-    const sapByMonth = getMachineMonthlyLoadsByMonth(
+    sapAvgByYear.set(
       y,
-      machineIds,
-      machineType,
-      undefined,
-      null,
-      undefined,
-      useContractualVolumes,
-      machineStatusFilter,
-      dimensionFilters,
-      settingsProfile,
-      callOffVolumes,
-      CALL_OFF_PROD_OPTIONS
-    );
-
-    const peakMap = new Map<number, MonthLoad>();
-    for (const [machineId, sapMonths] of sapByMonth) {
-      const { sap: peak } = findPeakSapMonth(sapMonths);
-      peakMap.set(machineId, peak);
-    }
-    sapPeakByYear.set(y, peakMap);
-
-    sapVizByYear.set(
-      y,
-      aggregateCallOffMonthsSkippingZeros(
+      getMachineMonthlyAverageLoads(
         y,
         machineIds,
         machineType,
+        undefined,
+        null,
+        undefined,
         useContractualVolumes,
         machineStatusFilter,
         dimensionFilters,
@@ -292,15 +193,15 @@ export function getCallOffComparisonCalculator(
     const years: CallOffCalculatorMachine['years'] = {};
     for (const [yearKey, yData] of Object.entries(m.years)) {
       const year = Number(yearKey);
-      const peak = sapPeakByYear.get(year)?.get(m.machine_id);
-      const viz = sapVizByYear.get(year)?.get(m.machine_id);
+      const avg = sapAvgByYear.get(year)?.get(m.machine_id);
+      const load = avg?.load_percent ?? 0;
       years[year] = {
         ...yData,
-        call_off_load_percent: peak?.load_percent ?? 0,
-        call_off_annual_load_percent: viz?.load_percent ?? 0,
-        call_off_annual_required_sec_per_week: viz?.required_sec ?? 0,
-        call_off_annual_availability_sec_per_week: viz?.availability_sec ?? 0,
-        call_off_detail_breakdown: peak?.detail_breakdown ?? [],
+        call_off_load_percent: load,
+        call_off_annual_load_percent: load,
+        call_off_annual_required_sec_per_week: 0,
+        call_off_annual_availability_sec_per_week: 0,
+        call_off_detail_breakdown: avg?.detail_breakdown ?? [],
       };
     }
     return { ...m, years };

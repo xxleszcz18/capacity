@@ -358,6 +358,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       'admin_database.view',
       'admin_settings.view',
       'admin_ocu.view',
+      'admin_data_preparation.view',
       'admin_attachments.view',
       'change_history.view',
       'user_management.view',
