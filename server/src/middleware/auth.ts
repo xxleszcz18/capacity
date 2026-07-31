@@ -292,10 +292,6 @@ export function requireAdminAccess(req: Request, res: Response, next: NextFuncti
     const key = action === 'view' ? 'admin_ocu.view' : 'admin_ocu.edit';
     return requirePermission(key)(req, res, next);
   }
-  if (path.startsWith('/data-preparation')) {
-    const key = action === 'view' ? 'admin_data_preparation.view' : 'admin_data_preparation.edit';
-    return requirePermission(key)(req, res, next);
-  }
   if (path.startsWith('/attachments')) {
     return requirePermission('admin_attachments.view')(req, res, next);
   }

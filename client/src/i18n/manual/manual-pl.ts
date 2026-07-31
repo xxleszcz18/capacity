@@ -260,7 +260,7 @@ export const manualPl: TranslationTree = {
           'Import maszyn / pakietu capacity / danych wejściowych jest w Ustawieniach administracyjnych. Używaj szablonów zgodnych z wersją aplikacji; po imporcie sprawdź Kalkulator i Historie zmian.',
         ocuDataTitle: 'Dane do OCU',
         ocuData:
-          'Moduł uzupełnia arkusz Input w Katowice_Data (kolumny X, AB, AC, AD, AE) na podstawie Tabeli przejścia i bazy Capacity. Wgraj oba pliki → Generuj i pobierz ZIP (źródła bez filtrów + wynik). Wymaga admin_ocu.view / .edit. Osobny moduł Administracja → Data preparation uzupełnia S2102/S1619 z routing.txt (BFS, bez nadpisywania CR/AF).',
+          'Moduł uzupełnia arkusz Input w Katowice_Data (kolumny X, AB, AC, AD, AE; S1619 → AK; S2102 → CW/DI z wymiarami i Base Qty) na podstawie Tabeli przejścia, routingu SAP i bazy Capacity. Wgraj pliki → Generuj i pobierz ZIP. Wymaga admin_ocu.view / .edit.',
         attachAdminTitle: 'Załączniki (administracja)',
         attachAdmin:
           'Globalna lista załączników z lokalizacją na dysku i statusem „plik istnieje”. Podgląd = admin_attachments.view; pobieranie plików w projekcie = admin_attachments.download (wyłączenie view wyłącza też download).',

@@ -32,7 +32,6 @@ import {
   MACHINES_IMPORT_CONFIRM,
 } from '../services/machineImportService.js';
 import { generateOcuKatowiceWorkbook } from '../services/ocuDataExportService.js';
-import { generateDataPreparationZip } from '../services/dataPreparation/index.js';
 
 export const adminRouter = Router();
 
@@ -657,60 +656,6 @@ adminRouter.post(
         res.send(result.buffer);
       } catch (e: any) {
         return res.status(400).json({ error: e?.message || 'Nie udało się wygenerować pliku OCU.' });
-      }
-    })();
-  }
-);
-
-/**
- * Data preparation: uzupełnia S2102 (CR–DO) i S1619 (AF–AN) na podstawie routing.txt.
- * multipart: katowice, routing, transition → ZIP (xlsx + 2 CSV).
- */
-adminRouter.post(
-  '/data-preparation/generate',
-  ocuUpload.fields([
-    { name: 'katowice', maxCount: 1 },
-    { name: 'routing', maxCount: 1 },
-    { name: 'transition', maxCount: 1 },
-  ]),
-  (req, res) => {
-    void (async () => {
-      try {
-        const files = req.files as
-          | {
-              transition?: Express.Multer.File[];
-              katowice?: Express.Multer.File[];
-              routing?: Express.Multer.File[];
-            }
-          | undefined;
-        const transition = files?.transition?.[0];
-        const katowice = files?.katowice?.[0];
-        const routing = files?.routing?.[0];
-        if (!katowice?.buffer?.length) {
-          return res.status(400).json({ error: 'Brak pliku Katowice_Data (pole: katowice).' });
-        }
-        if (!routing?.buffer?.length) {
-          return res.status(400).json({ error: 'Brak pliku routingu SAP (pole: routing).' });
-        }
-        if (!transition?.buffer?.length) {
-          return res.status(400).json({ error: 'Brak pliku Tabeli przejścia (pole: transition).' });
-        }
-        const result = await generateDataPreparationZip(
-          katowice.buffer,
-          routing.buffer,
-          transition.buffer
-        );
-        const { b_note: _bNote, ...headerStats } = result.stats;
-        res.setHeader('Content-Type', 'application/zip');
-        res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
-        // Nagłówki HTTP tylko ASCII — bez polskich znaków z b_note.
-        res.setHeader('X-Data-Prep-Stats', JSON.stringify(headerStats));
-        res.setHeader('Access-Control-Expose-Headers', 'X-Data-Prep-Stats, Content-Disposition');
-        res.send(result.buffer);
-      } catch (e: any) {
-        return res.status(400).json({
-          error: e?.message || 'Nie udało się uruchomić Data preparation.',
-        });
       }
     })();
   }

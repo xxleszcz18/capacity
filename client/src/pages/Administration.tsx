@@ -50,13 +50,6 @@ export default function Administration() {
           </Link>
         )}
 
-        {!limitedAdmin && hasPermission('admin_data_preparation.view') && (
-          <Link to="/administracja/data-preparation" style={adminHubCardStyle}>
-            <strong style={{ fontSize: '1.1rem' }}>{t('admin.dataPrep')}</strong>
-            <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: 14 }}>{t('admin.dataPrepDesc')}</p>
-          </Link>
-        )}
-
         {!limitedAdmin && hasAnyPermission(['user_management.view', 'role_management.view']) && (
           <Link to="/administracja/uzytkownicy-i-uprawnienia" style={adminHubCardStyle}>
             <strong style={{ fontSize: '1.1rem' }}>{t('layout.usersAndPermissions')}</strong>

@@ -27,8 +27,42 @@ button:not(:disabled):active {
 }
 
 /* Nawigacja w headerze – hover w kolorze Autoneum */
-header nav a:not(.active):hover {
+header nav a:not(.active):hover,
+.app-header-menu-link:not(.active):hover {
   background: rgba(164, 196, 0, 0.2) !important;
+}
+
+/* Responsywny pasek: pomiar pełnej szerokości + zwijanie prawej/lewej */
+.app-header-measure-row {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: -1;
+}
+.app-header-measure-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+.app-header-nav-inline {
+  overflow: hidden;
+}
+@media (max-width: 560px) {
+  .app-header-logo img {
+    max-width: min(28vw, 160px) !important;
+  }
+  .app-header-brand-meta {
+    max-width: 22vw !important;
+  }
 }
 
 .allocation-transfer-modes {

@@ -18,7 +18,6 @@ export type PermissionResource =
   | 'admin_settings'
   | 'admin_data_viz'
   | 'admin_ocu'
-  | 'admin_data_preparation'
   | 'admin_attachments'
   | 'change_history'
   | 'user_management'
@@ -35,7 +34,6 @@ export const PERMISSION_MATRIX: Record<PermissionResource, PermissionAction[]> =
   admin_settings: ['view', 'edit', 'download'],
   admin_data_viz: ['view', 'edit', 'download'],
   admin_ocu: ['view', 'edit'],
-  admin_data_preparation: ['view', 'edit'],
   admin_attachments: ['view', 'download'],
   change_history: ['view', 'download'],
   user_management: ['view', 'edit', 'delete'],

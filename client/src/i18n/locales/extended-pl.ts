@@ -1308,7 +1308,6 @@ export const extendedPl: TranslationTree = {
     permAdminSettings: 'Ustawienia administracyjne',
     permAdminDataViz: 'Wizualizacja danych',
     permAdminOcu: 'Dane do OCU',
-    permAdminDataPrep: 'Data preparation',
     permAdminAttachments: 'Załączniki (administracja)',
     permChangeHistory: 'Historia zmian',
     permUserManagement: 'Zarządzanie użytkownikami',

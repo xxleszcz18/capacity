@@ -356,50 +356,6 @@ export const api = {
       URL.revokeObjectURL(url);
       return { stats };
     },
-    generateDataPreparation: async (katowice: File, routing: File, transition: File) => {
-      const fd = new FormData();
-      fd.append('katowice', katowice);
-      fd.append('routing', routing);
-      fd.append('transition', transition);
-      let res: Response;
-      try {
-        res = await fetch(`${BASE}/admin/data-preparation/generate`, {
-          method: 'POST',
-          body: fd,
-          credentials: 'include',
-          cache: 'no-store',
-        });
-      } catch (e) {
-        throw mapFetchFailure(e);
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(
-          (data as { error?: string }).error || res.statusText || 'Data preparation failed'
-        );
-      }
-      const statsHeader = res.headers.get('X-Data-Prep-Stats');
-      let stats: Record<string, number | string> = {};
-      if (statsHeader) {
-        try {
-          stats = JSON.parse(statsHeader) as Record<string, number | string>;
-        } catch {
-          /* ignore */
-        }
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const matched = /filename="([^"]+)"/i.exec(disposition);
-      a.download = matched?.[1] || 'Data_preparation_S2102_S1619.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      return { stats };
-    },
     startPickLocation: (body: { target: 'backup' | 'attachments' | 'backup-file'; initial_dir?: string }) =>
       request<{ job_id: string }>('/admin/pick-location/start', { method: 'POST', body: JSON.stringify(body) }),
     getPickLocationResult: (jobId: string) =>
