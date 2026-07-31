@@ -44,6 +44,7 @@ Przykład: `usage = 0,5` → dwukrotnie większa efektywna capacity → obciąż
 **Tryb kontraktowy:** najpierw `project_volumes_contract`; gdy brak — fallback do wolumenów produkcyjnych.
 
 **Origin:** `default_all_years` vs `manual_year` — inne traktowanie lat częściowych względem SOP/EOP.
+W tooltipie kalkulatora (szt./rok) dla `manual_year` pokazywana jest **wpisana suma** na rok/okres, a nie ekwiwalent pełnego roku z gęstości miesięcznej (obciążenie % nadal liczone z densyfikacji).
 
 ## 4. Wymagany czas [s/tydzień]
 

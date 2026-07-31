@@ -429,6 +429,55 @@ export function weeklyToDisplayVolume(
 }
 
 /**
+ * Ilość w tooltipie detail_breakdown.
+ * Dla okresu rocznego + jednostka annual + manual_year: pokaż wpisaną sumę na rok/okres
+ * (np. 10002), bez ponownego „×12/miesiące” jak przy gęstości obciążenia.
+ */
+export function resolvedVolumeToTooltipQuantity(
+  volumeValue: number,
+  volumeUnit: 'annual' | 'monthly' | 'weekly',
+  weekly: number,
+  period: 'annual' | 'monthly' | 'weekly',
+  workWeeks: number,
+  opts: {
+    volume_origin: VolumeEntryOrigin;
+    production_months: number;
+    fraction: number;
+  }
+): number {
+  if (period === 'weekly') return weekly;
+  if (period === 'monthly') return weeklyToDisplayVolume(weekly, 'monthly', workWeeks);
+
+  // period === 'annual'
+  if (volumeUnit === 'annual') {
+    if (opts.volume_origin === 'manual_year') return volumeValue;
+    const frac = opts.fraction > 0 && opts.fraction < 1 ? opts.fraction : 1;
+    return volumeValue * frac;
+  }
+  if (volumeUnit === 'monthly') {
+    const months =
+      opts.production_months > 0 && opts.production_months <= 12 ? opts.production_months : 12;
+    return volumeValue * months;
+  }
+  return weeklyToDisplayVolume(weekly, 'annual', workWeeks);
+}
+
+/** volume_quantity z breakdown tygodniowego → jednostka miesięczna (tooltip miesiąca). */
+export function convertBreakdownVolumesWeeklyToMonthly<
+  T extends { volume_quantity?: number | null },
+>(details: T[], workWeeks: number): T[] {
+  const ww = Math.max(1, workWeeks);
+  return details.map((d) => {
+    const q = d.volume_quantity;
+    if (q == null || !Number.isFinite(Number(q))) return d;
+    return {
+      ...d,
+      volume_quantity: Math.round(weeklyToDisplayVolume(Number(q), 'monthly', ww) * 100) / 100,
+    };
+  });
+}
+
+/**
  * Ułamek roku dla capacity: pierwszy rok od startMonth, ostatni do endMonth (SOP/EOP w formacie MM.YYYY).
  */
 export function getYearFractionFromSopEop(sop: string, eop: string, year: number): number {
@@ -1692,7 +1741,18 @@ export function getMachineCapacitiesForYear(
         const projectLabel = formatProjectLabel(op.project_client, op.project_name);
         const contribKey = `${Number(op.project_id)}|${detailLabel}`;
         const isOpRfq = String(op.project_status ?? '').toUpperCase() === 'RFQ';
-        const volQty = weeklyToDisplayVolume(weeklyVol, volumePeriod, workWeeksForVolume);
+        const volQty = resolvedVolumeToTooltipQuantity(
+          volValue,
+          volUnit,
+          weeklyVol,
+          volumePeriod,
+          workWeeksForVolume,
+          {
+            volume_origin: resolved.volume_origin,
+            production_months: weeklyResolved.production_months,
+            fraction,
+          }
+        );
         const existing = detailContributionSec.get(contribKey);
         if (existing) {
           existing.requiredSec += requiredSecOp;
@@ -2711,7 +2771,15 @@ export function getMachinePeriodBreakdown(
               bestDetail = details[i] ?? [];
             }
           }
-          monthDetail = bestDetail;
+          // Obciążenie miesiąca = średnia tygodni; skład z tygodnia najbliższego średniej.
+          // Call offs: klient etykietuje miesiąc jako szt./tydz. — zostaw ilości tygodniowe.
+          // Produkcja: tooltip miesiąca to szt./mies. — przelicz z tygodniowych.
+          if (callOffVolumes) {
+            monthDetail = bestDetail;
+          } else {
+            const ww = Math.max(1, shared.settingsByYear.get(year)?.working_weeks_per_year ?? 48);
+            monthDetail = convertBreakdownVolumesWeeklyToMonthly(bestDetail, ww);
+          }
         }
       }
       months[month] = {

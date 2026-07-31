@@ -1,19 +1,22 @@
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 import { db, saveDb } from '../db/connection.js';
 import { parseInternalMachineNumber } from '../utils/internalMachineNumber.js';
 import { excelExportCell } from '../utils/excelExportCell.js';
+import { addDirectoryToZip, scenarioSnapshotExcelCell } from './backupService.js';
+import { getCallOffsStorageRoot } from './callOffFileService.js';
 
 const README_SHEET = '_INSTRUKCJA';
 
 /** Tabele systemowe / pomijane w eksporcie arkusza. */
-const SKIP_EXPORT = new Set(['sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4', '_migrations', 'scenarios']);
+const SKIP_EXPORT = new Set(['sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4', '_migrations']);
 
 /** Przy imporcie nie usuwamy ani nie nadpisujemy ustawień admina (backup, ścieżki). */
 const SKIP_IMPORT = new Set(['admin_settings', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4', '_migrations', README_SHEET]);
 
 /**
- * Kolejność wstawiania (rodzice przed dziećmi). Scenariusze na końcu — snapshot JSON nie eksportujemy do Excela;
- * przy pełnym imporcie tabela scenarios jest czyszczona (stare snapshoty wskazywałyby nieistniejące id).
+ * Kolejność wstawiania (rodzice przed dziećmi). Scenariusze na końcu.
+ * Duże snapshoty trafiają też do ZIP (scenarios/*.json) — w Excelu może być znacznik __FILE__.
  */
 const IMPORT_ORDER_BASE: string[] = [
   'working_days',
@@ -37,6 +40,8 @@ const IMPORT_ORDER_BASE: string[] = [
   'operations',
   'operation_volume_by_year',
   'operation_set_members',
+  'call_off_comparisons',
+  'call_off_volumes',
   'scenarios',
 ];
 
@@ -59,7 +64,7 @@ function resolveImportOrder(): string[] {
     if (existing.has(t)) out.push(t);
   }
   for (const t of existing) {
-    if (!out.includes(t) && !SKIP_IMPORT.has(t) && !SKIP_EXPORT.has(t) && t !== README_SHEET && t !== 'scenarios') {
+    if (!out.includes(t) && !SKIP_IMPORT.has(t) && !SKIP_EXPORT.has(t) && t !== README_SHEET) {
       out.push(t);
     }
   }
@@ -93,7 +98,8 @@ function buildReadmeAoa(): (string | number | null)[][] {
     [],
     ['Uwagi'],
     ['• Operacja IMPORTU (pełna) usuwa dane z większości tabel (wg listy poniżej) i wstawia zawartość z pliku. Import częściowy (wybrane tabele w UI) czyści i wypełnia tylko zaznaczone arkusze — reszta bazy bez zmian; zachowaj spójność kluczy (np. operacje → maszyny i detale).'],
-    ['• Tabela scenariuszy (scenarios) nie jest eksportowana do Excela — pole snapshot jest zbyt duże. Po imporcie utwórz scenariusze ponownie w aplikacji lub przywróć je z kopii pliku capacity.db.'],
+    ['• Tabela scenarios jest eksportowana. Duże snapshoty trafiają do plików scenarios/scenario_{id}.json w paczce ZIP (w Excelu komórka może zawierać znacznik __FILE__:…). Preferuj pobieranie / wgrywanie paczki ZIP.'],
+    ['• Paczka ZIP zawiera także katalog call-offs/ (pliki źródłowe SalesFcst).'],
     ['• Kolumny SOP i EOP (tekst w bazie): przy imporcie zapisujemy daty jako DD.MM.RRRR z wiodącymi zerami (także gdy Excel trzyma komórkę jako liczbę-serial).'],
     ['• Kolejność arkuszy nie ma znaczenia; serwer importuje w bezpiecznej kolejności zależności.'],
     [],
@@ -124,7 +130,7 @@ function buildReadmeAoaPartial(selectedTables: string[]): (string | number | nul
 }
 
 function allowedTablesForPartialTemplate(): Set<string> {
-  return new Set(resolveImportOrder().filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET && t !== 'scenarios'));
+  return new Set(resolveImportOrder().filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET));
 }
 
 /**
@@ -158,13 +164,94 @@ export function buildCapacityBundleTemplateBuffer(options?: { onlyTables?: strin
   for (const table of tables) {
     const cols = tableColumns(table);
     const rows = db.prepare(`SELECT * FROM ${safeIdent(table)}`).all() as Record<string, unknown>[];
-    const aoa = rows.length === 0 ? [cols] : rowsToAoa(rows, cols);
+    let aoa: (string | number | null)[][];
+    if (table === 'scenarios' && rows.length > 0) {
+      aoa = [
+        cols,
+        ...rows.map((r) =>
+          cols.map((c) => {
+            if (c === 'snapshot') {
+              return scenarioSnapshotExcelCell(r.snapshot, Number(r.id));
+            }
+            return normalizeExportValue(r[c]);
+          })
+        ),
+      ];
+    } else {
+      aoa = rows.length === 0 ? [cols] : rowsToAoa(rows, cols);
+    }
     const sh = XLSX.utils.aoa_to_sheet(aoa);
     const name = table.length > 31 ? table.slice(0, 31) : table;
     XLSX.utils.book_append_sheet(wb, sh, name);
   }
 
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+}
+
+/**
+ * Pełna paczka szablonu: Excel (wszystkie / wybrane tabele) + scenarios/*.json + call-offs/.
+ */
+export async function buildCapacityBundlePackageBuffer(options?: {
+  onlyTables?: string[] | null;
+}): Promise<{ buffer: Buffer; filename: string }> {
+  const onlyTables = options?.onlyTables?.length ? options.onlyTables : undefined;
+  const xlsx = buildCapacityBundleTemplateBuffer(onlyTables ? { onlyTables } : undefined);
+  const zip = new JSZip();
+  const xlsxName = onlyTables?.length ? 'capacity_baza_szablon_wybrane.xlsx' : 'capacity_baza_szablon.xlsx';
+  zip.file(xlsxName, xlsx);
+  zip.file(
+    'MANIFEST.json',
+    JSON.stringify(
+      {
+        format: 'capacity-bundle-package-v1',
+        created_at: new Date().toISOString(),
+        excel: xlsxName,
+        only_tables: onlyTables ?? null,
+        extras: ['scenarios/', 'call-offs/'],
+      },
+      null,
+      2
+    )
+  );
+
+  const includeScenarios = !onlyTables || onlyTables.includes('scenarios');
+  if (includeScenarios) {
+    try {
+      const rows = db.prepare(`SELECT * FROM scenarios`).all() as Record<string, unknown>[];
+      for (const r of rows) {
+        const id = Number(r.id);
+        if (!Number.isFinite(id)) continue;
+        let snap: unknown = r.snapshot;
+        try {
+          snap = typeof r.snapshot === 'string' ? JSON.parse(String(r.snapshot)) : r.snapshot;
+        } catch {
+          snap = r.snapshot;
+        }
+        zip.file(`scenarios/scenario_${id}.json`, JSON.stringify({ ...r, snapshot: snap }, null, 2));
+      }
+    } catch {
+      /* no scenarios table */
+    }
+  }
+
+  const includeCallOffs =
+    !onlyTables ||
+    onlyTables.some((t) => t === 'call_off_comparisons' || t === 'call_off_volumes');
+  if (includeCallOffs) {
+    try {
+      addDirectoryToZip(zip, getCallOffsStorageRoot(), 'call-offs');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const buffer = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  const filename = onlyTables?.length ? 'capacity_baza_szablon_wybrane.zip' : 'capacity_baza_szablon.zip';
+  return { buffer, filename };
 }
 
 function coerceCell(v: unknown): string | number | null {
@@ -303,9 +390,7 @@ export function importCapacityBundleFromBuffer(buf: Buffer, options?: { onlyTabl
 
   let toProcess: string[];
   if (partial) {
-    const allowedForPartial = new Set(
-      order.filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET && t !== 'scenarios')
-    );
+    const allowedForPartial = new Set(order.filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET));
     for (const t of requested) {
       if (!allowedForPartial.has(t)) {
         return { ok: false, error: `Niedozwolona lub nieznana tabela w imporcie częściowym: ${t}` };

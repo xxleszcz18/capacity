@@ -20,10 +20,10 @@ const SHEET_VOLUMES = 'Wolumeny';
 const SHEET_OPERATIONS = 'Operacje';
 
 /** Identyfikator aktualnego układu importu — endpoint diagnostyczny i nagłówki odpowiedzi. */
-export const CAPACITY_DATA_IMPORT_SCHEMA_TAG = 'operacje-v2';
+export const CAPACITY_DATA_IMPORT_SCHEMA_TAG = 'operacje-v3';
 
 /** Nazwa pobieranego pliku — zmieniana przy aktualizacji struktury arkuszy (wtedy widać, że to nowy szablon). */
-export const CAPACITY_DATA_IMPORT_TEMPLATE_DOWNLOAD_NAME = 'capacity_szablon_import_danych_v2.xlsx';
+export const CAPACITY_DATA_IMPORT_TEMPLATE_DOWNLOAD_NAME = 'capacity_szablon_import_danych_v3.xlsx';
 
 /** Kolejność zakładek w szablonie zwracanym przez `buildCapacityDataImportTemplateBuffer` (diagnostyka API). */
 export const CAPACITY_DATA_IMPORT_TEMPLATE_SHEET_ORDER = [
@@ -34,6 +34,7 @@ export const CAPACITY_DATA_IMPORT_TEMPLATE_SHEET_ORDER = [
   SHEET_DETAILS,
   SHEET_LINKS,
   SHEET_VOLUMES,
+  'Wolumeny_kontrakt',
   SHEET_OPERATIONS,
 ] as const;
 
@@ -43,6 +44,9 @@ export const CAPACITY_DATA_IMPORT_MACHINE_SHEET_HEADERS = [
   'numer_sap_maszyny',
   'typ',
   'status',
+  'lokalizacja',
+  'oee_procent',
+  'wykorzystanie_maszyny',
   'szerokosc',
   'glebokosc',
   'wysokosc',
@@ -617,13 +621,17 @@ export function buildCapacityDataImportTemplateBuffer(): Buffer {
 
   const machines = db
     .prepare(
-      `SELECT internal_number, sap_number, type, status, width_mm, depth_mm, height_mm, stroke_mm FROM machines ORDER BY internal_number`
+      `SELECT internal_number, sap_number, type, status, location, oee_override, machine_usage,
+              width_mm, depth_mm, height_mm, stroke_mm FROM machines ORDER BY internal_number`
     )
     .all() as {
     internal_number: string;
     sap_number: string | null;
     type: string;
     status: string;
+    location: string | null;
+    oee_override: number | null;
+    machine_usage: number | null;
     width_mm: number | null;
     depth_mm: number | null;
     height_mm: number | null;
@@ -632,12 +640,15 @@ export function buildCapacityDataImportTemplateBuffer(): Buffer {
   XLSX.utils.book_append_sheet(
     wb,
     XLSX.utils.aoa_to_sheet([
-      ['numer_maszyny', 'numer_sap_maszyny', 'typ', 'status', 'szerokosc', 'glebokosc', 'wysokosc', 'skok'],
+      [...CAPACITY_DATA_IMPORT_MACHINE_SHEET_HEADERS],
       ...machines.map((m) => [
         excelExportCell(m.internal_number) ?? '',
         excelExportCell(m.sap_number) ?? '',
         m.type,
         m.status ?? 'active',
+        m.location ?? '',
+        oeePercentDisplay(m.oee_override),
+        m.machine_usage != null && Number.isFinite(Number(m.machine_usage)) ? Number(m.machine_usage) : 1,
         m.width_mm ?? '',
         m.depth_mm ?? '',
         m.height_mm ?? '',
@@ -728,6 +739,41 @@ export function buildCapacityDataImportTemplateBuffer(): Buffer {
       ]),
     ]),
     SHEET_VOLUMES
+  );
+
+  const contractVolumes = db
+    .prepare(
+      `
+    SELECT pr.client, pr.name AS project_name, pd.sap_number AS nr_sap, v.year, v.volume_value, v.volume_unit
+    FROM part_volume_contract_by_year v
+    JOIN parts pt ON pt.id = v.part_id
+    JOIN projects pr ON pr.id = pt.project_id
+    LEFT JOIN part_designations pd ON pd.id = pt.designation_id
+    ORDER BY pr.client, pr.name, v.year
+  `
+    )
+    .all() as {
+    client: string;
+    project_name: string;
+    nr_sap: string | null;
+    year: number;
+    volume_value: number;
+    volume_unit: string;
+  }[];
+  XLSX.utils.book_append_sheet(
+    wb,
+    XLSX.utils.aoa_to_sheet([
+      ['klient', 'nazwa_projektu', 'nr_sap_detalu', 'rok', 'wartosc', 'jednostka'],
+      ...contractVolumes.map((r) => [
+        r.client,
+        r.project_name,
+        excelExportCell(r.nr_sap) ?? '',
+        excelExportCell(r.year) ?? '',
+        excelExportCell(r.volume_value) ?? '',
+        r.volume_unit,
+      ]),
+    ]),
+    'Wolumeny_kontrakt'
   );
 
   const OPERATIONS_HEADERS = [

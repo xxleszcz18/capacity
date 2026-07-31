@@ -275,7 +275,14 @@ export const api = {
         is_docker?: boolean;
         storage_base_dir?: string;
       }>('/admin/backup-settings', { method: 'PUT', body: JSON.stringify(body) }),
-    backupNow: () => request<{ ok: boolean; file_path: string; created_at: string }>('/admin/backup-now', { method: 'POST' }),
+    backupNow: () =>
+      request<{
+        ok: boolean;
+        file_path: string;
+        created_at: string;
+        kind?: string;
+        included?: { database: boolean; call_offs: boolean; attachments: boolean; scenarios_count: number };
+      }>('/admin/backup-now', { method: 'POST' }),
     pickBackupDirectory: () => request<{ chosen: boolean; path: string }>('/admin/pick-backup-directory', { method: 'POST' }),
     pickAttachmentsDirectory: () => request<{ chosen: boolean; path: string }>('/admin/pick-attachments-directory', { method: 'POST' }),
     listAttachments: () =>
@@ -427,7 +434,9 @@ export const api = {
       const a = document.createElement('a');
       a.href = url;
       a.download =
-        onlyTables?.length != null && onlyTables.length > 0 ? 'capacity_baza_szablon_wybrane.xlsx' : 'capacity_baza_szablon.xlsx';
+        onlyTables?.length != null && onlyTables.length > 0
+          ? 'capacity_baza_szablon_wybrane.zip'
+          : 'capacity_baza_szablon.zip';
       a.click();
       URL.revokeObjectURL(url);
     },

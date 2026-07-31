@@ -46,13 +46,35 @@ export default function AdminSettings() {
   const [bundleDownloading, setBundleDownloading] = useState(false);
   const [bundleImporting, setBundleImporting] = useState(false);
   const [bundleImportMode, setBundleImportMode] = useState<'full' | 'partial'>('full');
-  type BundlePartialKey = 'machines' | 'projects' | 'part_designations' | 'parts';
+  type BundlePartialKey =
+    | 'machines'
+    | 'projects'
+    | 'part_designations'
+    | 'parts'
+    | 'operations'
+    | 'scenarios'
+    | 'call_off_comparisons'
+    | 'call_off_volumes';
   const [bundlePartial, setBundlePartial] = useState<Record<BundlePartialKey, boolean>>({
     machines: true,
     projects: true,
     part_designations: true,
     parts: true,
+    operations: false,
+    scenarios: false,
+    call_off_comparisons: false,
+    call_off_volumes: false,
   });
+  const BUNDLE_PARTIAL_KEYS: BundlePartialKey[] = [
+    'machines',
+    'projects',
+    'part_designations',
+    'parts',
+    'operations',
+    'scenarios',
+    'call_off_comparisons',
+    'call_off_volumes',
+  ];
   const [dataFile, setDataFile] = useState<File | null>(null);
   const [dataConfirm, setDataConfirm] = useState('');
   const [dataDownloading, setDataDownloading] = useState(false);
@@ -242,7 +264,11 @@ export default function AdminSettings() {
     api.admin
       .backupNow()
       .then((result) => {
-        setMessage(`Backup utworzony: ${result.file_path}`);
+        const inc = result.included;
+        const extras = inc
+          ? ` (baza + call-offs: ${inc.call_offs ? 'tak' : 'brak'}, załączniki: ${inc.attachments ? 'tak' : 'brak'}, scenariusze JSON: ${inc.scenarios_count ?? 0})`
+          : '';
+        setMessage(`Pełny backup ZIP utworzony: ${result.file_path}${extras}`);
         setLastBackupAt(result.created_at);
         setLastBackupFile(result.file_path);
         loadBackupFiles();
@@ -349,7 +375,7 @@ export default function AdminSettings() {
   const downloadBundleTemplate = () => {
     const onlyTables: BundlePartialKey[] | undefined =
       bundleImportMode === 'partial'
-        ? (['machines', 'projects', 'part_designations', 'parts'] as const).filter((k) => bundlePartial[k])
+        ? BUNDLE_PARTIAL_KEYS.filter((k) => bundlePartial[k])
         : undefined;
     if (bundleImportMode === 'partial' && (onlyTables?.length ?? 0) === 0) {
       setError('Zaznacz co najmniej jedną tabelę, aby pobrać częściowy szablon.');
@@ -363,8 +389,8 @@ export default function AdminSettings() {
       .then(() =>
         setMessage(
           bundleImportMode === 'partial'
-            ? `Pobrano częściowy szablon (${onlyTables!.join(', ')}) — plik capacity_baza_szablon_wybrane.xlsx.`
-            : 'Pobrano pełny szablon Excel (capacity_baza_szablon.xlsx).'
+            ? `Pobrano częściowy szablon (${onlyTables!.join(', ')}) — plik capacity_baza_szablon_wybrane.zip.`
+            : 'Pobrano pełną paczkę capacity_baza_szablon.zip (Excel + scenarios + call-offs).'
         )
       )
       .catch((e: any) => setError(e?.message || 'Nie udało się pobrać szablonu.'))
@@ -559,9 +585,7 @@ export default function AdminSettings() {
       return;
     }
     const onlyTables: BundlePartialKey[] =
-      bundleImportMode === 'partial'
-        ? (['machines', 'projects', 'part_designations', 'parts'] as const).filter((k) => bundlePartial[k])
-        : [];
+      bundleImportMode === 'partial' ? BUNDLE_PARTIAL_KEYS.filter((k) => bundlePartial[k]) : [];
     if (bundleImportMode === 'partial' && onlyTables.length === 0) {
       setError('Zaznacz co najmniej jedną tabelę do importu częściowego.');
       return;
@@ -871,36 +895,44 @@ export default function AdminSettings() {
           >
             <p style={{ margin: '0 0 8px', color: '#555' }}>{t('adminSettingsExtra.partialHint')}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginBottom: 8 }}>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={bundlePartial.machines} onChange={(e) => setBundlePartial((p) => ({ ...p, machines: e.target.checked }))} style={{ marginRight: 6 }} />
-                {t('adminSettingsExtra.partialTableMachines')}
-              </label>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={bundlePartial.projects} onChange={(e) => setBundlePartial((p) => ({ ...p, projects: e.target.checked }))} style={{ marginRight: 6 }} />
-                {t('adminSettingsExtra.partialTableProjects')}
-              </label>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={bundlePartial.part_designations} onChange={(e) => setBundlePartial((p) => ({ ...p, part_designations: e.target.checked }))} style={{ marginRight: 6 }} />
-                {t('adminSettingsExtra.partialTableDesignations')}
-              </label>
-              <label style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={bundlePartial.parts} onChange={(e) => setBundlePartial((p) => ({ ...p, parts: e.target.checked }))} style={{ marginRight: 6 }} />
-                {t('adminSettingsExtra.partialTableParts')}
-              </label>
+              {BUNDLE_PARTIAL_KEYS.map((key) => (
+                <label key={key} style={{ cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={bundlePartial[key]}
+                    onChange={(e) => setBundlePartial((p) => ({ ...p, [key]: e.target.checked }))}
+                    style={{ marginRight: 6 }}
+                  />
+                  {t(
+                    key === 'machines'
+                      ? 'adminSettingsExtra.partialTableMachines'
+                      : key === 'projects'
+                        ? 'adminSettingsExtra.partialTableProjects'
+                        : key === 'part_designations'
+                          ? 'adminSettingsExtra.partialTableDesignations'
+                          : key === 'parts'
+                            ? 'adminSettingsExtra.partialTableParts'
+                            : key === 'operations'
+                              ? 'adminSettingsExtra.partialTableOperations'
+                              : key === 'scenarios'
+                                ? 'adminSettingsExtra.partialTableScenarios'
+                                : key === 'call_off_comparisons'
+                                  ? 'adminSettingsExtra.partialTableCallOffComparisons'
+                                  : 'adminSettingsExtra.partialTableCallOffVolumes'
+                  )}
+                </label>
+              ))}
             </div>
             <button
               type="button"
               onClick={() =>
-                setBundlePartial({
-                  machines: true,
-                  projects: true,
-                  part_designations: true,
-                  parts: true,
-                })
+                setBundlePartial(
+                  Object.fromEntries(BUNDLE_PARTIAL_KEYS.map((k) => [k, true])) as Record<BundlePartialKey, boolean>
+                )
               }
               style={{ padding: '4px 10px', fontSize: 13, border: '1px solid #bdbdbd', borderRadius: 4, background: 'white', cursor: 'pointer' }}
             >
-              {t('adminSettingsExtra.selectAllFour')}
+              {t('adminSettingsExtra.selectAllPartial')}
             </button>
           </div>
         )}

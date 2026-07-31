@@ -2,8 +2,13 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
-import { db, getDatabasePath, restoreDbFromBackupFile, saveDb } from '../db/connection.js';
-import { performDatabaseBackup, resolveBackupDirectory } from '../services/backupService.js';
+import { db, getDatabasePath, saveDb } from '../db/connection.js';
+import {
+  performDatabaseBackup,
+  resolveBackupDirectory,
+  restoreFromBackupArchive,
+  type BackupReason,
+} from '../services/backupService.js';
 import { resolveAttachmentsDirectory, listAllAttachmentsForAdmin } from '../services/projectAttachmentService.js';
 import { getPickLocationJob, startPickLocationJob } from '../services/pickLocationJobService.js';
 import {
@@ -14,7 +19,7 @@ import {
 } from '../utils/storagePath.js';
 import { isOcuEnabled } from '../utils/ocuSettings.js';
 import {
-  buildCapacityBundleTemplateBuffer,
+  buildCapacityBundlePackageBuffer,
   clearApplicationDatabase,
   importCapacityBundleFromBuffer,
 } from '../services/capacityBundleService.js';
@@ -136,7 +141,7 @@ function formatStamp(d: Date): string {
   return `${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
 }
 
-function performBackup(reason: 'manual' | 'scheduled'): { filePath: string; at: string } {
+function performBackup(reason: BackupReason) {
   return performDatabaseBackup(reason);
 }
 
@@ -155,14 +160,16 @@ function schedulerTick(): void {
   const cfg = getBackupConfig();
   if (!shouldRunScheduledBackup(cfg)) return;
   backupInProgress = true;
-  try {
-    const result = performBackup('scheduled');
-    console.log(`[admin-backup] Scheduled backup created: ${result.filePath}`);
-  } catch (e: any) {
-    console.error('[admin-backup] Scheduled backup failed:', e?.message || e);
-  } finally {
-    backupInProgress = false;
-  }
+  void (async () => {
+    try {
+      const result = await performBackup('scheduled');
+      console.log(`[admin-backup] Scheduled backup created: ${result.filePath}`);
+    } catch (e: any) {
+      console.error('[admin-backup] Scheduled backup failed:', e?.message || e);
+    } finally {
+      backupInProgress = false;
+    }
+  })();
 }
 
 export function startAdminBackupScheduler(): void {
@@ -356,7 +363,9 @@ adminRouter.get('/backup-files', (_req, res) => {
       .map((name) => ({ name, fullPath: path.join(dir, name) }))
       .filter((f) => {
         try {
-          return fs.statSync(f.fullPath).isFile() && f.name.toLowerCase().endsWith('.db');
+          if (!fs.statSync(f.fullPath).isFile()) return false;
+          const n = f.name.toLowerCase();
+          return n.endsWith('.zip') || n.endsWith('.db');
         } catch (_) {
           return false;
         }
@@ -404,13 +413,16 @@ adminRouter.post('/restore-from-backup', async (req, res) => {
   }
   if (!fs.existsSync(resolvedFilePath)) return res.status(404).json({ error: `Nie znaleziono pliku backupu: ${resolvedFilePath}` });
   try {
-    const safety = performBackup('manual');
-    await restoreDbFromBackupFile(resolvedFilePath);
+    const safety = await performBackup('manual');
+    const restored = await restoreFromBackupArchive(resolvedFilePath);
     return res.json({
       ok: true,
-      restored_from: resolvedFilePath,
+      restored_from: restored.restored_from,
       safety_backup_file: safety.filePath,
       restored_at: new Date().toISOString(),
+      restored_call_offs_files: restored.restored_call_offs_files,
+      restored_attachment_files: restored.restored_attachment_files,
+      restored_scenarios_from_json: restored.restored_scenarios_from_json,
     });
   } catch (e: any) {
     return res.status(500).json({ error: e?.message || 'Nie udało się przywrócić danych z backupu.' });
@@ -420,40 +432,49 @@ adminRouter.post('/restore-from-backup', async (req, res) => {
 adminRouter.post('/backup-now', (_req, res) => {
   if (backupInProgress) return res.status(409).json({ error: 'Backup jest już w trakcie tworzenia.' });
   backupInProgress = true;
-  try {
-    const result = performBackup('manual');
-    res.status(201).json({ ok: true, file_path: result.filePath, created_at: result.at });
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'Nie udało się utworzyć backupu.' });
-  } finally {
-    backupInProgress = false;
-  }
+  void (async () => {
+    try {
+      const result = await performBackup('manual');
+      res.status(201).json({
+        ok: true,
+        file_path: result.filePath,
+        created_at: result.at,
+        kind: result.kind,
+        included: result.included,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'Nie udało się utworzyć backupu.' });
+    } finally {
+      backupInProgress = false;
+    }
+  })();
 });
 
 /**
- * Szablon .xlsx: jeden arkusz na tabelę + _INSTRUKCJA.
- * Query `onlyTables` — JSON tablica nazw tabel lub lista rozdzielona przecinkami → tylko te arkusze (import częściowy).
+ * Paczka ZIP: Excel (wszystkie / wybrane tabele) + scenarios/*.json + call-offs/.
+ * Query `onlyTables` — JSON tablica nazw tabel lub lista rozdzielona przecinkami.
  */
 adminRouter.get('/capacity-bundle-template.xlsx', (req, res) => {
-  try {
-    let onlyTables: string[] | undefined;
-    const q = req.query.onlyTables;
-    if (typeof q === 'string' && q.trim() !== '') {
-      try {
-        const parsed = JSON.parse(q) as unknown;
-        if (Array.isArray(parsed)) onlyTables = parsed.map((x) => String(x).trim()).filter(Boolean);
-      } catch {
-        onlyTables = q.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  void (async () => {
+    try {
+      let onlyTables: string[] | undefined;
+      const q = req.query.onlyTables;
+      if (typeof q === 'string' && q.trim() !== '') {
+        try {
+          const parsed = JSON.parse(q) as unknown;
+          if (Array.isArray(parsed)) onlyTables = parsed.map((x) => String(x).trim()).filter(Boolean);
+        } catch {
+          onlyTables = q.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+        }
       }
+      const pack = await buildCapacityBundlePackageBuffer(onlyTables?.length ? { onlyTables } : undefined);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${pack.filename}"`);
+      res.send(pack.buffer);
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'Nie udało się wygenerować szablonu Excel.' });
     }
-    const buf = buildCapacityBundleTemplateBuffer(onlyTables?.length ? { onlyTables } : undefined);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    const filename = onlyTables?.length ? 'capacity_baza_szablon_wybrane.xlsx' : 'capacity_baza_szablon.xlsx';
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(buf);
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || 'Nie udało się wygenerować szablonu Excel.' });
-  }
+  })();
 });
 
 /**
@@ -518,59 +539,63 @@ adminRouter.get('/capacity-data-template.xlsx', (_req, res) => {
 /** Import danych wejściowych (zastąpienie stanu z pliku): confirm = IMPORTUJ_DANE; przed importem zawsze backup bazy. */
 /** Wyczyszczenie danych aplikacji: confirm = WYCZYSC_BAZE; opcjonalnie create_backup = true. */
 adminRouter.post('/clear-database', (req, res) => {
-  const body = req.body as { confirm?: string; create_backup?: boolean | number | string };
-  const confirm = String(body.confirm ?? '').trim();
-  if (confirm !== 'WYCZYSC_BAZE') {
-    return res.status(400).json({
-      error: 'Potwierdź czyszczenie: wyślij pole confirm o wartości dokładnie WYCZYSC_BAZE.',
-    });
-  }
-  const createBackup =
-    body.create_backup === true || body.create_backup === 1 || body.create_backup === '1' || body.create_backup === 'true';
-  let backupBefore: { filePath: string; at: string } | undefined;
-  if (createBackup) {
-    try {
-      backupBefore = performDatabaseBackup('manual');
-    } catch (e: any) {
-      return res.status(500).json({
-        error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed wyczyszczeniem. Operacja anulowana.',
+  void (async () => {
+    const body = req.body as { confirm?: string; create_backup?: boolean | number | string };
+    const confirm = String(body.confirm ?? '').trim();
+    if (confirm !== 'WYCZYSC_BAZE') {
+      return res.status(400).json({
+        error: 'Potwierdź czyszczenie: wyślij pole confirm o wartości dokładnie WYCZYSC_BAZE.',
       });
     }
-  }
-  const result = clearApplicationDatabase();
-  if (!result.ok) return res.status(500).json({ error: result.error });
-  res.json({
-    ok: true,
-    cleared_at: new Date().toISOString(),
-    tables_cleared: result.tables_cleared,
-    rows_deleted: result.rows_deleted,
-    backup_file: backupBefore?.filePath,
-    backup_at: backupBefore?.at,
-  });
+    const createBackup =
+      body.create_backup === true || body.create_backup === 1 || body.create_backup === '1' || body.create_backup === 'true';
+    let backupBefore: { filePath: string; at: string } | undefined;
+    if (createBackup) {
+      try {
+        backupBefore = await performDatabaseBackup('manual');
+      } catch (e: any) {
+        return res.status(500).json({
+          error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed wyczyszczeniem. Operacja anulowana.',
+        });
+      }
+    }
+    const result = clearApplicationDatabase();
+    if (!result.ok) return res.status(500).json({ error: result.error });
+    res.json({
+      ok: true,
+      cleared_at: new Date().toISOString(),
+      tables_cleared: result.tables_cleared,
+      rows_deleted: result.rows_deleted,
+      backup_file: backupBefore?.filePath,
+      backup_at: backupBefore?.at,
+    });
+  })();
 });
 
 adminRouter.post('/capacity-data-import', capacityUpload.single('file'), (req, res) => {
-  const confirm = String((req.body as { confirm?: string })?.confirm ?? '').trim();
-  if (confirm !== 'IMPORTUJ_DANE') {
-    return res.status(400).json({
-      error: 'Potwierdź import: wyślij pole confirm o wartości dokładnie IMPORTUJ_DANE.',
-    });
-  }
-  const f = req.file;
-  if (!f?.buffer?.length) return res.status(400).json({ error: 'Brak pliku .xlsx (pole formularza: file).' });
-  let backupBefore: { filePath: string; at: string };
-  try {
-    backupBefore = performDatabaseBackup('before_data_import');
-  } catch (e: any) {
-    return res.status(500).json({
-      error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed importem. Import anulowany.',
-    });
-  }
-  const modeRaw = String((req.body as { mode?: string })?.mode ?? 'merge').trim().toLowerCase();
-  const mode = modeRaw === 'replace' ? 'replace' : 'merge';
-  const result = importCapacityDataFromBuffer(f.buffer, { mode });
-  if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ ...result, backup_file: backupBefore.filePath, backup_at: backupBefore.at });
+  void (async () => {
+    const confirm = String((req.body as { confirm?: string })?.confirm ?? '').trim();
+    if (confirm !== 'IMPORTUJ_DANE') {
+      return res.status(400).json({
+        error: 'Potwierdź import: wyślij pole confirm o wartości dokładnie IMPORTUJ_DANE.',
+      });
+    }
+    const f = req.file;
+    if (!f?.buffer?.length) return res.status(400).json({ error: 'Brak pliku .xlsx (pole formularza: file).' });
+    let backupBefore: { filePath: string; at: string };
+    try {
+      backupBefore = await performDatabaseBackup('before_data_import');
+    } catch (e: any) {
+      return res.status(500).json({
+        error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed importem. Import anulowany.',
+      });
+    }
+    const modeRaw = String((req.body as { mode?: string })?.mode ?? 'merge').trim().toLowerCase();
+    const mode = modeRaw === 'replace' ? 'replace' : 'merge';
+    const result = importCapacityDataFromBuffer(f.buffer, { mode });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ...result, backup_file: backupBefore.filePath, backup_at: backupBefore.at });
+  })();
 });
 
 adminRouter.get('/machines-import-template.xlsx', (_req, res) => {
@@ -585,25 +610,27 @@ adminRouter.get('/machines-import-template.xlsx', (_req, res) => {
 });
 
 adminRouter.post('/machines-import', capacityUpload.single('file'), (req, res) => {
-  const confirm = String((req.body as { confirm?: string })?.confirm ?? '').trim();
-  if (confirm !== MACHINES_IMPORT_CONFIRM) {
-    return res.status(400).json({
-      error: `Potwierdź import: wyślij pole confirm o wartości dokładnie ${MACHINES_IMPORT_CONFIRM}.`,
-    });
-  }
-  const f = req.file;
-  if (!f?.buffer?.length) return res.status(400).json({ error: 'Brak pliku .xlsx (pole formularza: file).' });
-  let backupBefore: { filePath: string; at: string };
-  try {
-    backupBefore = performDatabaseBackup('before_machines_import');
-  } catch (e: any) {
-    return res.status(500).json({
-      error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed importem. Import anulowany.',
-    });
-  }
-  const result = importMachinesFromBuffer(f.buffer);
-  if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ ...result, backup_file: backupBefore.filePath, backup_at: backupBefore.at });
+  void (async () => {
+    const confirm = String((req.body as { confirm?: string })?.confirm ?? '').trim();
+    if (confirm !== MACHINES_IMPORT_CONFIRM) {
+      return res.status(400).json({
+        error: `Potwierdź import: wyślij pole confirm o wartości dokładnie ${MACHINES_IMPORT_CONFIRM}.`,
+      });
+    }
+    const f = req.file;
+    if (!f?.buffer?.length) return res.status(400).json({ error: 'Brak pliku .xlsx (pole formularza: file).' });
+    let backupBefore: { filePath: string; at: string };
+    try {
+      backupBefore = await performDatabaseBackup('before_machines_import');
+    } catch (e: any) {
+      return res.status(500).json({
+        error: e?.message || 'Nie udało się utworzyć kopii zapasowej przed importem. Import anulowany.',
+      });
+    }
+    const result = importMachinesFromBuffer(f.buffer);
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ ...result, backup_file: backupBefore.filePath, backup_at: backupBefore.at });
+  })();
 });
 
 const ocuUpload = multer({

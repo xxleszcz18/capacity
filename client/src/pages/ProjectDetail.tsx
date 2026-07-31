@@ -1056,11 +1056,12 @@ function effectiveDerivedValues(
   const isPartial = months > 0 && months < 12;
   if (volumeOrigin === 'manual_year' && isPartial && unit === 'annual') {
     const monthly = value / months;
-    const annual = monthly * 12;
+    const weekly = (monthly * 12) / WORK_WEEKS_PER_YEAR;
     return {
-      annual,
+      // Suma wpisana na rok/okres (jak tooltip kalkulatora) — nie ekwiwalent ×12/miesiące.
+      annual: value,
       monthly,
-      weekly: annual / WORK_WEEKS_PER_YEAR,
+      weekly,
       label: t('projectDetailExtra.sopEopMonthsOfYear', { months }),
     };
   }
