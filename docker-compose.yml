@@ -14,7 +14,8 @@
 #   CAPACITY_DEPLOY_SECRET=...
 #   BOOTSTRAP_ADMIN_LOGIN=admin
 #   BOOTSTRAP_ADMIN_PASSWORD=...   # zmień przy pierwszym wdrożeniu
-#   APP_BASE_URL=https://capacity.example.com
+#   APP_BASE_URL=http://SERWER:3001  # http = logowanie OK; https = Secure cookie
+#   COOKIE_SECURE=0                  # opcjonalnie wymuś Secure off przy HTTP
 #   SMTP_PASS=...                  # hasło SMTP (host/user/from w UI lub env)
 #
 # Persystencja pod /data (STORAGE_BASE_DIR):
@@ -52,8 +53,11 @@ services:
       BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin12345}
 
-      # Linki w mailach resetu hasła (musi wskazywać publiczny URL aplikacji)
+      # Linki w mailach resetu hasła (musi wskazywać publiczny URL aplikacji).
+      # http://… → cookie sesji bez Secure (logowanie po HTTP działa);
+      # https://… → cookie Secure. Nadpisz COOKIE_SECURE=0/1 w razie potrzeby.
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3001}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
       PASSWORD_RESET_TTL_HOURS: ${PASSWORD_RESET_TTL_HOURS:-24}
 
       # SMTP — hasło z env; host/port/user/from można też skonfigurować w admin_settings

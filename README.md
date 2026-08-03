@@ -73,6 +73,8 @@ docker compose up --build -d
 - Dane: wolumen `/data` (`capacity.db`, `backups/`, `attachments/`, `call-offs/`)
 - Po starcie w **Ustawieniach administracyjnych** ustaw lokalizacje `backups` i `attachments` (ścieżki względne / „Przeglądaj na serwerze”)
 - Zmień hasło bootstrap (`BOOTSTRAP_ADMIN_PASSWORD`) oraz `CAPACITY_DEPLOY_SECRET` w `.env`
+- Logowanie po **HTTP**: ustaw `APP_BASE_URL=http://…` (lub `COOKIE_SECURE=0`) — inaczej cookie `Secure` z `NODE_ENV=production` blokuje sesję w przeglądarce
+- Konto bootstrap (`admin` / hasło z env) powstaje **tylko przy pustej bazie**; istniejący wolumen `/data` zachowuje wcześniejszych użytkowników
 
 Szczegóły: `Dockerfile`, `docker-compose.yml`.
 

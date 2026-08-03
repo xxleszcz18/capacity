@@ -73,9 +73,32 @@ export function findSessionUserId(token: string): number | null {
   return info.userId;
 }
 
+/**
+ * Flaga Secure na cookie sesji.
+ * - COOKIE_SECURE=0|1 wymusza zachowanie
+ * - inaczej: https:// w APP_BASE_URL → Secure; http:// → bez Secure
+ * - bez APP_BASE_URL: Secure tylko w production (legacy)
+ *
+ * Ważne: przy NODE_ENV=production i wejściu po zwykłym HTTP Secure blokuje cookie
+ * w przeglądarce — wygląda to jak „nie mogę się zalogować”.
+ */
+export function cookieSecureFlag(): boolean {
+  const explicit = String(process.env.COOKIE_SECURE ?? '')
+    .trim()
+    .toLowerCase();
+  if (explicit === '1' || explicit === 'true' || explicit === 'yes') return true;
+  if (explicit === '0' || explicit === 'false' || explicit === 'no') return false;
+  const base = String(process.env.APP_BASE_URL ?? '')
+    .trim()
+    .toLowerCase();
+  if (base.startsWith('https://')) return true;
+  if (base.startsWith('http://')) return false;
+  return process.env.NODE_ENV === 'production';
+}
+
 export function setSessionCookie(res: Response, token: string): void {
   const maxAge = SESSION_TTL_DAYS * 24 * 60 * 60;
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = cookieSecureFlag();
   const parts = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
     'Path=/',
@@ -88,7 +111,7 @@ export function setSessionCookie(res: Response, token: string): void {
 }
 
 export function clearSessionCookie(res: Response): void {
-  const secure = process.env.NODE_ENV === 'production';
+  const secure = cookieSecureFlag();
   const parts = [`${SESSION_COOKIE_NAME}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
   if (secure) parts.push('Secure');
   res.setHeader('Set-Cookie', parts.join('; '));
