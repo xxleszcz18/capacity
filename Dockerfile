@@ -74,6 +74,11 @@ ENV NODE_ENV=production \
     APP_BASE_URL=http://localhost:3001 \
     PASSWORD_RESET_TTL_HOURS=24
 
+# CLI sqlite3 — podgląd / naprawa plików .db w /data (aplikacja używa sql.js)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /data/backups /data/attachments /data/call-offs
 
 COPY server/package.json server/package-lock.json ./
