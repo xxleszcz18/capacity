@@ -132,7 +132,7 @@ export const en: TranslationTree = {
     ocuDataDesc:
       'Fill the Input sheet in Katowice_Data (columns X, AB, AC, AD, AE) from the transition table and Capacity DB.',
     ocuDataIntro:
-      'Upload transition table, Katowice_Data and SAP routing (.txt). Filters are removed. Filled: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (no.), DB–DC / DN–DO (dims), CY/DK (Base Qty). No match = 0. Download ZIP with Katowice_Data_OCU.xlsx (no macros, Input only).',
+      'Upload transition table, Katowice_Data and SAP routing (.txt). Filters are removed. Filled: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (no.), DB–DC / DN–DO (dims), CY/DK (Base Qty). No S2102 in routing clears the whole CR–DC / DD–DO block to 0 (incl. HL / Machinegroup). No match = 0. Download ZIP with Katowice_Data_OCU.xlsx (no macros, Input only).',
     ocuDataTransitionTitle: '1. Transition table',
     ocuDataTransitionHelp: '.xlsx — column B = Sonar Part Code, C = ERP, D = Year. ZIP includes a copy without filters.',
     ocuDataKatowiceTitle: '2. Katowice_Data',
@@ -140,7 +140,7 @@ export const en: TranslationTree = {
       '.xlsx / .xlsm — Input sheet. S = Sonar Part Code, E = year. Filled: X, AB, AC, AD, AE (AE = nest count). OCU output: .xlsx without macros, Input only.',
     ocuDataRoutingTitle: '3. SAP routing',
     ocuDataRoutingHelp:
-      '.txt (Task List Print List). S1619 → AK. S2102: material no. → CW/DI, L×W dims → DB+DC / DN+DO, Base Qty from material operation → CY/DK.',
+      '.txt (Task List Print List). S1619 → AK. S2102: material no. → CW/DI, L×W dims → DB+DC / DN+DO, Base Qty → CY/DK. Without S2102: CR–DC / DD–DO = 0 (incl. HL).',
     ocuDataGenerate: 'Generate and download ZIP',
     ocuDataNoGeneratePermission: 'No permission to generate (required: OCU data → Edit).',
     ocuDataGenerating: 'Generating…',

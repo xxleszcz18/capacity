@@ -133,7 +133,7 @@ export const pl: TranslationTree = {
     ocuDataDesc:
       'Uzupełnianie arkusza Input w Katowice_Data (kolumny X, AB, AC, AD, AE) na podstawie Tabeli przejścia i bazy Capacity.',
     ocuDataIntro:
-      'Wgraj Tabelę przejścia, Katowice_Data oraz routing SAP (.txt). Filtry są usuwane. Uzupełniane: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (nr), DB–DC / DN–DO (wymiary), CY/DK (Base Qty). Brak dopasowania = 0. Pobierzesz ZIP z Katowice_Data_OCU.xlsx (bez makr, tylko Input).',
+      'Wgraj Tabelę przejścia, Katowice_Data oraz routing SAP (.txt). Filtry są usuwane. Uzupełniane: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (nr), DB–DC / DN–DO (wymiary), CY/DK (Base Qty). Brak S2102 w routingu czyści cały blok CR–DC / DD–DO wartościami 0 (także opis HL / Machinegroup). Brak dopasowania = 0. Pobierzesz ZIP z Katowice_Data_OCU.xlsx (bez makr, tylko Input).',
     ocuDataTransitionTitle: '1. Tabela przejścia',
     ocuDataTransitionHelp: 'Plik .xlsx — kolumna B = Sonar Part Code, C = ERP, D = Year. W ZIP wraca kopia bez filtrów.',
     ocuDataKatowiceTitle: '2. Katowice_Data',
@@ -141,7 +141,7 @@ export const pl: TranslationTree = {
       'Plik .xlsx / .xlsm — arkusz Input. S = Sonar Part Code, E = rok. Wypełniane: X, AB, AC, AD, AE (AE = liczba gniazd). Wynik OCU: .xlsx bez makr, tylko Input.',
     ocuDataRoutingTitle: '3. Routing SAP',
     ocuDataRoutingHelp:
-      'Plik .txt (Task List Print List). S1619 → AK. S2102: nr materiału → CW/DI, wymiary L×W → DB+DC / DN+DO, Base Qty z operacji materiału → CY/DK.',
+      'Plik .txt (Task List Print List). S1619 → AK. S2102: nr materiału → CW/DI, wymiary L×W → DB+DC / DN+DO, Base Qty → CY/DK. Bez S2102: CR–DC / DD–DO = 0 (w tym HL).',
     ocuDataGenerate: 'Generuj i pobierz ZIP',
     ocuDataNoGeneratePermission: 'Brak uprawnienia do generowania (wymagane: Dane do OCU → Edycja).',
     ocuDataGenerating: 'Generowanie…',

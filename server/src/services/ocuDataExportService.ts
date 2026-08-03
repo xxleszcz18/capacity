@@ -406,24 +406,58 @@ function pickLineForYear(profile: DbDetailProfile | undefined, year: number | nu
   return best;
 }
 
-/** Kolumny bloku S2102 w Input (ERP No + wymiary + Base Qty). */
+/**
+ * Blok Opt1bxx / Opt2bxx (S2102) — pełny zakres CR–DC / DD–DO.
+ * Przy braku S2102 w routingu czyścimy CAŁY blok (w tym Machinegroup „B03_Heavy Layer” / HL),
+ * nie tylko ERP No — inaczej zostają stare opisy z szablonu.
+ */
 const S2102_BLOCK_COLS = {
   large: {
+    machineGroup: 'CR',
+    costCenter: 'CS',
+    capacity: 'CT',
+    oeeActual: 'CU',
+    oeeTarget: 'CV',
     erpNo: 'CW',
+    cavities: 'CX',
     unitPerHour: 'CY', // Base Qty
+    lanes: 'CZ',
+    moulded: 'DA',
     length: 'DB',
     width: 'DC',
   },
   small: {
+    machineGroup: 'DD',
+    costCenter: 'DE',
+    capacity: 'DF',
+    oeeActual: 'DG',
+    oeeTarget: 'DH',
     erpNo: 'DI',
+    cavities: 'DJ',
     unitPerHour: 'DK', // Base Qty
+    lanes: 'DL',
+    moulded: 'DM',
     length: 'DN',
     width: 'DO',
   },
 } as const;
 
-/** S1619 — tylko numer materiału w AK. */
+type S2102BlockCols = (typeof S2102_BLOCK_COLS)[keyof typeof S2102_BLOCK_COLS];
+
+/** S1619 — numer materiału w AK; Machinegroup AF czyścimy przy braku dopasowania. */
 const S1619_ERP_COL = 'AK';
+const S1619_MACHINEGROUP_COL = 'AF';
+
+/** Wartości „pustego” wiersza technologii — zawsze 0 (nie „-”). */
+function clearTechPlaceholder(cellUpdates: Map<string, string | number>, excelRow: number, col: string): void {
+  cellUpdates.set(`${col}${excelRow}`, 0);
+}
+
+function clearS2102Block(cellUpdates: Map<string, string | number>, excelRow: number, block: S2102BlockCols): void {
+  for (const col of Object.values(block)) {
+    clearTechPlaceholder(cellUpdates, excelRow, col);
+  }
+}
 
 function writeRoutingErpNo(
   cellUpdates: Map<string, string | number>,
@@ -437,26 +471,24 @@ function writeRoutingErpNo(
     return 1;
   }
   cellUpdates.set(`${colLetter}${excelRow}`, 0);
+  clearTechPlaceholder(cellUpdates, excelRow, S1619_MACHINEGROUP_COL);
   return 0;
 }
 
 /**
- * CW/DI + wymiary formatki (DB/DC lub DN/DO) + Base Qty (CY lub DK).
- * Base Qty z bloku Material danego S2102 w routing.txt.
+ * S2102: CW/DI + wymiary + Base Qty; przy braku materiału czyści cały blok CR–DC / DD–DO
+ * (usuwa m.in. opis HL / B03_Heavy Layer z Machinegroup).
  */
 function writeS2102Block(
   cellUpdates: Map<string, string | number>,
   excelRow: number,
-  block: { erpNo: string; unitPerHour: string; length: string; width: string },
+  block: S2102BlockCols,
   materials: SapRoutingComponent[],
   routingIndex: SapRoutingIndex
 ): number {
   const mat = materials[0];
   if (!mat?.materialNumber) {
-    cellUpdates.set(`${block.erpNo}${excelRow}`, 0);
-    cellUpdates.set(`${block.unitPerHour}${excelRow}`, 0);
-    cellUpdates.set(`${block.length}${excelRow}`, 0);
-    cellUpdates.set(`${block.width}${excelRow}`, 0);
+    clearS2102Block(cellUpdates, excelRow, block);
     return 0;
   }
   cellUpdates.set(`${block.erpNo}${excelRow}`, materialCellValue(mat.materialNumber));
@@ -502,7 +534,12 @@ function colIndexFromLetters(letters: string): number {
   return n;
 }
 
-/** Wstawia / podmienia komórki w XML arkusza (jedno przejście po wierszach). Zachowuje atrybut stylu s=. */
+/**
+ * Wstawia / podmienia komórki w XML arkusza.
+ * Zachowuje atrybut stylu s= przy podmianie.
+ * Nowe komórki wstawiane są w rosnącej kolejności kolumn (wymóg OOXML) —
+ * dopisywanie na końcu wiersza (po CR/CW) powoduje, że Excel ignoruje X/AB/AD/AE.
+ */
 function applyCellUpdatesToSheetXml(xml: string, updates: Map<string, string | number>): string {
   if (!updates.size) return xml;
 
@@ -520,6 +557,8 @@ function applyCellUpdatesToSheetXml(xml: string, updates: Map<string, string | n
     rowMap.set(letter, value);
   }
 
+  const cellRe = /<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/gi;
+
   return xml.replace(/<row\b[^>]*>[\s\S]*?<\/row>/gi, (rowXml) => {
     const rm = /\br="(\d+)"/i.exec(rowXml);
     if (!rm) return rowXml;
@@ -527,28 +566,85 @@ function applyCellUpdatesToSheetXml(xml: string, updates: Map<string, string | n
     const rowUpdates = byRow.get(rowNum);
     if (!rowUpdates) return rowXml;
 
-    let next = rowXml;
-    const pending = new Map(rowUpdates);
+    const openMatch = rowXml.match(/^<row\b[^>]*>/i);
+    if (!openMatch) return rowXml;
+    let openTag = openMatch[0];
+    const closeTag = '</row>';
+    const inner = rowXml.slice(openTag.length, rowXml.length - closeTag.length);
 
-    next = next.replace(/<c\b[^>]*(?:\/>|>[\s\S]*?<\/c>)/gi, (cell) => {
+    type CellPiece = { letter: string; colIdx: number; xml: string };
+    const pieces: CellPiece[] = [];
+    let last = 0;
+    let prefix = '';
+    let suffix = '';
+    let firstCellAt = -1;
+    let m: RegExpExecArray | null;
+    cellRe.lastIndex = 0;
+    while ((m = cellRe.exec(inner)) !== null) {
+      if (firstCellAt < 0) {
+        firstCellAt = m.index;
+        prefix = inner.slice(0, m.index);
+      }
+      const cell = m[0];
       const am = /\br="([A-Z]+)(\d+)"/i.exec(cell);
-      if (!am || Number(am[2]) !== rowNum) return cell;
-      const letter = am[1].toUpperCase();
-      if (!pending.has(letter)) return cell;
-      const value = pending.get(letter)!;
-      pending.delete(letter);
-      const styleId = /\bs="([^"]+)"/i.exec(cell)?.[1];
-      return cellXmlValue(`${letter}${rowNum}`, value, styleId);
-    });
+      if (!am || Number(am[2]) !== rowNum) {
+        pieces.push({ letter: '', colIdx: -1, xml: cell });
+      } else {
+        const letter = am[1].toUpperCase();
+        pieces.push({ letter, colIdx: colIndexFromLetters(letter), xml: cell });
+      }
+      last = m.index + cell.length;
+    }
+    if (firstCellAt < 0) {
+      prefix = inner;
+      suffix = '';
+    } else {
+      suffix = inner.slice(last);
+    }
 
-    if (pending.size === 0) return next;
+    const pending = new Map(rowUpdates);
+    const byLetter = new Map<string, CellPiece>();
+    const extras: CellPiece[] = [];
+    for (const p of pieces) {
+      if (!p.letter) {
+        extras.push(p);
+        continue;
+      }
+      if (pending.has(p.letter)) {
+        const value = pending.get(p.letter)!;
+        pending.delete(p.letter);
+        const styleId = /\bs="([^"]+)"/i.exec(p.xml)?.[1];
+        byLetter.set(p.letter, {
+          letter: p.letter,
+          colIdx: p.colIdx,
+          xml: cellXmlValue(`${p.letter}${rowNum}`, value, styleId),
+        });
+      } else {
+        byLetter.set(p.letter, p);
+      }
+    }
+    for (const [letter, value] of pending) {
+      byLetter.set(letter, {
+        letter,
+        colIdx: colIndexFromLetters(letter),
+        xml: cellXmlValue(`${letter}${rowNum}`, value),
+      });
+    }
 
-    const toInsert = [...pending.entries()]
-      .sort((a, b) => colIndexFromLetters(a[0]) - colIndexFromLetters(b[0]))
-      .map(([letter, value]) => cellXmlValue(`${letter}${rowNum}`, value))
-      .join('');
+    const sorted = [...byLetter.values()].sort((a, b) => a.colIdx - b.colIdx);
+    const allCells = [...extras, ...sorted].map((p) => p.xml).join('');
 
-    return next.replace(/<\/row>/i, `${toInsert}</row>`);
+    if (sorted.length) {
+      const minC = sorted[0]!.colIdx;
+      const maxC = sorted[sorted.length - 1]!.colIdx;
+      if (/\bspans="/i.test(openTag)) {
+        openTag = openTag.replace(/\bspans="[^"]*"/i, `spans="${minC}:${maxC}"`);
+      } else {
+        openTag = openTag.replace(/^<row\b/i, `<row spans="${minC}:${maxC}"`);
+      }
+    }
+
+    return `${openTag}${prefix}${allCells}${suffix}${closeTag}`;
   });
 }
 
@@ -924,8 +1020,9 @@ async function clearWorkbookFiltersAndUnhide(buffer: Buffer): Promise<Buffer> {
  * Uzupełnia arkusz Input (Katowice_Data):
  * - X, AB, AC, AD, AE z bazy Capacity + tabela przejścia
  * - AK (S1619); CW + DB/DC + CY oraz DI + DN/DO + DK (S2102) z routingu SAP
+ * - brak S2102 → czyszczenie całego bloku CR–DC / DD–DO wartościami 0 (m.in. Machinegroup HL)
  * Filtry wyłączane + wiersze odkrywane; wynik OCU: .xlsx bez makr, tylko Input.
- * Brak dopasowania → 0 (nadpisuje wcześniejsze wartości).
+ * Brak dopasowania → 0 (nadpisuje wcześniejsze wartości z szablonu).
  */
 export async function generateOcuKatowiceWorkbook(
   transitionBuffer: Buffer,

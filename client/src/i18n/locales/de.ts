@@ -132,7 +132,7 @@ export const de: TranslationTree = {
     ocuDataDesc:
       'Ausfüllen des Input-Blatts in Katowice_Data (Spalten X, AB, AC, AD, AE) anhand Überleitung und Capacity-DB.',
     ocuDataIntro:
-      'Laden Sie Überleitung, Katowice_Data und SAP-Routing (.txt) hoch. Filter werden entfernt. Gefüllt: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (Nr.), DB–DC / DN–DO (Maße), CY/DK (Base Qty). Kein Treffer = 0. ZIP mit Katowice_Data_OCU.xlsx (ohne Makros, nur Input).',
+      'Laden Sie Überleitung, Katowice_Data und SAP-Routing (.txt) hoch. Filter werden entfernt. Gefüllt: X/AB/AC/AD/AE (Capacity); S1619 → AK; S2102 → CW/DI (Nr.), DB–DC / DN–DO (Maße), CY/DK (Base Qty). Ohne S2102 im Routing wird der ganze Block CR–DC / DD–DO auf 0 gesetzt (inkl. HL / Machinegroup). Kein Treffer = 0. ZIP mit Katowice_Data_OCU.xlsx (ohne Makros, nur Input).',
     ocuDataTransitionTitle: '1. Überleitungstabelle',
     ocuDataTransitionHelp: '.xlsx — Spalte B = Sonar Part Code, C = ERP, D = Year. ZIP enthält Kopie ohne Filter.',
     ocuDataKatowiceTitle: '2. Katowice_Data',
@@ -140,7 +140,7 @@ export const de: TranslationTree = {
       '.xlsx / .xlsm — Blatt Input. S = Sonar Part Code, E = Jahr. Gefüllt: X, AB, AC, AD, AE (AE = Nesterzahl). OCU-Ausgabe: .xlsx ohne Makros, nur Input.',
     ocuDataRoutingTitle: '3. SAP-Routing',
     ocuDataRoutingHelp:
-      '.txt (Task List Print List). S1619 → AK. S2102: Materialnr. → CW/DI, Maße L×W → DB+DC / DN+DO, Base Qty aus Materialoperation → CY/DK.',
+      '.txt (Task List Print List). S1619 → AK. S2102: Materialnr. → CW/DI, Maße L×W → DB+DC / DN+DO, Base Qty → CY/DK. Ohne S2102: CR–DC / DD–DO = 0 (inkl. HL).',
     ocuDataGenerate: 'Generieren und ZIP herunterladen',
     ocuDataNoGeneratePermission: 'Keine Berechtigung zum Generieren (erforderlich: Daten für OCU → Bearbeiten).',
     ocuDataGenerating: 'Generierung…',
