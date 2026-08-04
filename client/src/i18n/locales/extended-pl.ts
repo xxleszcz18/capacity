@@ -580,7 +580,7 @@ export const extendedPl: TranslationTree = {
     machinesImportErrors: 'błędy',
     bundleTitle: 'Szablon Excel — eksport / import całej bazy danych',
     bundleIntro:
-      'Pobierz paczkę ZIP z aktualnymi danymi: plik Excel (jeden arkusz na tabelę, w tym scenarios), pliki scenarios/*.json oraz katalog call-offs/ (pliki SalesFcst). Po edycji Excela możesz wgrać .xlsx z powrotem; pełne odtworzenie plików Call offs i snapshotów — przez backup ZIP. Przed importem wykonaj backup.',
+      'Pobierz paczkę ZIP z aktualnymi danymi: plik Excel (jeden arkusz na tabelę, w tym scenarios), pliki scenarios/*.json oraz katalog call-offs/ (pliki SalesFcst). Konta użytkowników, role i hasła nie są w szablonie — import ich nie nadpisuje. Po edycji Excela możesz wgrać .xlsx z powrotem; pełne odtworzenie plików Call offs i snapshotów — przez backup ZIP. Przed importem wykonaj backup.',
     importScope: 'Zakres importu:',
     importFull: 'Pełny (wszystkie tabele z szablonu — jak dotąd)',
     importPartial: 'Częściowy — tylko wybrane tabele',

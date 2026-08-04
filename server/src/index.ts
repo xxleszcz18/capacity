@@ -4,7 +4,7 @@ import compression from 'compression';
 import fs from 'fs';
 import path from 'path';
 import { initDb, saveDb } from './db/connection.js';
-import { bootstrapAuthIfEmpty } from './auth/userService.js';
+import { bootstrapAuthIfEmpty, forceResetBootstrapAdminPassword } from './auth/userService.js';
 import { optionalAuth, requireAuth, requirePermissionForResource, requireAdminAccess, enforceProjectMutationScope } from './middleware/auth.js';
 import { authRouter } from './routes/auth.js';
 import { usersAdminRouter, rolesAdminRouter } from './routes/usersAdmin.js';
@@ -103,6 +103,7 @@ const PORT = process.env.PORT || 3001;
 async function main() {
   await initDb();
   await bootstrapAuthIfEmpty();
+  await forceResetBootstrapAdminPassword();
   saveDb();
   setInterval(saveDb, 3000);
   startAdminBackupScheduler();

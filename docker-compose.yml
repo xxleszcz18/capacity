@@ -52,6 +52,8 @@ services:
       AUTH_ENFORCE: ${AUTH_ENFORCE:-1}
       BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin12345}
+      # Jednorazowy reset hasła admina (po zepsutym imporcie Excela) — potem wyłącz!
+      BOOTSTRAP_FORCE_ADMIN_PASSWORD: ${BOOTSTRAP_FORCE_ADMIN_PASSWORD:-0}
 
       # Linki w mailach resetu hasła (musi wskazywać publiczny URL aplikacji).
       # http://… → cookie sesji bez Secure (logowanie po HTTP działa);

@@ -9,10 +9,40 @@ import { getCallOffsStorageRoot } from './callOffFileService.js';
 const README_SHEET = '_INSTRUKCJA';
 
 /** Tabele systemowe / pomijane w eksporcie arkusza. */
-const SKIP_EXPORT = new Set(['sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4', '_migrations']);
+const SKIP_EXPORT = new Set([
+  'sqlite_sequence',
+  'sqlite_stat1',
+  'sqlite_stat4',
+  '_migrations',
+  // Auth / RBAC — nie do Excela (bcrypt w .xlsx się psuje; konta zostają na serwerze)
+  'users',
+  'user_roles',
+  'roles',
+  'role_permissions',
+  'sessions',
+  'password_reset_tokens',
+  'password_reset_requests',
+]);
 
-/** Przy imporcie nie usuwamy ani nie nadpisujemy ustawień admina (backup, ścieżki). */
-const SKIP_IMPORT = new Set(['admin_settings', 'sqlite_sequence', 'sqlite_stat1', 'sqlite_stat4', '_migrations', README_SHEET]);
+/**
+ * Przy imporcie / czyszczeniu nie ruszamy ustawień admina ani kont.
+ * Import users z Excela niszczy password_hash → brak logowania admina (gość działa).
+ */
+const SKIP_IMPORT = new Set([
+  'admin_settings',
+  'sqlite_sequence',
+  'sqlite_stat1',
+  'sqlite_stat4',
+  '_migrations',
+  README_SHEET,
+  'users',
+  'user_roles',
+  'roles',
+  'role_permissions',
+  'sessions',
+  'password_reset_tokens',
+  'password_reset_requests',
+]);
 
 /**
  * Kolejność wstawiania (rodzice przed dziećmi). Scenariusze na końcu.
@@ -98,6 +128,7 @@ function buildReadmeAoa(): (string | number | null)[][] {
     [],
     ['Uwagi'],
     ['• Operacja IMPORTU (pełna) usuwa dane z większości tabel (wg listy poniżej) i wstawia zawartość z pliku. Import częściowy (wybrane tabele w UI) czyści i wypełnia tylko zaznaczone arkusze — reszta bazy bez zmian; zachowaj spójność kluczy (np. operacje → maszyny i detale).'],
+    ['• Konta użytkowników, role, sesje i reset hasła NIE są w szablonie — import ich nie nadpisuje (hasła zostają na serwerze).'],
     ['• Tabela scenarios jest eksportowana. Duże snapshoty trafiają do plików scenarios/scenario_{id}.json w paczce ZIP (w Excelu komórka może zawierać znacznik __FILE__:…). Preferuj pobieranie / wgrywanie paczki ZIP.'],
     ['• Paczka ZIP zawiera także katalog call-offs/ (pliki źródłowe SalesFcst).'],
     ['• Kolumny SOP i EOP (tekst w bazie): przy imporcie zapisujemy daty jako DD.MM.RRRR z wiodącymi zerami (także gdy Excel trzyma komórkę jako liczbę-serial).'],

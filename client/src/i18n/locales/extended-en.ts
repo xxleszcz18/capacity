@@ -577,7 +577,7 @@ export const extendedEn: TranslationTree = {
     machinesImportErrors: 'errors',
     bundleTitle: 'Excel template — export / import entire database',
     bundleIntro:
-      'Download a ZIP with current data: Excel (one sheet per table, including scenarios), scenarios/*.json and call-offs/ (SalesFcst files). After editing Excel you can upload .xlsx back; full recovery of Call offs files and snapshots — via ZIP backup. Backup before import.',
+      'Download a ZIP with current data: Excel (one sheet per table, including scenarios), scenarios/*.json and call-offs/ (SalesFcst files). User accounts, roles and passwords are not in the template — import does not overwrite them. After editing Excel you can upload .xlsx back; full recovery of Call offs files and snapshots — via ZIP backup. Backup before import.',
     importScope: 'Import scope:',
     importFull: 'Full (all template tables — as before)',
     importPartial: 'Partial — selected tables only',

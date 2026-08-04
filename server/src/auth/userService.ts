@@ -250,6 +250,62 @@ export async function bootstrapAuthIfEmpty(): Promise<void> {
   console.log(`[auth] Utworzono konto bootstrap (${login}). Zmień hasło po pierwszym logowaniu.`);
 }
 
+/**
+ * Awaryjne odtworzenie hasła admina (np. po imporcie Excela, które zniszczyło bcrypt).
+ * Włącz jednorazowo: BOOTSTRAP_FORCE_ADMIN_PASSWORD=1, zrestartuj, zaloguj, wyłącz flagę.
+ */
+export async function forceResetBootstrapAdminPassword(): Promise<void> {
+  const flag = String(process.env.BOOTSTRAP_FORCE_ADMIN_PASSWORD ?? '')
+    .trim()
+    .toLowerCase();
+  if (flag !== '1' && flag !== 'true' && flag !== 'yes') return;
+
+  ensureGuestRole();
+  syncAdministratorPermissions();
+
+  let adminRoleId = db.prepare(`SELECT id FROM roles WHERE name = 'Administrator'`).get() as { id: number } | undefined;
+  if (!adminRoleId) {
+    const r = db
+      .prepare(`INSERT INTO roles (name, description, is_system, login_required) VALUES ('Administrator', 'Pełny dostęp', 1, 1)`)
+      .run();
+    adminRoleId = { id: Number(r.lastInsertRowid) };
+    grantAllPermissionsToRole(adminRoleId.id);
+  } else {
+    grantAllPermissionsToRole(adminRoleId.id);
+  }
+
+  const login = String(process.env.BOOTSTRAP_ADMIN_LOGIN ?? 'admin').trim();
+  const password = String(process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'Admin12345');
+  const passwordHash = await hashPassword(password);
+  const isEmail = login.includes('@');
+  const username = isEmail ? null : login;
+  const email = isEmail ? login.toLowerCase() : null;
+
+  const existing = findUserByLogin(login);
+  if (existing) {
+    db.prepare(
+      `UPDATE users SET password_hash = ?, is_active = 1, must_change_password = 1, role_id = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(passwordHash, adminRoleId.id, existing.id);
+    setUserRoles(existing.id, [adminRoleId.id]);
+    db.prepare(`UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL`).run(existing.id);
+    console.log(
+      `[auth] BOOTSTRAP_FORCE_ADMIN_PASSWORD: zresetowano hasło konta „${login}”. Wyłącz flagę po zalogowaniu.`
+    );
+    return;
+  }
+
+  const r = db
+    .prepare(
+      `INSERT INTO users (username, email, password_hash, display_name, role_id, is_active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, 1, 1)`
+    )
+    .run(username, email, passwordHash, 'Administrator', adminRoleId.id);
+  setUserRoles(Number(r.lastInsertRowid), [adminRoleId.id]);
+  console.log(
+    `[auth] BOOTSTRAP_FORCE_ADMIN_PASSWORD: utworzono konto „${login}”. Wyłącz flagę po zalogowaniu.`
+  );
+}
+
 export function guestUserDto(): AuthUserRow {
   return {
     id: 0,
