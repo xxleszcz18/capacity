@@ -577,7 +577,7 @@ export const extendedDe: TranslationTree = {
     machinesImportErrors: 'Fehler',
     bundleTitle: 'Excel-Vorlage — Export / Import gesamte DB',
     bundleIntro:
-      'ZIP mit aktuellen Daten: Excel (ein Blatt pro Tabelle inkl. scenarios), scenarios/*.json und call-offs/ (SalesFcst). Benutzerkonten, Rollen und Passwörter sind nicht in der Vorlage — Import überschreibt sie nicht. Nach Excel-Bearbeitung .xlsx zurückladen; vollständige Wiederherstellung der Call-offs-Dateien und Snapshots — über ZIP-Backup. Backup vor Import.',
+      'ZIP mit Capacity-Daten (Excel + scenarios + call-offs). Konten, Rollen und Passwörter werden nie exportiert/importiert — auch wenn eine ältere Excel-Datei noch users/roles-Blätter hat (werden ignoriert). Vollständige Call-offs/Snapshot-Wiederherstellung — über ZIP-Backup. Backup vor Import.',
     importScope: 'Import-Umfang:',
     importFull: 'Voll (alle Vorlagentabellen — wie bisher)',
     importPartial: 'Teilweise — nur gewählte Tabellen',

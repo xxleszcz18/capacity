@@ -8,13 +8,11 @@ import { getCallOffsStorageRoot } from './callOffFileService.js';
 
 const README_SHEET = '_INSTRUKCJA';
 
-/** Tabele systemowe / pomijane w eksporcie arkusza. */
-const SKIP_EXPORT = new Set([
-  'sqlite_sequence',
-  'sqlite_stat1',
-  'sqlite_stat4',
-  '_migrations',
-  // Auth / RBAC — nie do Excela (bcrypt w .xlsx się psuje; konta zostają na serwerze)
+/**
+ * Konta / RBAC / sesje — nigdy w szablonie Excel i nigdy nie importowane ani czyszczone
+ * przez „Szablon Excel”. Stare pliki z arkuszem users/roles są ignorowane (także przy pełnym imporcie).
+ */
+const AUTH_PROTECTED_TABLES = [
   'users',
   'user_roles',
   'roles',
@@ -22,27 +20,42 @@ const SKIP_EXPORT = new Set([
   'sessions',
   'password_reset_tokens',
   'password_reset_requests',
+] as const;
+
+function isAuthProtectedTable(name: string): boolean {
+  const n = String(name ?? '')
+    .trim()
+    .toLowerCase();
+  return (AUTH_PROTECTED_TABLES as readonly string[]).includes(n);
+}
+
+/** Tabele systemowe / pomijane w eksporcie arkusza. */
+const SKIP_EXPORT = new Set<string>([
+  'sqlite_sequence',
+  'sqlite_stat1',
+  'sqlite_stat4',
+  '_migrations',
+  ...AUTH_PROTECTED_TABLES,
 ]);
 
 /**
  * Przy imporcie / czyszczeniu nie ruszamy ustawień admina ani kont.
  * Import users z Excela niszczy password_hash → brak logowania admina (gość działa).
  */
-const SKIP_IMPORT = new Set([
+const SKIP_IMPORT = new Set<string>([
   'admin_settings',
   'sqlite_sequence',
   'sqlite_stat1',
   'sqlite_stat4',
   '_migrations',
   README_SHEET,
-  'users',
-  'user_roles',
-  'roles',
-  'role_permissions',
-  'sessions',
-  'password_reset_tokens',
-  'password_reset_requests',
+  ...AUTH_PROTECTED_TABLES,
 ]);
+
+/** Ostateczny filtr — nigdy nie czyść / nie wstawiaj tabel auth (nawet ze starego Excela). */
+function withoutAuthTables(tables: string[]): string[] {
+  return tables.filter((t) => !SKIP_IMPORT.has(t) && !isAuthProtectedTable(t) && t !== README_SHEET);
+}
 
 /**
  * Kolejność wstawiania (rodzice przed dziećmi). Scenariusze na końcu.
@@ -128,7 +141,7 @@ function buildReadmeAoa(): (string | number | null)[][] {
     [],
     ['Uwagi'],
     ['• Operacja IMPORTU (pełna) usuwa dane z większości tabel (wg listy poniżej) i wstawia zawartość z pliku. Import częściowy (wybrane tabele w UI) czyści i wypełnia tylko zaznaczone arkusze — reszta bazy bez zmian; zachowaj spójność kluczy (np. operacje → maszyny i detale).'],
-    ['• Konta użytkowników, role, sesje i reset hasła NIE są w szablonie — import ich nie nadpisuje (hasła zostają na serwerze).'],
+    ['• Konta użytkowników, role, sesje i reset hasła NIE są w szablonie. Import pełny/częściowy ich nie czyści i nie nadpisuje — także gdy stary plik Excel nadal ma arkusze users/roles (są ignorowane).'],
     ['• Tabela scenarios jest eksportowana. Duże snapshoty trafiają do plików scenarios/scenario_{id}.json w paczce ZIP (w Excelu komórka może zawierać znacznik __FILE__:…). Preferuj pobieranie / wgrywanie paczki ZIP.'],
     ['• Paczka ZIP zawiera także katalog call-offs/ (pliki źródłowe SalesFcst).'],
     ['• Kolumny SOP i EOP (tekst w bazie): przy imporcie zapisujemy daty jako DD.MM.RRRR z wiodącymi zerami (także gdy Excel trzyma komórkę jako liczbę-serial).'],
@@ -161,7 +174,7 @@ function buildReadmeAoaPartial(selectedTables: string[]): (string | number | nul
 }
 
 function allowedTablesForPartialTemplate(): Set<string> {
-  return new Set(resolveImportOrder().filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET));
+  return new Set(withoutAuthTables(resolveImportOrder()));
 }
 
 /**
@@ -185,7 +198,9 @@ export function buildCapacityBundleTemplateBuffer(options?: { onlyTables?: strin
     }
     tables = [...new Set(requested)].sort((a, b) => a.localeCompare(b));
   } else {
-    tables = listUserTables().filter((t) => !SKIP_EXPORT.has(t)).sort((a, b) => a.localeCompare(b));
+    tables = listUserTables()
+      .filter((t) => !SKIP_EXPORT.has(t) && !isAuthProtectedTable(t))
+      .sort((a, b) => a.localeCompare(b));
   }
 
   const wb = XLSX.utils.book_new();
@@ -375,10 +390,10 @@ export type ClearDatabaseResult =
   | { ok: true; tables_cleared: string[]; rows_deleted: Record<string, number> }
   | { ok: false; error: string };
 
-/** Usuwa dane aplikacji ze wszystkich tabel importowalnych; zachowuje admin_settings i _migrations. */
+/** Usuwa dane aplikacji ze wszystkich tabel importowalnych; zachowuje admin_settings, _migrations i konta/RBAC. */
 export function clearApplicationDatabase(): ClearDatabaseResult {
   const order = resolveImportOrder();
-  const toClear = order.filter((t) => !SKIP_IMPORT.has(t));
+  const toClear = withoutAuthTables(order);
   if (toClear.length === 0) {
     return { ok: false, error: 'Brak tabel do wyczyszczenia.' };
   }
@@ -416,24 +431,38 @@ export function clearApplicationDatabase(): ClearDatabaseResult {
  */
 export function importCapacityBundleFromBuffer(buf: Buffer, options?: { onlyTables?: string[] | null }): ImportBundleResult {
   const order = resolveImportOrder();
-  const requested = (options?.onlyTables ?? []).map((t) => String(t).trim()).filter(Boolean);
-  const partial = requested.length > 0;
+  const requested = (options?.onlyTables ?? [])
+    .map((t) => String(t).trim())
+    .filter(Boolean)
+    // Stare klienty / pliki mogły prosić o users — zawsze odrzuć z listy roboczej
+    .filter((t) => !isAuthProtectedTable(t));
+  const partial = (options?.onlyTables?.length ?? 0) > 0;
 
   let toProcess: string[];
   if (partial) {
-    const allowedForPartial = new Set(order.filter((t) => !SKIP_IMPORT.has(t) && t !== README_SHEET));
-    for (const t of requested) {
+    const allowedForPartial = new Set(withoutAuthTables(order));
+    const rawRequested = (options?.onlyTables ?? []).map((t) => String(t).trim()).filter(Boolean);
+    for (const t of rawRequested) {
+      if (isAuthProtectedTable(t)) {
+        return {
+          ok: false,
+          error: `Tabela „${t}” (konta/hasła/role) nie jest importowana — pomiń ją. Konta na serwerze pozostają bez zmian.`,
+        };
+      }
       if (!allowedForPartial.has(t)) {
         return { ok: false, error: `Niedozwolona lub nieznana tabela w imporcie częściowym: ${t}` };
       }
     }
-    toProcess = order.filter((t) => requested.includes(t));
+    toProcess = withoutAuthTables(order.filter((t) => requested.includes(t)));
     if (toProcess.length === 0) {
       return { ok: false, error: 'Import częściowy: żadna z podanych nazw nie pasuje do tabel w bazie.' };
     }
   } else {
-    toProcess = order.filter((t) => !SKIP_IMPORT.has(t));
+    toProcess = withoutAuthTables(order);
   }
+
+  // Twarde zabezpieczenie — nawet gdyby lista się rozszerzyła
+  toProcess = withoutAuthTables(toProcess);
 
   const counts: Record<string, number> = {};
   let wb: XLSX.WorkBook;
@@ -468,10 +497,15 @@ export function importCapacityBundleFromBuffer(buf: Buffer, options?: { onlyTabl
 
     for (let i = toProcess.length - 1; i >= 0; i--) {
       const t = toProcess[i];
+      if (isAuthProtectedTable(t) || SKIP_IMPORT.has(t)) continue;
       db.prepare(`DELETE FROM ${safeIdent(t)}`).run();
     }
 
     for (const table of toProcess) {
+      if (isAuthProtectedTable(table) || SKIP_IMPORT.has(table)) {
+        counts[table] = 0;
+        continue;
+      }
       const sheetName = table.length > 31 ? table.slice(0, 31) : table;
       if (!wb.SheetNames.includes(sheetName)) {
         counts[table] = 0;
