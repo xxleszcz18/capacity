@@ -13,7 +13,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Push to Autoneum777/capacity
         run: |
-          git push --force "https://Autoneum777:${{ secrets.AUTONEUM_TOKEN }}@github.com/Autoneum777/capacity.git" HEAD:main
+          git push --force \
+            "https://Autoneum777:${{ secrets.AUTONEUM_TOKEN }}@github.com/Autoneum777/capacity.git" \
+            HEAD:main
