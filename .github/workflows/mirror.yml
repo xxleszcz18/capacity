@@ -15,8 +15,5 @@ jobs:
           fetch-depth: 0
 
       - name: Push to Autoneum777/capacity
-        env:
-          TOKEN: ${{ secrets.AUTONEUM_TOKEN }}
         run: |
-          git remote add mirror https://Autoneum777:${TOKEN}@github.com/Autoneum777/capacity.git
-          git push mirror --force HEAD:main
+          git push --force "https://Autoneum777:${{ secrets.AUTONEUM_TOKEN }}@github.com/Autoneum777/capacity.git" HEAD:main
