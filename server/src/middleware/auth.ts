@@ -186,6 +186,14 @@ function resolveResourcePermission(req: Request, resource: PermissionResource): 
     }
   }
 
+  if (resource === 'designations') {
+    // delete-cascade is POST but must require delete, not edit
+    if (method === 'POST' && /\/\d+\/delete-cascade$/.test(path)) return 'designations.delete';
+    if (method === 'GET' && /\/\d+\/related-operations$/.test(path)) {
+      return ['designations.delete', 'designations.edit'];
+    }
+  }
+
   return null;
 }
 

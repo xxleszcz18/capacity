@@ -2867,6 +2867,10 @@ type BreakdownOpts = {
   settingsProfile?: CalculationSettingsProfile;
   callOffVolumes?: import('./callOffService.js').CallOffVolumeMaps | null;
   includeRfqOperationIds?: number[];
+  /** Miesiąc 1–12 — breakdown jak na wykresie miesięcznym/tygodniowym. */
+  activeMonth?: number;
+  /** Tydzień w miesiącu (T1…) — wymaga activeMonth. */
+  activeWeek?: number;
 };
 
 function scenarioProjectLookup(snapshot: ScenarioBundle | null | undefined): Map<number, { client: string; name: string }> {
@@ -3056,8 +3060,8 @@ function accumulateScopeBreakdown(
     ? buildCallOffOperationShares(
         operations,
         year,
-        undefined,
-        undefined,
+        opts.activeMonth,
+        opts.activeWeek,
         volumeMap,
         opts.scenarioSnapshot ?? null,
         useContract,
@@ -3081,8 +3085,9 @@ function accumulateScopeBreakdown(
       const partId = op.part_id != null ? Number(op.part_id) : null;
       if (share == null || share <= 0 || partId == null || !Number.isFinite(partId)) continue;
       opVolumeOverride = {
-        volume_value: callOffQuantityForPeriod(opts.callOffVolumes, partId, year, undefined, undefined) * share,
-        volume_unit: callOffVolumeUnitForPeriod(undefined, undefined),
+        volume_value:
+          callOffQuantityForPeriod(opts.callOffVolumes, partId, year, opts.activeMonth, opts.activeWeek) * share,
+        volume_unit: callOffVolumeUnitForPeriod(opts.activeMonth, opts.activeWeek),
         source: 'call_off',
       };
     }
@@ -3100,8 +3105,8 @@ function accumulateScopeBreakdown(
       opts.scenarioSnapshot ?? null,
       useContract,
       undefined,
-      undefined,
-      undefined,
+      opts.activeMonth,
+      opts.activeWeek,
       opts.callOffVolumes ? null : volumeMap
     );
     if (
@@ -3109,7 +3114,7 @@ function accumulateScopeBreakdown(
         op.sop ?? '',
         op.eop ?? '',
         year,
-        undefined,
+        opts.activeMonth,
         Boolean(resolved.count_after_eop),
         op.project_id != null
       )
@@ -3224,6 +3229,10 @@ function buildScopeBreakdownSeries(
   opts: BreakdownOpts
 ): CapacityBreakdownSeries {
   if (!scopeMachineIds.length) return { load_percent: null, clients: [] };
+  const activeMonth = opts.activeMonth;
+  const activeWeek = opts.activeWeek;
+  const detailVolumePeriod =
+    activeWeek != null && activeMonth != null ? 'weekly' : activeMonth != null ? 'monthly' : undefined;
   const capacityRows = getMachineCapacitiesForYear(
     year,
     scopeMachineIds,
@@ -3235,13 +3244,14 @@ function buildScopeBreakdownSeries(
     opts.machineStatusFilter,
     opts.dimensionFilters,
     opts.settingsProfile,
-    undefined,
+    activeMonth,
     undefined,
     opts.callOffVolumes,
-    undefined,
+    detailVolumePeriod,
     opts.includeRfqOperationIds?.length
       ? { includeRfqOperationIds: opts.includeRfqOperationIds }
-      : undefined
+      : undefined,
+    activeWeek
   );
   const scopeTotals = scopeTotalsFromRows(capacityRows);
   const accum = accumulateScopeBreakdown(year, new Set(scopeMachineIds), opts);
@@ -3265,6 +3275,8 @@ export function getCapacityScopeBreakdown(
     settingsProfile: opts.settingsProfile,
     scenarioIncludeRfqProjects: opts.scenarioIncludeRfqProjects,
     includeRfqOperationIds: opts.includeRfqOperationIds,
+    activeMonth: opts.activeMonth,
+    activeWeek: opts.activeWeek,
   };
 
   for (const key of seriesKeys) {

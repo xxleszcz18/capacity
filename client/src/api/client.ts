@@ -1211,6 +1211,8 @@ export const api = {
     },
     breakdown: (params: {
       year: number;
+      month?: number;
+      week?: number;
       line?: string;
       machineId?: number;
       series: string;
@@ -1238,6 +1240,8 @@ export const api = {
       const q = new URLSearchParams();
       q.set('year', String(params.year));
       q.set('series', params.series);
+      if (params.month != null) q.set('month', String(params.month));
+      if (params.week != null) q.set('week', String(params.week));
       if (params.line) q.set('line', params.line);
       if (params.machineId != null) q.set('machineId', String(params.machineId));
       if (params.yearFrom != null) q.set('yearFrom', String(params.yearFrom));
@@ -1267,6 +1271,8 @@ export const api = {
       }
       return request<{
         year: number;
+        month?: number | null;
+        week?: number | null;
         series: Partial<
           Record<
             'production' | 'contract' | 'scenario_production' | 'scenario_contract' | 'call_off',

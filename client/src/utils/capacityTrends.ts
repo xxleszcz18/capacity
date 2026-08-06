@@ -106,7 +106,15 @@ export function machineLoadPercent(m: CapacityMachineTrend, year: number): numbe
   return y.load_percent ?? null;
 }
 
-export type TrendChartRow = { year: number; periodLabel?: string; [seriesKey: string]: number | string | null | undefined };
+export type TrendChartRow = {
+  year: number;
+  periodLabel?: string;
+  /** Kalendarzowy rok okresu (gdy `year` to id okresu mies./tyg.). */
+  calendarYear?: number;
+  month?: number;
+  week?: number;
+  [seriesKey: string]: number | string | null | undefined;
+};
 
 export type TrendSeriesDef = {
   key: string;
@@ -116,15 +124,28 @@ export type TrendSeriesDef = {
   getValue: (periodId: number) => number | null;
 };
 
+export type TrendPeriodMeta = {
+  calendarYear: number;
+  month?: number;
+  week?: number;
+};
+
 export function buildTrendRows(
   periodIds: number[],
   series: TrendSeriesDef[],
-  periodLabels?: Map<number, string>
+  periodLabels?: Map<number, string>,
+  periodMeta?: Map<number, TrendPeriodMeta>
 ): TrendChartRow[] {
   return periodIds.map((periodId) => {
     const row: TrendChartRow = { year: periodId };
     const label = periodLabels?.get(periodId);
     if (label) row.periodLabel = label;
+    const meta = periodMeta?.get(periodId);
+    if (meta) {
+      row.calendarYear = meta.calendarYear;
+      if (meta.month != null) row.month = meta.month;
+      if (meta.week != null) row.week = meta.week;
+    }
     for (const s of series) row[s.key] = s.getValue(periodId);
     return row;
   });

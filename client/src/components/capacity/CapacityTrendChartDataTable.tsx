@@ -104,6 +104,8 @@ type Props = {
   activeSeries: TrendSeriesDef[];
   breakdownScope?: ChartBreakdownScope;
   metricMode?: ChartMetricMode;
+  /** Granularność osi X — etykiety kolumny i zapytanie breakdown. */
+  rangeMode?: 'year' | 'month' | 'week';
 };
 
 const INDENT_STEP_PX = 28;
@@ -222,7 +224,13 @@ function SeriesValueCell({
   );
 }
 
-export default function CapacityTrendChartDataTable({ rows, activeSeries, breakdownScope, metricMode = 'load' }: Props) {
+export default function CapacityTrendChartDataTable({
+  rows,
+  activeSeries,
+  breakdownScope,
+  metricMode = 'load',
+  rangeMode = 'year',
+}: Props) {
   const { t } = useI18n();
   const [expandedYears, setExpandedYears] = useState<Set<number>>(() => new Set());
   const [expandedClients, setExpandedClients] = useState<Set<string>>(() => new Set());
@@ -230,6 +238,15 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
   const [breakdownCache, setBreakdownCache] = useState<Map<number, BreakdownYearData>>(() => new Map());
   const [loadingYears, setLoadingYears] = useState<Set<number>>(() => new Set());
   const [errorYears, setErrorYears] = useState<Map<number, string>>(() => new Map());
+
+  const periodColLabel =
+    rangeMode === 'week' ? t('dataViz.colWeek') : rangeMode === 'month' ? t('dataViz.colMonth') : t('dataViz.colYear');
+  const noDataLabel =
+    rangeMode === 'week'
+      ? t('dataViz.breakdownNoDataWeek')
+      : rangeMode === 'month'
+        ? t('dataViz.breakdownNoDataMonth')
+        : t('dataViz.breakdownNoData');
 
   const uniqueSeriesKeys = [
     ...new Set(
@@ -242,7 +259,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
   const uniqueSeriesKey = uniqueSeriesKeys.slice().sort().join(',');
   const callOffSeriesIdsKey = callOffSeriesIds.slice().sort((a, b) => a - b).join(',');
   const fetchParamsKey = JSON.stringify(breakdownScope?.fetchParams ?? null);
-  const cacheScopeKey = `${uniqueSeriesKey}|${callOffSeriesIdsKey}|${fetchParamsKey}`;
+  const cacheScopeKey = `${uniqueSeriesKey}|${callOffSeriesIdsKey}|${fetchParamsKey}|${rangeMode}`;
 
   useEffect(() => {
     setBreakdownCache(new Map());
@@ -250,18 +267,26 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
   }, [cacheScopeKey]);
 
   const loadBreakdown = useCallback(
-    async (year: number) => {
-      if (!breakdownScope || uniqueSeriesKeys.length === 0 || breakdownCache.has(year)) return;
+    async (periodId: number, row: TrendChartRow) => {
+      if (!breakdownScope || uniqueSeriesKeys.length === 0 || breakdownCache.has(periodId)) return;
 
-      setLoadingYears((prev) => new Set(prev).add(year));
+      const calendarYear = row.calendarYear ?? (rangeMode === 'year' ? row.year : undefined);
+      if (calendarYear == null || !Number.isFinite(calendarYear)) {
+        setErrorYears((prev) => new Map(prev).set(periodId, 'Invalid period'));
+        return;
+      }
+
+      setLoadingYears((prev) => new Set(prev).add(periodId));
       setErrorYears((prev) => {
         const next = new Map(prev);
-        next.delete(year);
+        next.delete(periodId);
         return next;
       });
       try {
         const baseQuery = {
-          year,
+          year: calendarYear,
+          month: rangeMode === 'year' ? undefined : row.month,
+          week: rangeMode === 'week' ? row.week : undefined,
           line: breakdownScope.kind === 'line' ? breakdownScope.line : undefined,
           machineId: breakdownScope.kind === 'machine' ? breakdownScope.machineId : undefined,
           ...breakdownFetchParamsToApi(breakdownScope.fetchParams),
@@ -286,31 +311,31 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
           ),
         ]);
         setBreakdownCache((prev) =>
-          new Map(prev).set(year, {
+          new Map(prev).set(periodId, {
             common,
             callOffById: new Map(callOffEntries),
           })
         );
       } catch (e) {
-        setErrorYears((prev) => new Map(prev).set(year, e instanceof Error ? e.message : String(e)));
+        setErrorYears((prev) => new Map(prev).set(periodId, e instanceof Error ? e.message : String(e)));
       } finally {
         setLoadingYears((prev) => {
           const next = new Set(prev);
-          next.delete(year);
+          next.delete(periodId);
           return next;
         });
       }
     },
-    [breakdownScope, uniqueSeriesKeys, callOffSeriesIds, breakdownCache]
+    [breakdownScope, uniqueSeriesKeys, callOffSeriesIds, breakdownCache, rangeMode]
   );
 
-  const toggleYear = (year: number) => {
+  const toggleYear = (periodId: number, row: TrendChartRow) => {
     setExpandedYears((prev) => {
       const next = new Set(prev);
-      if (next.has(year)) next.delete(year);
+      if (next.has(periodId)) next.delete(periodId);
       else {
-        next.add(year);
-        void loadBreakdown(year);
+        next.add(periodId);
+        void loadBreakdown(periodId, row);
       }
       return next;
     });
@@ -345,7 +370,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
       return (
         <tr>
           <td colSpan={activeSeries.length + 1} style={{ padding: '8px 10px 8px 36px', color: '#888', fontSize: 12, background: '#fafafa' }}>
-            {t('dataViz.breakdownNoData')}
+            {noDataLabel}
           </td>
         </tr>
       );
@@ -457,7 +482,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
         </colgroup>
         <thead>
           <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
-            <th style={{ padding: '8px 10px' }}>{t('dataViz.colYear')}</th>
+            <th style={{ padding: '8px 10px' }}>{periodColLabel}</th>
             {activeSeries.map((s) => (
               <th key={s.key} style={{ padding: '8px 10px' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -474,6 +499,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
           const loading = loadingYears.has(row.year);
           const error = errorYears.get(row.year);
           const canExpand = Boolean(breakdownScope && uniqueSeriesKeys.length);
+          const periodLabel = row.periodLabel ?? String(row.year);
 
           return (
             <tbody
@@ -486,7 +512,7 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
                   {canExpand ? (
                     <button
                       type="button"
-                      onClick={() => toggleYear(row.year)}
+                      onClick={() => toggleYear(row.year, row)}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -504,10 +530,10 @@ export default function CapacityTrendChartDataTable({ rows, activeSeries, breakd
                       <span aria-hidden style={{ width: 14, textAlign: 'center', color: '#666' }}>
                         {chevron(yearOpen)}
                       </span>
-                      {row.year}
+                      {periodLabel}
                     </button>
                   ) : (
-                    row.year
+                    periodLabel
                   )}
                 </td>
                 {activeSeries.map((s) => {

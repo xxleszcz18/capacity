@@ -20,6 +20,9 @@ export function transformTrendRows(
   return rows.map((row) => {
     const out: TrendChartRow = { year: row.year };
     if (row.periodLabel != null) out.periodLabel = row.periodLabel;
+    if (row.calendarYear != null) out.calendarYear = row.calendarYear;
+    if (row.month != null) out.month = row.month;
+    if (row.week != null) out.week = row.week;
     for (const s of series) {
       out[s.key] = applyChartMetric(row[s.key] as number | null | undefined, mode);
     }

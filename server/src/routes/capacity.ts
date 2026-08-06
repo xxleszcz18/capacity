@@ -207,6 +207,15 @@ function resolveCalculatorContext(req: import('express').Request) {
 
 capacityRouter.get('/breakdown', (req, res) => {
   const year = Number(req.query.year);
+  const monthRaw = req.query.month != null ? Number(req.query.month) : undefined;
+  const weekRaw = req.query.week != null ? Number(req.query.week) : undefined;
+  const activeMonth =
+    monthRaw != null && Number.isFinite(monthRaw) && monthRaw >= 1 && monthRaw <= 12 ? Math.floor(monthRaw) : undefined;
+  const activeWeek =
+    weekRaw != null && Number.isFinite(weekRaw) && weekRaw >= 1 && weekRaw <= 6 ? Math.floor(weekRaw) : undefined;
+  if (activeWeek != null && activeMonth == null) {
+    return res.status(400).json({ error: 'week requires month' });
+  }
   const line = (req.query.line as string | undefined)?.trim();
   const machineId = req.query.machineId != null ? Number(req.query.machineId) : undefined;
   const callOffComparisonId = req.query.callOffComparisonId != null ? Number(req.query.callOffComparisonId) : undefined;
@@ -234,7 +243,7 @@ capacityRouter.get('/breakdown', (req, res) => {
 
   const ctx = resolveCalculatorContext(req);
   if (ctx.empty) {
-    return res.json({ year, series: {} });
+    return res.json({ year, month: activeMonth ?? null, week: activeWeek ?? null, series: {} });
   }
   const callOffVolumes =
     callOffComparisonId != null && Number.isFinite(callOffComparisonId) && callOffComparisonId > 0
@@ -256,12 +265,14 @@ capacityRouter.get('/breakdown', (req, res) => {
       settingsProfile: ctx.settingsProfile,
       callOffVolumes,
       includeRfqOperationIds: ctx.includeRfqOperationIds,
+      activeMonth,
+      activeWeek,
     },
     seriesKeys
   );
 
   res.set('Cache-Control', 'no-store');
-  res.json({ year, series });
+  res.json({ year, month: activeMonth ?? null, week: activeWeek ?? null, series });
 });
 
 capacityRouter.get('/calculator', (req, res) => {

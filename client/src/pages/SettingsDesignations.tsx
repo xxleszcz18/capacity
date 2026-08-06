@@ -6,6 +6,7 @@ import SortableTh from '../components/SortableTh';
 import { formatDetailSapAliasLabel, formatSapNumberForDisplay } from '../utils/detailLabel';
 import { useReferenceDisplay } from '../context/ReferenceDisplayContext';
 import { useI18n } from '../context/I18nContext';
+import { useAuth } from '../context/AuthContext';
 import { useTableSort, sortRows } from '../utils/tableSort';
 import { isDesignationDuplicateError } from '../utils/designationDuplicate';
 
@@ -22,6 +23,9 @@ type Designation = {
 
 export default function SettingsDesignations() {
   const { t, te } = useI18n();
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('designations.edit');
+  const canDelete = hasPermission('designations.delete');
   const location = useLocation();
   const scenarioQs = location.search || '';
   const { referenceDisplay } = useReferenceDisplay();
@@ -93,6 +97,7 @@ export default function SettingsDesignations() {
   }, []);
 
   const addDesignation = () => {
+    if (!canEdit) return;
     const sap_number = newSap.trim();
     const alias = newAlias.trim();
     const free_text = newFreeText.trim();
@@ -116,6 +121,7 @@ export default function SettingsDesignations() {
   };
 
   const openEdit = (d: Designation) => {
+    if (!canEdit) return;
     setSaveError(null);
     setEditModal(d);
     setEditSap(formatSapNumberForDisplay(d.sap_number));
@@ -124,7 +130,7 @@ export default function SettingsDesignations() {
   };
 
   const saveEdit = () => {
-    if (!editModal) return;
+    if (!canEdit || !editModal) return;
     const sap_number = editSap.trim();
     const alias = editAlias.trim();
     const free_text = editFreeText.trim();
@@ -161,6 +167,7 @@ export default function SettingsDesignations() {
     );
 
   const openDeleteModal = (d: Designation) => {
+    if (!canDelete) return;
     setDeleteModal({
       designation: d,
       operations: [],
@@ -193,7 +200,7 @@ export default function SettingsDesignations() {
   };
 
   const confirmDeleteCascade = () => {
-    if (!deleteModal) return;
+    if (!canDelete || !deleteModal) return;
     const { designation, operations, selected } = deleteModal;
     if (operations.length === 0) {
       if (!confirmDelete(`${t('designations.deleteNoOpsIntro')} ${t('common.irreversible')}`)) return;
@@ -288,6 +295,7 @@ export default function SettingsDesignations() {
       {error && <p style={{ color: 'var(--cap-red)', marginBottom: 8 }}>{error}</p>}
       {addError && <p style={{ color: 'var(--cap-red)', marginBottom: 8 }}>{addError}</p>}
 
+      {canEdit && (
       <div style={{ display: 'flex', gap: 8, marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           type="text"
@@ -320,6 +328,7 @@ export default function SettingsDesignations() {
           {t('designations.addDetail')}
         </button>
       </div>
+      )}
 
       <table style={{ width: '100%', borderCollapse: 'collapse', background: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <thead>
@@ -329,7 +338,7 @@ export default function SettingsDesignations() {
             <SortableTh label={t('designations.freeTextCol')} active={sortCol === 'free_text'} direction={sortDir} onClick={() => toggle('free_text')} />
             <SortableTh label={t('designations.lineCol')} active={sortCol === 'line'} direction={sortDir} onClick={() => toggle('line')} />
             <SortableTh label={t('designations.projectCol')} active={sortCol === 'project'} direction={sortDir} onClick={() => toggle('project')} style={{ minWidth: 160 }} />
-            <th style={{ padding: '0.75rem', width: 180 }}>{t('designations.actions')}</th>
+            {(canEdit || canDelete) && <th style={{ padding: '0.75rem', width: 180 }}>{t('designations.actions')}</th>}
           </tr>
           <tr style={{ background: '#fafafa' }}>
             <th style={{ padding: '4px 6px', verticalAlign: 'top' }}>
@@ -377,7 +386,7 @@ export default function SettingsDesignations() {
                 style={{ width: '100%', padding: 4, fontSize: 12 }}
               />
             </th>
-            <th style={{ padding: '4px 6px' }}></th>
+            {(canEdit || canDelete) && <th style={{ padding: '4px 6px' }}></th>}
           </tr>
         </thead>
         <tbody>
@@ -403,13 +412,17 @@ export default function SettingsDesignations() {
                   ))
                 )}
               </td>
+              {(canEdit || canDelete) && (
               <td style={{ padding: '0.75rem' }}>
+                {canEdit && (
                 <button
                   onClick={() => openEdit(d)}
                   style={{ marginRight: 8, padding: '0.25rem 0.5rem', background: '#2196f3', color: 'white', border: 'none', borderRadius: 4 }}
                 >
                   {t('commonExtra.edit')}
                 </button>
+                )}
+                {canDelete && (
                 <button
                   type="button"
                   onClick={() => openDeleteModal(d)}
@@ -417,7 +430,9 @@ export default function SettingsDesignations() {
                 >
                   {t('common.delete')}
                 </button>
+                )}
               </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -464,7 +479,7 @@ export default function SettingsDesignations() {
         </div>
       )}
 
-      {deleteModal && (
+      {deleteModal && canDelete && (
         <div
           onMouseDown={(e) => {
             if (e.target === e.currentTarget && !deleteModal.saving) setDeleteModal(null);
@@ -625,7 +640,7 @@ export default function SettingsDesignations() {
         </div>
       )}
 
-      {editModal && (
+      {editModal && canEdit && (
         <div
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setEditModal(null);

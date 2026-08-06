@@ -36,8 +36,10 @@ type Props = {
   captureKey?: string;
   /** Kontekst do rozwijanego podglądu klient → projekt → detal. */
   breakdownScope?: ChartBreakdownScope;
-  /** Przycisk „Pokaż dane wg lat” — wyłącz np. dla wykresu łączonego. */
+  /** Przycisk „Pokaż dane…” — wyłącz np. dla wykresu łączonego. */
   allowDataTable?: boolean;
+  /** Granularność osi / tabeli danych (rok / miesiąc / tydzień). */
+  rangeMode?: 'year' | 'month' | 'week';
   /**
    * Powyżej tej liczby aktywnych serii legenda jest ukrywana (wykres pozostaje widoczny).
    * Domyślnie 12. Ustaw null/false, by zawsze pokazywać legendę.
@@ -64,6 +66,7 @@ export default function CapacityTrendChart({
   metricMode = 'load',
   flexPercent = null,
   allowDataTable = true,
+  rangeMode = 'year',
   legendMaxSeries = DEFAULT_LEGEND_MAX_SERIES,
 }: Props) {
   const { t } = useI18n();
@@ -77,6 +80,13 @@ export default function CapacityTrendChart({
   const xDataKey = rows.some((r) => r.periodLabel) ? 'periodLabel' : 'year';
   const canShowDataTable = allowDataTable && !captureKey;
   const showFlex = flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
+  const showDataLabel =
+    rangeMode === 'week'
+      ? t('dataViz.showChartDataWeek')
+      : rangeMode === 'month'
+        ? t('dataViz.showChartDataMonth')
+        : t('dataViz.showChartData');
+  const tableExportTitle = `${title} — ${showDataLabel}`;
 
   const displayRows = useMemo(() => {
     const metricRows = transformTrendRows(rows, series, metricMode);
@@ -108,7 +118,7 @@ export default function CapacityTrendChart({
         'data-viz-export-block': '',
         'data-viz-export-block-type': 'table',
         'data-viz-export-id': `${exportId}-table`,
-        'data-viz-export-title': `${title} — ${t('dataViz.showChartData')}`,
+        'data-viz-export-title': tableExportTitle,
       };
 
   const cardStyle = {
@@ -141,7 +151,7 @@ export default function CapacityTrendChart({
                 whiteSpace: 'nowrap',
               }}
             >
-              {showDataTable ? t('dataViz.hideChartData') : t('dataViz.showChartData')}
+              {showDataTable ? t('dataViz.hideChartData') : showDataLabel}
             </button>
           )}
         </div>
@@ -237,7 +247,13 @@ export default function CapacityTrendChart({
       </div>
       {showDataTable && hasData && canShowDataTable && (
         <div {...tableBlockProps} style={{ marginTop: 12, background: 'white' }}>
-          <CapacityTrendChartDataTable rows={rows} activeSeries={activeSeries} breakdownScope={breakdownScope} metricMode={metricMode} />
+          <CapacityTrendChartDataTable
+            rows={rows}
+            activeSeries={activeSeries}
+            breakdownScope={breakdownScope}
+            metricMode={metricMode}
+            rangeMode={rangeMode}
+          />
         </div>
       )}
     </div>

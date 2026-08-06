@@ -93,6 +93,7 @@ import {
 import {
   type DataVizRangeMode,
   type YearMonth,
+  type VizTimelinePeriod,
   defaultMonthRange,
   defaultWeekRange,
   enumerateMonthsBetween,
@@ -380,7 +381,7 @@ export default function AdminDataVisualization() {
     }
   }, [rangeMode, weekToKey, weekToOptions]);
 
-  const chartPeriods = useMemo(() => {
+  const chartPeriods = useMemo((): VizTimelinePeriod[] => {
     if (rangeMode === 'year') {
       return yearsRange(effectiveYearFrom, effectiveYearTo).map((y) => ({
         id: y,
@@ -412,6 +413,20 @@ export default function AdminDataVisualization() {
   ]);
 
   const periodLabelById = useMemo(() => new Map(chartPeriods.map((p) => [p.id, p.label])), [chartPeriods]);
+  const periodMetaById = useMemo(
+    () =>
+      new Map(
+        chartPeriods.map((p) => [
+          p.id,
+          {
+            calendarYear: p.year,
+            month: p.month,
+            week: p.week,
+          },
+        ])
+      ),
+    [chartPeriods]
+  );
   const chartPeriodIds = useMemo(() => chartPeriods.map((p) => p.id), [chartPeriods]);
   const chartPeriodsKey = useMemo(() => chartPeriods.map((p) => `${p.id}:${p.label}`).join('|'), [chartPeriods]);
   const years = chartPeriodIds;
@@ -1185,7 +1200,7 @@ export default function AdminDataVisualization() {
     lineChartCombined && selectedLines.size > 0 ? (
       <CapacityTrendChart
         title={`Porównanie linii (${Array.from(selectedLines).join(', ')})`}
-        rows={buildTrendRows(chartPeriodIds, combinedLineSeries, periodLabelById)}
+        rows={buildTrendRows(chartPeriodIds, combinedLineSeries, periodLabelById, periodMetaById)}
         series={combinedLineSeries}
         height={380}
         emptyHint={t('dataViz.emptyLines')}
@@ -1200,7 +1215,7 @@ export default function AdminDataVisualization() {
     machineChartCombined && selectedMachineIds.size > 0 ? (
       <CapacityTrendChart
         title={`Porównanie maszyn (${selectedMachineIds.size} wybranych)`}
-        rows={buildTrendRows(chartPeriodIds, combinedMachineSeries, periodLabelById)}
+        rows={buildTrendRows(chartPeriodIds, combinedMachineSeries, periodLabelById, periodMetaById)}
         series={combinedMachineSeries}
         height={380}
         emptyHint={t('dataViz.emptyMachines')}
@@ -1380,13 +1395,14 @@ export default function AdminDataVisualization() {
       <CapacityTrendChart
         key={line}
         title={t('reports.dataViz.lineChartTitle', { line })}
-        rows={buildTrendRows(chartPeriodIds, series, periodLabelById)}
+        rows={buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById)}
         series={series}
         emptyHint={t('dataViz.emptyLineMachines')}
         breakdownScope={{ kind: 'line', line, fetchParams: breakdownFetchParams }}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
         flexPercent={flexPercent}
+        rangeMode={rangeMode}
       />
     );
   })
@@ -1409,12 +1425,13 @@ export default function AdminDataVisualization() {
         <CapacityTrendChart
           key={m.machine_id}
           title={t('reports.dataViz.machineTitleWithLine', { label: machineLabel(m), line: lineKey(m.location) })}
-          rows={buildTrendRows(chartPeriodIds, series, periodLabelById)}
+          rows={buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById)}
           series={series}
           breakdownScope={{ kind: 'machine', machineId: m.machine_id, fetchParams: breakdownFetchParams }}
           loadAxisRange={loadAxisRange}
-        metricMode={chartMetricMode}
-        flexPercent={flexPercent}
+          metricMode={chartMetricMode}
+          flexPercent={flexPercent}
+          rangeMode={rangeMode}
         />
       );
   })
@@ -2060,7 +2077,7 @@ export default function AdminDataVisualization() {
         {
           captureKey: 'line-combined',
           title: t('reports.dataViz.lineCompareTitle', { lines: targetLines.join(', ') }),
-          rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
+          rows: buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById),
           series,
         },
       ];
@@ -2077,7 +2094,7 @@ export default function AdminDataVisualization() {
       return {
         captureKey: `line-${line}`,
         title: t('reports.dataViz.lineChartTitle', { line }),
-        rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
+        rows: buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById),
         series,
       };
     });
@@ -2150,7 +2167,7 @@ export default function AdminDataVisualization() {
         {
           captureKey: 'machine-combined',
           title: t('reports.dataViz.machineCompareTitle', { count: targetMachines.length }),
-          rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
+          rows: buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById),
           series,
         },
       ];
@@ -2168,7 +2185,7 @@ export default function AdminDataVisualization() {
       return {
         captureKey: `machine-${m.machine_id}`,
         title: t('reports.dataViz.machineTitleWithLine', { label: machineLabel(m), line: lineKey(m.location) }),
-        rows: buildTrendRows(chartPeriodIds, series, periodLabelById),
+        rows: buildTrendRows(chartPeriodIds, series, periodLabelById, periodMetaById),
         series,
       };
     });
