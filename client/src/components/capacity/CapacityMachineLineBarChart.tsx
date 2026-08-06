@@ -77,7 +77,7 @@ export default function CapacityMachineLineBarChart({
   const { t } = useI18n();
   const vizColors = useDataVizColors();
   const exportId = useId();
-  const yDomain = resolveYAxisDomain(loadAxisRange);
+  const yDomain = resolveYAxisDomain(loadAxisRange, metricMode);
   const yAxisLabel = metricMode === 'freeCapacity' ? t('dataViz.freeCapacityPct') : t('dataViz.loadPct');
   const refLineY = metricMode === 'freeCapacity' ? 0 : 100;
   const refLineLabel = metricMode === 'freeCapacity' ? t('dataViz.refFreeCapacity0') : t('dataViz.refLoad100');

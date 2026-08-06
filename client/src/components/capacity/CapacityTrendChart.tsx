@@ -83,7 +83,7 @@ export default function CapacityTrendChart({
     return withFlexBandRows(metricRows, series, showFlex ? flexPercent : null);
   }, [rows, series, metricMode, showFlex, flexPercent]);
 
-  const yDomain = resolveYAxisDomain(loadAxisRange);
+  const yDomain = resolveYAxisDomain(loadAxisRange, metricMode);
   const yAxisLabel = metricMode === 'freeCapacity' ? t('dataViz.freeCapacityPct') : t('dataViz.loadPct');
   const refLineY = metricMode === 'freeCapacity' ? 0 : 100;
   const refLineLabel = metricMode === 'freeCapacity' ? t('dataViz.refFreeCapacity0') : t('dataViz.refLoad100');
