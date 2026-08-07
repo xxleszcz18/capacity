@@ -1119,6 +1119,7 @@ export const api = {
       strokeOp?: 'gte' | 'lte';
       strokeValue?: number;
       settingsProfile?: 'capacity' | 'ocu';
+      includeRfqOperationIds?: string;
     }) => {
       const q = new URLSearchParams();
       q.set('year', String(params.year));
@@ -1136,6 +1137,7 @@ export const api = {
       else if (params.machineStatus != null) q.set('machineStatus', String(params.machineStatus));
       if (params.groupIds) q.set('groupIds', params.groupIds);
       if (params.settingsProfile === 'ocu') q.set('settingsProfile', 'ocu');
+      if (params.includeRfqOperationIds) q.set('includeRfqOperationIds', params.includeRfqOperationIds);
       const dimPairs = [
         ['width', params.widthOp, params.widthValue],
         ['depth', params.depthOp, params.depthValue],

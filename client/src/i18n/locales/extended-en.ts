@@ -1193,6 +1193,8 @@ export const extendedEn: TranslationTree = {
       seriesCallOff: 'Call offs',
       seriesCallOffNamed: 'Call offs — {{name}} ({{file}})',
       seriesCallOffNamedShort: 'Call offs — {{name}}',
+      seriesRfq: 'RFQ: {{projects}}',
+      seriesRfqShort: 'RFQ',
       seriesWithRfq: '{{label}} (+ RFQ: {{projects}})',
       lineSeriesProd: 'Line {{line}} — prod.',
       lineSeriesContract: 'Line {{line}} — contr.',

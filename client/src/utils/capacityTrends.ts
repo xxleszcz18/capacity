@@ -121,6 +121,8 @@ export type TrendSeriesDef = {
   label: string;
   color: string;
   dash?: string;
+  /** Wspólny stackId — słupki z tym samym ID są skumulowane (np. baza + RFQ). */
+  stackId?: string;
   getValue: (periodId: number) => number | null;
 };
 

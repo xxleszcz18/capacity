@@ -289,6 +289,9 @@ export default function AdminDataVisualization() {
 
   const [prodRaw, setProd] = useState<CapacityTrendBundle | null>(null);
   const [contractRaw, setContract] = useState<CapacityTrendBundle | null>(null);
+  /** Te same serie bez RFQ — do stacku słupkowego (baza vs RFQ). */
+  const [prodNoRfqRaw, setProdNoRfq] = useState<CapacityTrendBundle | null>(null);
+  const [contractNoRfqRaw, setContractNoRfq] = useState<CapacityTrendBundle | null>(null);
   /** Bundle Call offs per comparison id (surowe, przed filtrem wymiarów). */
   const [callOffBundlesRaw, setCallOffBundlesRaw] = useState<Record<number, CapacityTrendBundle>>({});
   /** Pary prod/kontrakt per scenarioId (surowe, przed filtrem wymiarów). */
@@ -481,6 +484,20 @@ export default function AdminDataVisualization() {
     [rfqTree, rfqOperationIds, t]
   );
 
+  const rfqProjectsLabel = useCallback(
+    (scope?: { line?: string; machineId?: number }) => {
+      if (!rfqOperationIds.length) return '';
+      let projects: string[] = [];
+      if (scope?.machineId != null) {
+        projects = projectNamesForMachine(rfqTree, rfqOperationIds, scope.machineId);
+      } else if (scope?.line != null) {
+        projects = projectNamesForLine(rfqTree, rfqOperationIds, scope.line);
+      }
+      return projects.join(', ');
+    },
+    [rfqTree, rfqOperationIds]
+  );
+
   useEffect(() => {
     api.callOffs
       .list({ archived: false })
@@ -557,15 +574,23 @@ export default function AdminDataVisualization() {
     const gen = ++loadBaseGenRef.current;
     setBaseLoading(true);
     setError('');
+    const rfqIds = vizBaseParams.includeRfqOperationIds ?? [];
+    const needNoRfq = rfqIds.length > 0;
+    const noRfqParams = { ...vizBaseParams, includeRfqOperationIds: [] as number[] };
+    const rfqCsv = joinCsvFilter(rfqIds.map(String));
     try {
       if (rangeMode === 'year') {
-        const [prodBundle, contractBundle] = await Promise.all([
+        const [prodBundle, contractBundle, prodNoRfqBundle, contractNoRfqBundle] = await Promise.all([
           fetchCapacityBundle(vizBaseParams),
           fetchCapacityBundle({ ...vizBaseParams, useContractualVolumes: true }),
+          needNoRfq ? fetchCapacityBundle(noRfqParams) : Promise.resolve(null),
+          needNoRfq ? fetchCapacityBundle({ ...noRfqParams, useContractualVolumes: true }) : Promise.resolve(null),
         ]);
         if (gen !== loadBaseGenRef.current) return;
         setProd(prodBundle);
         setContract(contractBundle);
+        setProdNoRfq(prodNoRfqBundle);
+        setContractNoRfq(contractNoRfqBundle);
         return;
       }
 
@@ -574,6 +599,8 @@ export default function AdminDataVisualization() {
         if (gen !== loadBaseGenRef.current) return;
         setProd(null);
         setContract(null);
+        setProdNoRfq(null);
+        setContractNoRfq(null);
         return;
       }
 
@@ -582,8 +609,9 @@ export default function AdminDataVisualization() {
       const yMax = Math.max(...yearsNeeded);
       const dimApi = buildDimensionApiParams(dimFilters);
       const baseForMeta = { ...vizBaseParams, yearFrom: yMin, yearTo: yMax };
+      const baseForMetaNoRfq = { ...noRfqParams, yearFrom: yMin, yearTo: yMax };
 
-      const fetchBreakdown = (year: number, useContractualVolumes: boolean) =>
+      const fetchBreakdown = (year: number, useContractualVolumes: boolean, withRfq: boolean) =>
         api.capacity.periodBreakdown({
           year,
           machineStatuses: joinCsvFilter(vizBaseParams.machineStatus),
@@ -591,34 +619,61 @@ export default function AdminDataVisualization() {
           clients: joinCsvFilter(vizBaseParams.client ?? []),
           useContractualVolumes,
           settingsProfile: vizBaseParams.settingsProfile === 'ocu' ? 'ocu' : undefined,
+          includeRfqOperationIds: withRfq && rfqCsv ? rfqCsv : undefined,
           ...dimApi,
         });
 
-      const [metaProd, metaContract, ...breakdownRows] = await Promise.all([
+      const [metaProd, metaContract, metaProdNoRfq, metaContractNoRfq, ...breakdownRows] = await Promise.all([
         fetchCapacityBundle(baseForMeta),
         fetchCapacityBundle({ ...baseForMeta, useContractualVolumes: true }),
-        ...yearsNeeded.flatMap((y) => [fetchBreakdown(y, false), fetchBreakdown(y, true)]),
+        needNoRfq ? fetchCapacityBundle(baseForMetaNoRfq) : Promise.resolve(null),
+        needNoRfq ? fetchCapacityBundle({ ...baseForMetaNoRfq, useContractualVolumes: true }) : Promise.resolve(null),
+        ...yearsNeeded.flatMap((y) =>
+          needNoRfq
+            ? [
+                fetchBreakdown(y, false, true),
+                fetchBreakdown(y, true, true),
+                fetchBreakdown(y, false, false),
+                fetchBreakdown(y, true, false),
+              ]
+            : [fetchBreakdown(y, false, true), fetchBreakdown(y, true, true)]
+        ),
       ]);
 
       if (gen !== loadBaseGenRef.current) return;
 
       const prodByYear = new Map<number, (typeof breakdownRows)[0]>();
       const contractByYear = new Map<number, (typeof breakdownRows)[0]>();
+      const prodNoRfqByYear = new Map<number, (typeof breakdownRows)[0]>();
+      const contractNoRfqByYear = new Map<number, (typeof breakdownRows)[0]>();
       let i = 0;
       for (const y of yearsNeeded) {
         prodByYear.set(y, breakdownRows[i++]);
         contractByYear.set(y, breakdownRows[i++]);
+        if (needNoRfq) {
+          prodNoRfqByYear.set(y, breakdownRows[i++]);
+          contractNoRfqByYear.set(y, breakdownRows[i++]);
+        }
       }
 
       const periodMode = rangeMode === 'week' ? 'week' : 'month';
       setProd(buildPeriodTrendBundle(metaProd, prodByYear, periods, periodMode));
       setContract(buildPeriodTrendBundle(metaContract, contractByYear, periods, periodMode));
+      if (needNoRfq && metaProdNoRfq && metaContractNoRfq) {
+        setProdNoRfq(buildPeriodTrendBundle(metaProdNoRfq, prodNoRfqByYear, periods, periodMode));
+        setContractNoRfq(buildPeriodTrendBundle(metaContractNoRfq, contractNoRfqByYear, periods, periodMode));
+      } else {
+        setProdNoRfq(null);
+        setContractNoRfq(null);
+      }
     } catch (e: unknown) {
       if (gen !== loadBaseGenRef.current) return;
       const msg = e instanceof Error ? e.message : '';
       setError(te(msg) || t('dataViz.loadFailed', { subsystem }));
       setProd(null);
       setContract(null);
+      setProdNoRfq(null);
+      setContractNoRfq(null);
     } finally {
       if (gen === loadBaseGenRef.current) setBaseLoading(false);
     }
@@ -791,6 +846,30 @@ export default function AdminDataVisualization() {
       machines: filterMachinesByDimensionFilters(contractRaw.machines, dimFilters, machineDimLookup),
     };
   }, [contractRaw, dimFilters, machineDimLookup]);
+  const prodNoRfq = useMemo(() => {
+    if (!prodNoRfqRaw) return null;
+    return {
+      ...prodNoRfqRaw,
+      machines: filterMachinesByDimensionFilters(prodNoRfqRaw.machines, dimFilters, machineDimLookup),
+    };
+  }, [prodNoRfqRaw, dimFilters, machineDimLookup]);
+  const contractNoRfq = useMemo(() => {
+    if (!contractNoRfqRaw) return null;
+    return {
+      ...contractNoRfqRaw,
+      machines: filterMachinesByDimensionFilters(contractNoRfqRaw.machines, dimFilters, machineDimLookup),
+    };
+  }, [contractNoRfqRaw, dimFilters, machineDimLookup]);
+
+  /** Słupki: baza + RFQ w stacku (tylko obciążenie; nie przy wolnym capacity). */
+  const stackRfqBars =
+    chartType === 'bar' && rfqOperationIds.length > 0 && chartMetricMode === 'load' && Boolean(prodNoRfq);
+
+  const loadDelta = (withLoad: number | null, withoutLoad: number | null): number | null => {
+    if (withLoad == null) return null;
+    if (withoutLoad == null) return withLoad;
+    return Math.max(0, Math.round((withLoad - withoutLoad) * 10) / 10);
+  };
   const callOffCompareList = useMemo(() => {
     return callOffIds
       .map((id, index) => {
@@ -958,21 +1037,98 @@ export default function AdminDataVisualization() {
     scope?: { line?: string; machineId?: number }
   ): TrendSeriesDef[] => {
     const out: TrendSeriesDef[] = [];
+    const rfqLabel = rfqProjectsLabel(scope);
+    const rfqSeriesLabel = rfqLabel
+      ? t('reports.dataViz.seriesRfq', { projects: rfqLabel })
+      : t('reports.dataViz.seriesRfqShort');
+
     if (showContract) {
-      out.push({
-        key: `${prefix}_contract`,
-        label: withRfqLegend(t('reports.dataViz.seriesContract'), scope),
-        color: vizColors.contract,
-        getValue: getContract,
-      });
+      if (stackRfqBars) {
+        out.push({
+          key: `${prefix}_contract`,
+          label: t('reports.dataViz.seriesContract'),
+          color: vizColors.contract,
+          stackId: `${prefix}_contract`,
+          getValue: (year) => {
+            if (scope?.machineId != null) {
+              const m = contractNoRfq?.machines.find((x) => x.machine_id === scope.machineId);
+              return m ? machineLoadPercent(m, year) : null;
+            }
+            if (scope?.line != null) {
+              return lineLoadPercent(contractNoRfq?.machines ?? [], scope.line, year);
+            }
+            return getContract(year);
+          },
+        });
+        out.push({
+          key: `${prefix}_contract_rfq`,
+          label: rfqSeriesLabel,
+          color: '#F59B47',
+          stackId: `${prefix}_contract`,
+          getValue: (year) => {
+            const withLoad = getContract(year);
+            let without: number | null = null;
+            if (scope?.machineId != null) {
+              const m = contractNoRfq?.machines.find((x) => x.machine_id === scope.machineId);
+              without = m ? machineLoadPercent(m, year) : null;
+            } else if (scope?.line != null) {
+              without = lineLoadPercent(contractNoRfq?.machines ?? [], scope.line, year);
+            }
+            return loadDelta(withLoad, without);
+          },
+        });
+      } else {
+        out.push({
+          key: `${prefix}_contract`,
+          label: withRfqLegend(t('reports.dataViz.seriesContract'), scope),
+          color: vizColors.contract,
+          getValue: getContract,
+        });
+      }
     }
     if (showProduction) {
-      out.push({
-        key: `${prefix}_prod`,
-        label: withRfqLegend(t('reports.dataViz.seriesProd'), scope),
-        color: vizColors.production,
-        getValue: getProd,
-      });
+      if (stackRfqBars) {
+        out.push({
+          key: `${prefix}_prod`,
+          label: t('reports.dataViz.seriesProd'),
+          color: vizColors.production,
+          stackId: `${prefix}_prod`,
+          getValue: (year) => {
+            if (scope?.machineId != null) {
+              const m = prodNoRfq?.machines.find((x) => x.machine_id === scope.machineId);
+              return m ? machineLoadPercent(m, year) : null;
+            }
+            if (scope?.line != null) {
+              return lineLoadPercent(prodNoRfq?.machines ?? [], scope.line, year);
+            }
+            return getProd(year);
+          },
+        });
+        out.push({
+          key: `${prefix}_prod_rfq`,
+          label: rfqSeriesLabel,
+          color: '#B8C400',
+          stackId: `${prefix}_prod`,
+          getValue: (year) => {
+            const withLoad = getProd(year);
+            let without: number | null = null;
+            if (scope?.machineId != null) {
+              const m = prodNoRfq?.machines.find((x) => x.machine_id === scope.machineId);
+              without = m ? machineLoadPercent(m, year) : null;
+            } else if (scope?.line != null) {
+              without = lineLoadPercent(prodNoRfq?.machines ?? [], scope.line, year);
+            }
+            return loadDelta(withLoad, without);
+          },
+        });
+      } else {
+        out.push({
+          key: `${prefix}_prod`,
+          label: withRfqLegend(t('reports.dataViz.seriesProd'), scope),
+          color: vizColors.production,
+          getValue: getProd,
+        });
+      }
     }
     if (showCallOff) {
       for (const co of callOffCompareList) {
@@ -1042,22 +1198,67 @@ export default function AdminDataVisualization() {
     let colorIdx = 0;
     for (const line of Array.from(selectedLines)) {
       const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
+      const rfqLabel = rfqProjectsLabel({ line });
+      const rfqSeriesLabel = rfqLabel
+        ? t('reports.dataViz.seriesRfq', { projects: rfqLabel })
+        : t('reports.dataViz.seriesRfqShort');
       if (showContract) {
-        out.push({
-          key: `cmp_L${line}_kon`,
-          label: withRfqLegend(t('reports.dataViz.lineSeriesContract', { line }), { line }),
-          color: nextColor(),
-          dash: '5 3',
-          getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
-        });
+        if (stackRfqBars) {
+          const baseColor = nextColor();
+          out.push({
+            key: `cmp_L${line}_kon`,
+            label: t('reports.dataViz.lineSeriesContract', { line }),
+            color: baseColor,
+            stackId: `cmp_L${line}_kon`,
+            getValue: (year) => lineLoadPercent(contractNoRfq?.machines ?? [], line, year),
+          });
+          out.push({
+            key: `cmp_L${line}_kon_rfq`,
+            label: `L${line} · ${rfqSeriesLabel}`,
+            color: '#F59B47',
+            stackId: `cmp_L${line}_kon`,
+            getValue: (year) =>
+              loadDelta(
+                lineLoadPercent(contract?.machines ?? [], line, year),
+                lineLoadPercent(contractNoRfq?.machines ?? [], line, year)
+              ),
+          });
+        } else {
+          out.push({
+            key: `cmp_L${line}_kon`,
+            label: withRfqLegend(t('reports.dataViz.lineSeriesContract', { line }), { line }),
+            color: nextColor(),
+            dash: '5 3',
+            getValue: (year) => lineLoadPercent(contract?.machines ?? [], line, year),
+          });
+        }
       }
       if (showProduction) {
-        out.push({
-          key: `cmp_L${line}_prod`,
-          label: withRfqLegend(t('reports.dataViz.lineSeriesProd', { line }), { line }),
-          color: nextColor(),
-          getValue: (year) => lineLoadPercent(machinesProd, line, year),
-        });
+        if (stackRfqBars) {
+          const baseColor = nextColor();
+          out.push({
+            key: `cmp_L${line}_prod`,
+            label: t('reports.dataViz.lineSeriesProd', { line }),
+            color: baseColor,
+            stackId: `cmp_L${line}_prod`,
+            getValue: (year) => lineLoadPercent(prodNoRfq?.machines ?? [], line, year),
+          });
+          out.push({
+            key: `cmp_L${line}_prod_rfq`,
+            label: `L${line} · ${rfqSeriesLabel}`,
+            color: '#B8C400',
+            stackId: `cmp_L${line}_prod`,
+            getValue: (year) =>
+              loadDelta(lineLoadPercent(machinesProd, line, year), lineLoadPercent(prodNoRfq?.machines ?? [], line, year)),
+          });
+        } else {
+          out.push({
+            key: `cmp_L${line}_prod`,
+            label: withRfqLegend(t('reports.dataViz.lineSeriesProd', { line }), { line }),
+            color: nextColor(),
+            getValue: (year) => lineLoadPercent(machinesProd, line, year),
+          });
+        }
       }
       if (showCallOff) {
         for (const co of callOffCompareList) {
@@ -1101,24 +1302,68 @@ export default function AdminDataVisualization() {
     let colorIdx = 0;
     for (const m of machinesProd.filter((x) => selectedMachineIds.has(x.machine_id))) {
       const cm = contract?.machines.find((x) => x.machine_id === m.machine_id);
+      const cmBase = contractNoRfq?.machines.find((x) => x.machine_id === m.machine_id);
+      const mBase = prodNoRfq?.machines.find((x) => x.machine_id === m.machine_id);
       const label = machineLabel(m);
       const nextColor = () => vizColors.comparePalette[colorIdx++ % vizColors.comparePalette.length];
+      const rfqLabel = rfqProjectsLabel({ machineId: m.machine_id });
+      const rfqSeriesLabel = rfqLabel
+        ? t('reports.dataViz.seriesRfq', { projects: rfqLabel })
+        : t('reports.dataViz.seriesRfqShort');
       if (showContract && cm) {
-        out.push({
-          key: `cmp_M${m.machine_id}_kon`,
-          label: withRfqLegend(t('reports.dataViz.machineSeriesContract', { label }), { machineId: m.machine_id }),
-          color: nextColor(),
-          dash: '5 3',
-          getValue: (year) => machineLoadPercent(cm, year),
-        });
+        if (stackRfqBars) {
+          const baseColor = nextColor();
+          out.push({
+            key: `cmp_M${m.machine_id}_kon`,
+            label: t('reports.dataViz.machineSeriesContract', { label }),
+            color: baseColor,
+            stackId: `cmp_M${m.machine_id}_kon`,
+            getValue: (year) => (cmBase ? machineLoadPercent(cmBase, year) : null),
+          });
+          out.push({
+            key: `cmp_M${m.machine_id}_kon_rfq`,
+            label: `${label} · ${rfqSeriesLabel}`,
+            color: '#F59B47',
+            stackId: `cmp_M${m.machine_id}_kon`,
+            getValue: (year) =>
+              loadDelta(machineLoadPercent(cm, year), cmBase ? machineLoadPercent(cmBase, year) : null),
+          });
+        } else {
+          out.push({
+            key: `cmp_M${m.machine_id}_kon`,
+            label: withRfqLegend(t('reports.dataViz.machineSeriesContract', { label }), { machineId: m.machine_id }),
+            color: nextColor(),
+            dash: '5 3',
+            getValue: (year) => machineLoadPercent(cm, year),
+          });
+        }
       }
       if (showProduction) {
-        out.push({
-          key: `cmp_M${m.machine_id}_prod`,
-          label: withRfqLegend(t('reports.dataViz.machineSeriesProd', { label }), { machineId: m.machine_id }),
-          color: nextColor(),
-          getValue: (year) => machineLoadPercent(m, year),
-        });
+        if (stackRfqBars) {
+          const baseColor = nextColor();
+          out.push({
+            key: `cmp_M${m.machine_id}_prod`,
+            label: t('reports.dataViz.machineSeriesProd', { label }),
+            color: baseColor,
+            stackId: `cmp_M${m.machine_id}_prod`,
+            getValue: (year) => (mBase ? machineLoadPercent(mBase, year) : null),
+          });
+          out.push({
+            key: `cmp_M${m.machine_id}_prod_rfq`,
+            label: `${label} · ${rfqSeriesLabel}`,
+            color: '#B8C400',
+            stackId: `cmp_M${m.machine_id}_prod`,
+            getValue: (year) =>
+              loadDelta(machineLoadPercent(m, year), mBase ? machineLoadPercent(mBase, year) : null),
+          });
+        } else {
+          out.push({
+            key: `cmp_M${m.machine_id}_prod`,
+            label: withRfqLegend(t('reports.dataViz.machineSeriesProd', { label }), { machineId: m.machine_id }),
+            color: nextColor(),
+            getValue: (year) => machineLoadPercent(m, year),
+          });
+        }
       }
       if (showCallOff) {
         for (const co of callOffCompareList) {
@@ -1167,6 +1412,8 @@ export default function AdminDataVisualization() {
       selectedLines,
       machinesProd,
       contract,
+      contractNoRfq,
+      prodNoRfq,
       callOffCompareList,
       scenarioCompareList,
       years,
@@ -1175,8 +1422,10 @@ export default function AdminDataVisualization() {
       showCallOff,
       showScenarioProduction,
       showScenarioContract,
+      stackRfqBars,
       vizColors,
       withRfqLegend,
+      rfqProjectsLabel,
       t,
     ]
   );
@@ -1187,6 +1436,8 @@ export default function AdminDataVisualization() {
       selectedMachineIds,
       machinesProd,
       contract,
+      contractNoRfq,
+      prodNoRfq,
       callOffCompareList,
       scenarioCompareList,
       years,
@@ -1195,8 +1446,10 @@ export default function AdminDataVisualization() {
       showCallOff,
       showScenarioProduction,
       showScenarioContract,
+      stackRfqBars,
       vizColors,
       withRfqLegend,
+      rfqProjectsLabel,
       t,
     ]
   );

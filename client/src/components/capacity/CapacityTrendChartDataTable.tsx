@@ -39,6 +39,8 @@ export function seriesBreakdownKey(seriesKey: string): CapacityBreakdownSeriesKe
   if (seriesKey.includes('_calloff') || seriesKey.endsWith('calloff')) return 'call_off';
   if (seriesKey.endsWith('_scen_contract')) return 'scenario_contract';
   if (seriesKey.endsWith('_scen_prod')) return 'scenario_production';
+  if (seriesKey.endsWith('_contract_rfq') || seriesKey.endsWith('_kon_rfq')) return 'contract';
+  if (seriesKey.endsWith('_prod_rfq')) return 'production';
   if (seriesKey.endsWith('_contract') || seriesKey.endsWith('_kon')) return 'contract';
   if (seriesKey.endsWith('_prod')) return 'production';
   return null;

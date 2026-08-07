@@ -1196,6 +1196,8 @@ export const extendedPl: TranslationTree = {
       seriesCallOff: 'Call offs',
       seriesCallOffNamed: 'Call offs — {{name}} ({{file}})',
       seriesCallOffNamedShort: 'Call offs — {{name}}',
+      seriesRfq: 'RFQ: {{projects}}',
+      seriesRfqShort: 'RFQ',
       seriesWithRfq: '{{label}} (+ RFQ: {{projects}})',
       lineSeriesProd: 'Linia {{line}} — prod.',
       lineSeriesContract: 'Linia {{line}} — kontr.',

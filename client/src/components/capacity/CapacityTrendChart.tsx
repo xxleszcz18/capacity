@@ -242,6 +242,7 @@ export default function CapacityTrendChart({
                     name={s.label}
                     fill={s.color}
                     fillOpacity={s.dash ? 0.65 : 0.9}
+                    stackId={s.stackId}
                     maxBarSize={36}
                     isAnimationActive={false}
                   />
