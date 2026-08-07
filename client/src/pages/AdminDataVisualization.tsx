@@ -18,7 +18,9 @@ import CapacityMachineLineBarChart from '../components/capacity/CapacityMachineL
 import ChartGridLayoutPicker, { chartGridStyle, type ChartGridCols } from '../components/capacity/ChartGridLayoutPicker';
 import ChartLoadAxisRangePicker from '../components/capacity/ChartLoadAxisRangePicker';
 import ChartMetricModePicker from '../components/capacity/ChartMetricModePicker';
+import ChartTypePicker from '../components/capacity/ChartTypePicker';
 import type { ChartMetricMode } from '../utils/chartMetricMode';
+import type { ChartSeriesType } from '../utils/chartSeriesType';
 import { parseFlexPercentInput } from '../utils/chartFlex';
 import {
   DEFAULT_LOAD_AXIS_RANGE,
@@ -168,6 +170,8 @@ function ChartViewToolbar({
   onLoadAxisRangeChange,
   chartMetricMode,
   onChartMetricModeChange,
+  chartType,
+  onChartTypeChange,
   yAxisLabel,
 }: {
   showGrid: boolean;
@@ -177,11 +181,14 @@ function ChartViewToolbar({
   onLoadAxisRangeChange: (v: ChartLoadAxisRange) => void;
   chartMetricMode: ChartMetricMode;
   onChartMetricModeChange: (v: ChartMetricMode) => void;
+  chartType: ChartSeriesType;
+  onChartTypeChange: (v: ChartSeriesType) => void;
   yAxisLabel: string;
 }) {
   return (
     <div data-viz-export-chrome style={chartToolbarStyle}>
       {showGrid && <ChartGridLayoutPicker value={chartGridCols} onChange={onChartGridColsChange} />}
+      <ChartTypePicker value={chartType} onChange={onChartTypeChange} />
       <ChartMetricModePicker value={chartMetricMode} onChange={onChartMetricModeChange} />
       <ChartLoadAxisRangePicker value={loadAxisRange} onChange={onLoadAxisRangeChange} axisLabel={yAxisLabel} />
     </div>
@@ -260,6 +267,7 @@ export default function AdminDataVisualization() {
   const [chartGridCols, setChartGridCols] = useState<ChartGridCols>(1);
   const [loadAxisRange, setLoadAxisRange] = useState<ChartLoadAxisRange>(DEFAULT_LOAD_AXIS_RANGE);
   const [chartMetricMode, setChartMetricMode] = useState<ChartMetricMode>('load');
+  const [chartType, setChartType] = useState<ChartSeriesType>('line');
   const [dimFilters, setDimFilters] = useState<DimFiltersState>(EMPTY_DIM_FILTERS);
   const [machineDimLookup, setMachineDimLookup] = useState<MachineDimLookup | null>(null);
 
@@ -1206,6 +1214,7 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyLines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        chartType={chartType}
         flexPercent={flexPercent}
         allowDataTable={false}
       />
@@ -1221,6 +1230,7 @@ export default function AdminDataVisualization() {
         emptyHint={t('dataViz.emptyMachines')}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        chartType={chartType}
         flexPercent={flexPercent}
         allowDataTable={false}
       />
@@ -1401,6 +1411,7 @@ export default function AdminDataVisualization() {
         breakdownScope={{ kind: 'line', line, fetchParams: breakdownFetchParams }}
         loadAxisRange={loadAxisRange}
         metricMode={chartMetricMode}
+        chartType={chartType}
         flexPercent={flexPercent}
         rangeMode={rangeMode}
       />
@@ -1430,6 +1441,7 @@ export default function AdminDataVisualization() {
           breakdownScope={{ kind: 'machine', machineId: m.machine_id, fetchParams: breakdownFetchParams }}
           loadAxisRange={loadAxisRange}
           metricMode={chartMetricMode}
+          chartType={chartType}
           flexPercent={flexPercent}
           rangeMode={rangeMode}
         />
@@ -2845,6 +2857,8 @@ export default function AdminDataVisualization() {
                   onLoadAxisRangeChange={setLoadAxisRange}
                   chartMetricMode={chartMetricMode}
                   onChartMetricModeChange={setChartMetricMode}
+                  chartType={chartType}
+                  onChartTypeChange={setChartType}
                   yAxisLabel={chartYAxisLabel}
                 />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -2974,6 +2988,8 @@ export default function AdminDataVisualization() {
                   onLoadAxisRangeChange={setLoadAxisRange}
                   chartMetricMode={chartMetricMode}
                   onChartMetricModeChange={setChartMetricMode}
+                  chartType={chartType}
+                  onChartTypeChange={setChartType}
                   yAxisLabel={chartYAxisLabel}
                 />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -3036,7 +3052,8 @@ export default function AdminDataVisualization() {
               series={item.series}
               height={300}
               loadAxisRange={loadAxisRange}
-        metricMode={chartMetricMode}
+              metricMode={chartMetricMode}
+              chartType={chartType}
               flexPercent={flexPercent}
             />
           ))}
@@ -3049,7 +3066,8 @@ export default function AdminDataVisualization() {
               series={item.series}
               height={300}
               loadAxisRange={loadAxisRange}
-        metricMode={chartMetricMode}
+              metricMode={chartMetricMode}
+              chartType={chartType}
               flexPercent={flexPercent}
             />
           ))}

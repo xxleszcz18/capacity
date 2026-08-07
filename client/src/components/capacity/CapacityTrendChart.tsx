@@ -1,6 +1,7 @@
 import { useId, useMemo, useState } from 'react';
 import {
   Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Legend,
@@ -16,6 +17,7 @@ import { useI18n } from '../../context/I18nContext';
 import { useDataVizColors } from '../../context/DataVizColorsContext';
 import { resolveYAxisDomain, type ChartLoadAxisRange, DEFAULT_LOAD_AXIS_RANGE } from '../../utils/chartLoadAxisRange';
 import { transformTrendRows, type ChartMetricMode } from '../../utils/chartMetricMode';
+import type { ChartSeriesType } from '../../utils/chartSeriesType';
 import { flexHiKey, flexLoKey, seriesAppliesFlex, withFlexBandRows } from '../../utils/chartFlex';
 import CapacityTrendChartDataTable, { type ChartBreakdownScope } from './CapacityTrendChartDataTable';
 import { OrderedLegendContent } from './OrderedLegendContent';
@@ -30,6 +32,8 @@ type Props = {
   loadAxisRange?: ChartLoadAxisRange;
   /** Obciążenie vs wolne capacity (100% − obciążenie). */
   metricMode?: ChartMetricMode;
+  /** Liniowy lub słupkowy. */
+  chartType?: ChartSeriesType;
   /** Flex ±% od nominału — wstęga wokół linii (np. 15 → ±15%). */
   flexPercent?: number | null;
   /** Atrybuty do zrzutu wykresu do PDF (html2canvas). */
@@ -64,6 +68,7 @@ export default function CapacityTrendChart({
   breakdownScope,
   loadAxisRange = DEFAULT_LOAD_AXIS_RANGE,
   metricMode = 'load',
+  chartType = 'line',
   flexPercent = null,
   allowDataTable = true,
   rangeMode = 'year',
@@ -79,7 +84,8 @@ export default function CapacityTrendChart({
     legendMaxSeries == null || legendMaxSeries <= 0 || activeSeries.length <= legendMaxSeries;
   const xDataKey = rows.some((r) => r.periodLabel) ? 'periodLabel' : 'year';
   const canShowDataTable = allowDataTable && !captureKey;
-  const showFlex = flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
+  const isBar = chartType === 'bar';
+  const showFlex = !isBar && flexPercent != null && Number.isFinite(flexPercent) && flexPercent > 0;
   const showDataLabel =
     rangeMode === 'week'
       ? t('dataViz.showChartDataWeek')
@@ -228,19 +234,31 @@ export default function CapacityTrendChart({
                     activeDot={false}
                   />
                 ))}
-              {activeSeries.map((s) => (
-                <Line
-                  key={s.key}
-                  type="monotone"
-                  dataKey={s.key}
-                  name={s.label}
-                  stroke={s.color}
-                  strokeWidth={2}
-                  strokeDasharray={s.dash}
-                  dot={{ r: 3 }}
-                  connectNulls={false}
-                />
-              ))}
+              {activeSeries.map((s) =>
+                isBar ? (
+                  <Bar
+                    key={s.key}
+                    dataKey={s.key}
+                    name={s.label}
+                    fill={s.color}
+                    fillOpacity={s.dash ? 0.65 : 0.9}
+                    maxBarSize={36}
+                    isAnimationActive={false}
+                  />
+                ) : (
+                  <Line
+                    key={s.key}
+                    type="monotone"
+                    dataKey={s.key}
+                    name={s.label}
+                    stroke={s.color}
+                    strokeWidth={2}
+                    strokeDasharray={s.dash}
+                    dot={{ r: 3 }}
+                    connectNulls={false}
+                  />
+                )
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         )}
